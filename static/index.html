@@ -132,9 +132,8 @@
     .msg.user      { align-items: flex-end; }
     .msg.assistant { align-items: flex-start; }
     .role-label {
-      font-size: .7rem;
-      text-transform: uppercase;
-      letter-spacing: .08em;
+      font-size: .72rem;
+      font-weight: 500;
       color: var(--subtext);
       padding: 0 4px;
     }
@@ -270,11 +269,26 @@
 
     .d-body {
       flex: 1;
-      overflow-y: auto;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .d-fixed {
+      flex-shrink: 0;
       padding: 16px;
       display: flex;
       flex-direction: column;
       gap: 20px;
+    }
+    .d-scroll {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 12px 16px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+      border-top: 1px solid var(--surface1);
     }
     .d-section { display: flex; flex-direction: column; gap: 9px; }
     .d-title {
@@ -307,18 +321,6 @@
     .bar-fill.warn { background: var(--yellow); }
     .bar-fill.crit { background: var(--red); }
 
-    /* current request stats */
-    .stat-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-      font-size: .8rem;
-      padding: 1px 0;
-    }
-    .stat-row .sk { color: var(--subtext); }
-    .stat-row .sv { color: var(--text); font-variant-numeric: tabular-nums; }
-    .stat-row .sv.live { color: var(--blue); animation: pulse 1s infinite; }
-
     /* history items */
     .hist-item {
       background: var(--bg);
@@ -334,7 +336,7 @@
       gap: 7px;
       font-size: .78rem;
     }
-    .hi-time   { color: var(--mauve); font-variant-numeric: tabular-nums; }
+    .hi-time   { color: var(--subtext); font-variant-numeric: tabular-nums; }
     .hi-model  { color: var(--text); font-weight: 500; }
     .hi-local  { color: var(--yellow); font-size: .72rem; }
     .hi-err    { color: var(--red); font-size: .72rem; }
@@ -401,6 +403,18 @@
 
     .d-empty { font-size: .8rem; color: var(--surface1); font-style: italic; }
 
+    .mem-hdr {
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      user-select: none;
+      padding: 2px 0;
+      border-radius: 4px;
+      transition: color .15s;
+    }
+    .mem-hdr:hover { color: var(--text); }
+
     #history-list { display: flex; flex-direction: column; gap: 10px; }
 
     .metrics-link {
@@ -434,8 +448,8 @@
     <h1>bix ai</h1>
     <div class="mode-group">
       <button class="mode-btn active" data-mode="auto">Auto</button>
-      <button class="mode-btn" data-mode="local">Force Local</button>
-      <button class="mode-btn" data-mode="claude">Force Claude</button>
+      <button class="mode-btn" data-mode="local">Local</button>
+      <button class="mode-btn" data-mode="claude">Claude</button>
     </div>
     <div class="status">
       <div class="dot" id="dot"></div>
@@ -464,48 +478,68 @@
     </div>
     <div class="d-body">
 
-      <a class="metrics-link" href="http://192.168.0.47:9000" target="_blank">Internal Metrics →</a>
+      <div class="d-fixed">
+        <a class="metrics-link" href="http://192.168.0.47:9000" target="_blank">Internal Metrics →</a>
 
-      <div class="d-section">
-        <div class="d-title">System</div>
-        <div class="sys-metric">
-          <div class="sys-label-row"><span class="sk">CPU</span><span class="sv" id="cpu-val">—</span></div>
-          <div class="bar-wrap"><div class="bar-fill" id="cpu-bar" style="width:0%"></div></div>
+        <div class="d-section">
+          <div class="d-title">System</div>
+          <div class="sys-metric">
+            <div class="sys-label-row"><span class="sk">CPU</span><span class="sv" id="cpu-val">—</span></div>
+            <div class="bar-wrap"><div class="bar-fill" id="cpu-bar" style="width:0%"></div></div>
+          </div>
+          <div class="sys-metric">
+            <div class="sys-label-row"><span class="sk">RAM</span><span class="sv" id="ram-val">—</span></div>
+            <div class="bar-wrap"><div class="bar-fill" id="ram-bar" style="width:0%"></div></div>
+          </div>
+          <div id="gpu-section" style="margin-top:4px; display:flex; flex-direction:column; gap:5px;">
+            <div class="gpu-row"><span class="sk">GPU</span><span class="sv" id="gpu-model-val">—</span></div>
+            <div class="gpu-row"><span class="sk">Offload</span><span class="sv" id="gpu-layers-val">—</span></div>
+            <div class="sys-metric">
+              <div class="sys-label-row"><span class="sk">VRAM</span><span class="sv" id="gpu-vram-val">—</span></div>
+              <div class="bar-wrap"><div class="bar-fill" id="vram-bar" style="width:0%"></div></div>
+            </div>
+          </div>
         </div>
-        <div class="sys-metric">
-          <div class="sys-label-row"><span class="sk">RAM</span><span class="sv" id="ram-val">—</span></div>
-          <div class="bar-wrap"><div class="bar-fill" id="ram-bar" style="width:0%"></div></div>
+
+        <div class="d-section">
+          <div class="d-title">Model</div>
+          <select id="model-select">
+            <optgroup label="Claude">
+              <option value="claude-opus-4-7">Opus 4.7</option>
+              <option value="claude-sonnet-4-6" selected>Sonnet 4.6</option>
+              <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
+            </optgroup>
+            <optgroup label="Ollama (local)">
+              <option value="qwen3.5:9b">Qwen 3.5 9B</option>
+              <option value="gemma4:e2b">Gemma 4 E2B</option>
+            </optgroup>
+          </select>
         </div>
-        <div id="gpu-section" style="display:none; margin-top:4px; flex-direction:column; gap:3px;">
-          <div class="gpu-row"><span class="sk">GPU model</span><span class="sv" id="gpu-model-val">—</span></div>
-          <div class="gpu-row"><span class="sk">Layers</span><span class="sv" id="gpu-layers-val">—</span></div>
-          <div class="gpu-row"><span class="sk">VRAM</span><span class="sv" id="gpu-vram-val">—</span></div>
+
+        <div class="d-section">
+          <div class="d-title">Current Request</div>
+          <div id="current-stats"><span class="d-empty">No active request</span></div>
         </div>
       </div>
 
-      <div class="d-section">
-        <div class="d-title">Model</div>
-        <select id="model-select">
-          <optgroup label="Claude">
-            <option value="claude-opus-4-7">Opus 4.7</option>
-            <option value="claude-sonnet-4-6" selected>Sonnet 4.6</option>
-            <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
-          </optgroup>
-          <optgroup label="Ollama (local)">
-            <option value="qwen3.5:9b">Qwen 3.5 9B</option>
-            <option value="gemma4:e2b">Gemma 4 E2B</option>
-          </optgroup>
-        </select>
-      </div>
+      <div class="d-scroll">
 
-      <div class="d-section">
-        <div class="d-title">Current Request</div>
-        <div id="current-stats"><span class="d-empty">No active request</span></div>
-      </div>
+        <div class="d-section" id="mem-section">
+          <div class="d-title mem-hdr" id="mem-toggle" onclick="toggleMemList()">
+            <span style="display:flex;align-items:center;gap:6px">
+              <span class="chevron" id="mem-chevron" style="font-size:.6rem;transition:transform .18s">▶</span>
+              Memory
+            </span>
+            <span id="mem-badge" style="font-weight:400;color:var(--subtext);font-size:.75rem;font-variant-numeric:tabular-nums">—</span>
+          </div>
+          <div id="mem-list" style="display:none;flex-direction:column;gap:6px;"></div>
+        </div>
 
-      <div class="d-section">
-        <div class="d-title">History</div>
-        <div id="history-list"><span class="d-empty">None yet</span></div>
+        <div class="d-section" style="border-top:1px solid var(--surface1);padding-top:12px">
+          <div class="d-title">History</div>
+          <div id="history-list"><span class="d-empty">None yet</span></div>
+        </div>
+
       </div>
 
     </div>
@@ -523,6 +557,10 @@ let currentReq   = null;
 let reqHistory   = [];
 let sysTimer     = null;
 let abortCtrl    = null;
+let memCount     = 0;
+let memEntries   = [];
+let memExpanded  = false;
+let memLoaded    = false;
 
 const modeDefaults = { auto: 'claude-sonnet-4-6', claude: 'claude-sonnet-4-6', local: 'gemma4:e2b' };
 
@@ -578,7 +616,11 @@ modelSel.addEventListener('change', () => {
 });
 
 // ── Drawer ────────────────────────────────────────────────────────────────────
-function openDrawer()  { drawer.classList.add('open');    toggleBtn.classList.add('open');    startSysPoll(); }
+function openDrawer()  {
+  drawer.classList.add('open'); toggleBtn.classList.add('open');
+  startSysPoll();
+  if (!memLoaded) loadMemory();
+}
 function closeDrawer() { drawer.classList.remove('open'); toggleBtn.classList.remove('open'); stopSysPoll(); }
 toggleBtn.addEventListener('click', () => drawer.classList.contains('open') ? closeDrawer() : openDrawer());
 closeBtn.addEventListener('click', closeDrawer);
@@ -593,20 +635,33 @@ async function fetchSys() {
     const rb = document.getElementById('ram-bar'); rb.style.width = d.ram_percent + '%'; rb.className = barClass(d.ram_percent);
     const gs = document.getElementById('gpu-section');
     if (d.gpu) {
-      gs.style.display = 'flex';
-      document.getElementById('gpu-model-val').textContent = d.gpu.model || '—';
-      const vramGb  = (d.gpu.size_vram  / 1e9).toFixed(1);
-      const totalGb = (d.gpu.size_total / 1e9).toFixed(1);
-      let layersText;
-      if (d.gpu.num_gpu != null) {
-        layersText = d.gpu.num_gpu > 0 ? d.gpu.num_gpu + ' layers GPU' : 'CPU only';
+      const state = d.gpu.state;
+      const vb = document.getElementById('vram-bar');
+      if (state === 'unreachable') {
+        document.getElementById('gpu-model-val').textContent  = 'Ollama unreachable';
+        document.getElementById('gpu-layers-val').textContent = '—';
+        document.getElementById('gpu-vram-val').textContent   = '—';
+        vb.style.width = '0%'; vb.className = 'bar-fill';
+      } else if (state === 'idle') {
+        document.getElementById('gpu-model-val').textContent  = 'idle';
+        document.getElementById('gpu-layers-val').textContent = '—';
+        document.getElementById('gpu-vram-val').textContent   = '—';
+        vb.style.width = '0%'; vb.className = 'bar-fill';
       } else {
-        layersText = d.gpu.size_vram > 0 ? 'Partial GPU' : 'CPU only';
+        document.getElementById('gpu-model-val').textContent = d.gpu.model || '—';
+        const vramGb  = (d.gpu.size_vram  / 1e9).toFixed(1);
+        const totalGb = (d.gpu.size_total / 1e9).toFixed(1);
+        const vramPct = d.gpu.size_total > 0 ? Math.round(d.gpu.size_vram / d.gpu.size_total * 100) : 0;
+        let layersText;
+        if (d.gpu.num_gpu != null) {
+          layersText = d.gpu.num_gpu > 0 ? d.gpu.num_gpu + ' layers GPU' : 'CPU only';
+        } else {
+          layersText = d.gpu.size_vram > 0 ? 'Partial GPU' : 'CPU only';
+        }
+        document.getElementById('gpu-layers-val').textContent = layersText;
+        document.getElementById('gpu-vram-val').textContent   = d.gpu.size_vram ? `${vramGb} / ${totalGb} GB` : '—';
+        vb.style.width = vramPct + '%'; vb.className = barClass(vramPct);
       }
-      document.getElementById('gpu-layers-val').textContent = layersText;
-      document.getElementById('gpu-vram-val').textContent   = d.gpu.size_vram ? `${vramGb} / ${totalGb} GB` : '—';
-    } else {
-      gs.style.display = 'none';
     }
   } catch {}
 }
@@ -653,7 +708,7 @@ function addMeta(wrap, m) {
     `${m.elapsed_ms}ms total`,
   ];
   if (m.preprocess_ms > 50) parts.push(`prep ${m.preprocess_ms}ms`);
-  if (m.summarised > 0)     parts.push(`<span class="ollama-tag">⬡ ${m.summarised} compressed</span>`);
+  if (m.summarised > 0)     parts.push(`<span class="ollama-tag">${m.summarised} compressed</span>`);
   el.innerHTML = parts.join(' · ');
   wrap.appendChild(el);
 }
@@ -666,28 +721,36 @@ function row(k, v, live) {
 function renderCurrentStats() {
   if (!currentReq) { curStats.innerHTML = '<span class="d-empty">No active request</span>'; return; }
   const r = currentReq, running = r.status === 'running';
-  curStats.innerHTML = [
-    row('Status',  r.status, running),
-    row('Mode',    r.mode),
-    row('Model',   fmtModel(r.model)),
-    r.input_tokens  ? row('Input',   r.input_tokens  + ' tok') : '',
-    row('Output', r.output_tokens + ' tok', running),
-    r.ttft_ms       ? row('TTFT',    r.ttft_ms    + 'ms') : '',
-    r.tps           ? row('Tok/s',   r.tps) : '',
-    r.elapsed_ms    ? row('Elapsed', r.elapsed_ms + 'ms') : '',
-    r.preprocess_ms > 50 ? row('Prep', r.preprocess_ms + 'ms') : '',
-    r.summarised    ? row('Compressed', r.summarised + ' block(s)') : '',
-    r.skipped       ? row('Passed through', r.skipped + ' block(s)') : '',
-    r.failed        ? row('Failed compression', r.failed + ' block(s)') : '',
+  const statusCol = running ? 'var(--blue)' : r.status === 'error' ? 'var(--red)' : r.status === 'cancelled' ? 'var(--subtext)' : 'var(--green)';
+  const live = running ? ' live' : '';
+  const cell = (k, v, l) => `<div class="hi-stat"><span class="sk">${k}</span><span class="sv${l?' live':''}">${v}</span></div>`;
+  const extras = [
+    r.summarised ? cell('Compressed', r.summarised) : '',
+    r.skipped    ? cell('Passed',     r.skipped)    : '',
+    r.failed     ? cell('Failed',     r.failed)     : '',
   ].filter(Boolean).join('');
+  curStats.innerHTML = `
+    <div style="font-size:.78rem;margin-bottom:8px;display:flex;align-items:baseline;gap:7px;">
+      <span style="color:${statusCol};font-weight:500">${r.status}</span>
+      <span style="color:var(--subtext)">${r.mode} · ${friendlyModel(r.model)}</span>
+    </div>
+    <div class="hi-stats">
+      ${cell('In',    r.input_tokens || '—', running)}
+      ${cell('Out',   r.output_tokens,        running)}
+      ${cell('TTFT',  r.ttft_ms  ? r.ttft_ms  + 'ms' : '—')}
+      ${cell('Tok/s', r.tps      || '—',              running)}
+      ${cell('Total', r.elapsed_ms ? r.elapsed_ms + 'ms' : '—')}
+      ${cell('Prep',  r.preprocess_ms > 50 ? r.preprocess_ms + 'ms' : '—')}
+      ${extras}
+    </div>`;
 }
 
 function renderHistory() {
   if (!reqHistory.length) { histList.innerHTML = '<span class="d-empty">None yet</span>'; return; }
   histList.innerHTML = [...reqHistory].reverse().slice(0, 12).map(r => {
     const t     = r.timestamp.toTimeString().slice(0,5);
-    const local = r.mode === 'local' ? `<span class="hi-local"> ⬡ local</span>` : '';
-    const err   = r.status === 'error' ? `<span class="hi-err"> error</span>` : '';
+    const local = r.mode === 'local' ? `<span class="hi-local"> · local</span>` : '';
+    const err   = r.status === 'error' ? `<span class="hi-err"> · error</span>` : '';
     const toks  = r.input_tokens ? `${r.input_tokens}→${r.output_tokens}` : `~${r.output_tokens}`;
 
     let bodyHtml = '';
@@ -700,7 +763,7 @@ function renderHistory() {
       if (r.summary === undefined) {
         summaryHtml = `<div class="hi-summary hi-pending">summarising…</div>`;
       } else if (r.summary) {
-        const srcTag = r.summarySource === 'local' ? `<span class="hi-src-tag">⬡</span>` : '';
+        const srcTag = r.summarySource === 'local' ? `<span class="hi-src-tag"> · local</span>` : '';
         summaryHtml = `<div class="hi-summary">${escHtml(r.summary)}${srcTag}</div>`;
       }
       bodyHtml = `${summaryHtml}
@@ -715,11 +778,89 @@ function renderHistory() {
     return `<div class="hist-item">
       <div class="hi-header">
         <span class="hi-time">${t}</span>
-        <span class="hi-model">${fmtModel(r.model)}${local}${err}</span>
+        <span class="hi-model">${friendlyModel(r.model)}${local}${err}</span>
       </div>
       ${bodyHtml}
     </div>`;
   }).join('');
+}
+
+// ── Memory ────────────────────────────────────────────────────────────────────
+async function loadMemory() {
+  try {
+    const d = await fetch('/memory').then(r => r.json());
+    memCount   = d.count;
+    memEntries = d.entries || [];
+    memLoaded  = true;
+    document.getElementById('mem-badge').textContent = memCount || '0';
+    if (memExpanded) renderMemList();
+  } catch {}
+}
+
+function memEntryHtml(m) {
+  const date    = (m.date || '').slice(0, 10);
+  const title   = escHtml(m.title || '—');
+  const summary = escHtml(m.summary || '');
+  const tags    = (m.tags || []).map(t => `<span style="font-size:.65rem;color:var(--subtext);background:var(--surface1);border-radius:3px;padding:1px 5px">${escHtml(t)}</span>`).join(' ');
+  return `<div class="sub-bubble">
+    <div class="sub-bubble-hdr" onclick="this.parentElement.classList.toggle('open')">
+      <span class="chevron">▶</span>
+      <span style="font-size:.68rem;color:var(--subtext);white-space:nowrap">${date}</span>
+      <span style="flex:1;margin-left:6px;color:var(--text);font-size:.75rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${title}</span>
+    </div>
+    <div class="sub-bubble-body">${summary || title}${tags ? '<div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap">' + tags + '</div>' : ''}</div>
+  </div>`;
+}
+
+function renderMemList() {
+  const list = document.getElementById('mem-list');
+  if (!memEntries.length) {
+    list.innerHTML = '<span class="d-empty">No memories yet</span>';
+    return;
+  }
+  const show = memEntries.slice(0, 5);
+  const more = memEntries.length - show.length;
+  list.innerHTML = show.map(memEntryHtml).join('')
+    + (more > 0 ? `<div style="font-size:.73rem;color:var(--subtext);text-align:center;cursor:pointer;padding:4px 0" onclick="showAllMemories()">Show ${more} more…</div>` : '');
+}
+
+function showAllMemories() {
+  document.getElementById('mem-list').innerHTML = memEntries.map(memEntryHtml).join('');
+}
+
+function toggleMemList() {
+  memExpanded = !memExpanded;
+  const list    = document.getElementById('mem-list');
+  const chevron = document.getElementById('mem-chevron');
+  list.style.display    = memExpanded ? 'flex' : 'none';
+  chevron.style.transform = memExpanded ? 'rotate(90deg)' : '';
+  if (memExpanded) {
+    if (!memLoaded) loadMemory(); else renderMemList();
+  }
+}
+
+async function saveMemoryInBackground() {
+  if (convHistory.length < 2) return;
+  try {
+    const res = await fetch('/memory/save', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        messages:     convHistory,
+        model:        model,
+        input_tokens: currentReq?.input_tokens || 0,
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.ok && !data.skipped) {
+        memCount++;
+        memLoaded = false;
+        document.getElementById('mem-badge').textContent = memCount;
+        if (memExpanded) loadMemory();
+      }
+    }
+  } catch {}
 }
 
 // ── Background summarization ──────────────────────────────────────────────────
@@ -907,6 +1048,7 @@ async function send() {
 
         } else if (evType === 'done') {
           convHistory.push({ role: 'assistant', content: fullText });
+          saveMemoryInBackground();
 
         } else if (evType === 'error') {
           bubble.textContent = 'Error: ' + data.message;
