@@ -1,0 +1,969 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>bix ai</title>
+  <style>
+    :root {
+      --bg:       #1e1e2e;
+      --surface0: #313244;
+      --surface1: #45475a;
+      --text:     #cdd6f4;
+      --subtext:  #a6adc8;
+      --yellow:   #f9e2af;
+      --blue:     #89b4fa;
+      --green:    #a6e3a1;
+      --red:      #f38ba8;
+      --mauve:    #cba6f7;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 16px;
+      height: 100dvh;
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* ── main column ── */
+    .main-col {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── header ── */
+    header {
+      padding: 10px 20px;
+      border-bottom: 1px solid var(--surface1);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+    h1 { font-size: .9rem; font-weight: 600; letter-spacing: .04em; color: var(--mauve); flex-shrink: 0; }
+
+    .mode-group {
+      display: flex;
+      background: var(--surface0);
+      border-radius: 8px;
+      padding: 2px;
+      gap: 2px;
+      margin-left: auto;
+      flex-shrink: 0;
+    }
+    .mode-btn {
+      padding: 4px 11px;
+      border-radius: 6px;
+      border: none;
+      background: transparent;
+      color: var(--subtext);
+      font: inherit;
+      font-size: .75rem;
+      cursor: pointer;
+      transition: background .15s, color .15s;
+      white-space: nowrap;
+    }
+    .mode-btn.active             { background: var(--surface1); color: var(--text); }
+    .mode-btn.active[data-mode="local"]  { color: var(--yellow); }
+    .mode-btn.active[data-mode="claude"] { color: var(--mauve); }
+
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: .76rem;
+      color: var(--subtext);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--surface1);
+      flex-shrink: 0;
+      transition: background .2s;
+    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.2} }
+    .dot.checking    { background: var(--subtext); animation: pulse 1.2s infinite; }
+    .dot.summarising { background: var(--yellow);  animation: pulse .8s  infinite; }
+    .dot.streaming   { background: var(--blue);    animation: pulse 1s   infinite; }
+    .dot.done        { background: var(--green); animation: none; }
+    .dot.error       { background: var(--red);   animation: none; }
+
+    #drawer-toggle {
+      background: transparent;
+      border: none;
+      color: var(--subtext);
+      font-size: 1.1rem;
+      cursor: pointer;
+      padding: 4px 7px;
+      border-radius: 6px;
+      line-height: 1;
+      flex-shrink: 0;
+      transition: color .15s, background .15s;
+    }
+    #drawer-toggle:hover  { color: var(--text); background: var(--surface0); }
+    #drawer-toggle.open   { color: var(--text); background: var(--surface1); }
+
+    /* ── messages ── */
+    .messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .msgs-inner {
+      width: 100%;
+      max-width: 820px;
+      padding: 0 32px;
+      display: flex;
+      flex-direction: column;
+      gap: 22px;
+    }
+    .msg { display: flex; flex-direction: column; gap: 5px; }
+    .msg.user      { align-items: flex-end; }
+    .msg.assistant { align-items: flex-start; }
+    .role-label {
+      font-size: .7rem;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--subtext);
+      padding: 0 4px;
+    }
+    .bubble {
+      padding: 11px 16px;
+      border-radius: 14px;
+      line-height: 1.65;
+      max-width: min(70ch, 90%);
+      word-break: break-word;
+    }
+    .msg.user .bubble      { background: var(--mauve); color: var(--bg); border-bottom-right-radius: 3px; }
+    .msg.assistant .bubble { background: var(--surface0); border-bottom-left-radius: 3px; }
+    .msg.assistant.local .bubble { border-left: 2px solid var(--yellow); }
+    .bubble p { margin: 0 0 .55em; }
+    .bubble p:last-child { margin-bottom: 0; }
+    .bubble pre {
+      background: var(--bg);
+      border: 1px solid var(--surface1);
+      border-radius: 6px;
+      padding: 10px 14px;
+      overflow-x: auto;
+      margin: 8px 0;
+      font-size: .85em;
+      line-height: 1.5;
+    }
+    .bubble code { font-family: 'Cascadia Code','Fira Code',monospace; font-size: .88em; }
+    .bubble pre code { font-size: inherit; }
+    .bubble strong { font-weight: 600; }
+    .bubble em { font-style: italic; }
+    .meta {
+      font-size: .72rem;
+      color: var(--subtext);
+      padding: 0 4px;
+      line-height: 1.6;
+    }
+    .ollama-tag { color: var(--yellow); }
+
+    /* ── input ── */
+    .input-wrap {
+      border-top: 1px solid var(--surface1);
+      padding: 12px 0 16px;
+      display: flex;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .input-inner {
+      width: 100%;
+      max-width: 820px;
+      padding: 0 32px;
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+    }
+    textarea {
+      flex: 1;
+      background: var(--surface0);
+      border: 1px solid transparent;
+      border-radius: 10px;
+      color: var(--text);
+      padding: 10px 14px;
+      font: inherit;
+      font-size: .93rem;
+      resize: none;
+      min-height: 46px;
+      max-height: 180px;
+      outline: none;
+      line-height: 1.5;
+      transition: border-color .15s;
+    }
+    textarea:focus { border-color: var(--mauve); }
+    textarea::placeholder { color: var(--subtext); }
+    #send {
+      background: var(--mauve);
+      color: var(--bg);
+      border: 1px solid transparent;
+      border-radius: 10px;
+      padding: 0 18px;
+      height: 46px;
+      font: inherit;
+      font-weight: 600;
+      font-size: .9rem;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: opacity .15s, background .15s, color .15s, border-color .15s;
+      white-space: nowrap;
+    }
+    #send:hover:not(.is-cancel) { opacity: .85; }
+    #send.is-cancel {
+      background: transparent;
+      color: var(--red);
+      border-color: var(--red);
+    }
+
+    /* ── drawer ── */
+    #drawer {
+      width: 0;
+      flex-shrink: 0;
+      overflow: hidden;
+      transition: width .28s ease;
+    }
+    #drawer.open { width: 40vw; }
+
+    .drawer-inner {
+      width: 40vw;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      background: var(--surface0);
+      border-left: 1px solid var(--surface1);
+    }
+    .d-hdr {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--surface1);
+      font-size: .84rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+    #drawer-close {
+      background: transparent;
+      border: none;
+      color: var(--subtext);
+      cursor: pointer;
+      font-size: .9rem;
+      padding: 3px 6px;
+      border-radius: 5px;
+      line-height: 1;
+      transition: color .15s, background .15s;
+    }
+    #drawer-close:hover { color: var(--text); background: var(--surface1); }
+
+    .d-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .d-section { display: flex; flex-direction: column; gap: 9px; }
+    .d-title {
+      font-size: .69rem;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--subtext);
+    }
+    .d-section select {
+      background: var(--bg);
+      border: 1px solid var(--surface1);
+      border-radius: 6px;
+      color: var(--text);
+      padding: 7px 10px;
+      font: inherit;
+      font-size: .85rem;
+      outline: none;
+      width: 100%;
+      cursor: pointer;
+    }
+    .d-section select:focus { border-color: var(--mauve); }
+
+    /* system bars */
+    .sys-metric { display: flex; flex-direction: column; gap: 5px; }
+    .sys-label-row { display: flex; justify-content: space-between; font-size: .8rem; }
+    .sys-label-row .sk { color: var(--subtext); }
+    .sys-label-row .sv { color: var(--text); font-variant-numeric: tabular-nums; }
+    .bar-wrap { height: 4px; background: var(--surface1); border-radius: 2px; overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: 2px; background: var(--blue); transition: width .6s ease, background .4s; }
+    .bar-fill.warn { background: var(--yellow); }
+    .bar-fill.crit { background: var(--red); }
+
+    /* current request stats */
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      font-size: .8rem;
+      padding: 1px 0;
+    }
+    .stat-row .sk { color: var(--subtext); }
+    .stat-row .sv { color: var(--text); font-variant-numeric: tabular-nums; }
+    .stat-row .sv.live { color: var(--blue); animation: pulse 1s infinite; }
+
+    /* history items */
+    .hist-item {
+      background: var(--bg);
+      border-radius: 8px;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .hi-header {
+      display: flex;
+      align-items: baseline;
+      gap: 7px;
+      font-size: .78rem;
+    }
+    .hi-time   { color: var(--mauve); font-variant-numeric: tabular-nums; }
+    .hi-model  { color: var(--text); font-weight: 500; }
+    .hi-local  { color: var(--yellow); font-size: .72rem; }
+    .hi-err    { color: var(--red); font-size: .72rem; }
+    .hi-summary {
+      font-size: .78rem;
+      color: var(--text);
+      line-height: 1.4;
+    }
+    .hi-pending { color: var(--subtext); font-style: italic; }
+    .hi-src-tag { font-size: .65rem; color: var(--subtext); margin-left: 4px; }
+    .hi-error { font-size: .76rem; color: var(--red); padding-top: 5px; border-top: 1px solid var(--surface1); }
+    .hi-cancelled { font-size: .76rem; color: var(--subtext); font-style: italic; padding-top: 5px; border-top: 1px solid var(--surface1); }
+
+    /* sub-bubbles (tool use) */
+    .sub-bubbles { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; width: 100%; max-width: min(70ch, 90%); }
+    .sub-bubble {
+      background: var(--bg);
+      border: 1px solid var(--surface1);
+      border-radius: 8px;
+      overflow: hidden;
+      font-size: .78rem;
+    }
+    .sub-bubble-hdr {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 5px 10px;
+      cursor: pointer;
+      color: var(--subtext);
+      user-select: none;
+      transition: background .15s;
+    }
+    .sub-bubble-hdr:hover { background: var(--surface1); }
+    .sub-bubble-hdr .chevron { font-size: .6rem; transition: transform .18s; display: inline-block; }
+    .sub-bubble.open .chevron { transform: rotate(90deg); }
+    .sub-bubble-name { color: var(--yellow); font-weight: 500; }
+    .sub-bubble-body {
+      display: none;
+      padding: 8px 12px;
+      font-family: 'Cascadia Code','Fira Code',monospace;
+      font-size: .78rem;
+      white-space: pre-wrap;
+      word-break: break-all;
+      color: var(--subtext);
+      border-top: 1px solid var(--surface1);
+      max-height: 260px;
+      overflow-y: auto;
+    }
+    .sub-bubble.open .sub-bubble-body { display: block; }
+    .hi-stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px 12px;
+      padding-top: 7px;
+      border-top: 1px solid var(--surface1);
+    }
+    .hi-stat {
+      display: flex;
+      justify-content: space-between;
+      font-size: .74rem;
+    }
+    .hi-stat .sk { color: var(--subtext); }
+    .hi-stat .sv { color: var(--text); font-variant-numeric: tabular-nums; }
+
+    .d-empty { font-size: .8rem; color: var(--surface1); font-style: italic; }
+
+    #history-list { display: flex; flex-direction: column; gap: 10px; }
+
+    .metrics-link {
+      display: block;
+      font-size: .78rem;
+      color: var(--blue);
+      text-decoration: none;
+      padding: 7px 10px;
+      border-radius: 6px;
+      background: var(--bg);
+      text-align: center;
+      border: 1px solid var(--surface1);
+      transition: opacity .15s;
+    }
+    .metrics-link:hover { opacity: .75; }
+
+    .gpu-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: .78rem;
+      padding: 1px 0;
+    }
+    .gpu-row .sk { color: var(--subtext); }
+    .gpu-row .sv { color: var(--text); font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body>
+
+<div class="main-col">
+  <header>
+    <h1>bix ai</h1>
+    <div class="mode-group">
+      <button class="mode-btn active" data-mode="auto">Auto</button>
+      <button class="mode-btn" data-mode="local">Force Local</button>
+      <button class="mode-btn" data-mode="claude">Force Claude</button>
+    </div>
+    <div class="status">
+      <div class="dot" id="dot"></div>
+      <span id="status-label">idle</span>
+    </div>
+    <button id="drawer-toggle" title="Stats">≡</button>
+  </header>
+
+  <div class="messages" id="messages">
+    <div class="msgs-inner" id="msgs-inner"></div>
+  </div>
+
+  <div class="input-wrap">
+    <div class="input-inner">
+      <textarea id="input" placeholder="Message… (Shift+Enter for new line)" rows="1"></textarea>
+      <button id="send">Send</button>
+    </div>
+  </div>
+</div>
+
+<div id="drawer">
+  <div class="drawer-inner">
+    <div class="d-hdr">
+      <span>Stats</span>
+      <button id="drawer-close" title="Collapse">✕</button>
+    </div>
+    <div class="d-body">
+
+      <a class="metrics-link" href="http://192.168.0.47:9000" target="_blank">Internal Metrics →</a>
+
+      <div class="d-section">
+        <div class="d-title">System</div>
+        <div class="sys-metric">
+          <div class="sys-label-row"><span class="sk">CPU</span><span class="sv" id="cpu-val">—</span></div>
+          <div class="bar-wrap"><div class="bar-fill" id="cpu-bar" style="width:0%"></div></div>
+        </div>
+        <div class="sys-metric">
+          <div class="sys-label-row"><span class="sk">RAM</span><span class="sv" id="ram-val">—</span></div>
+          <div class="bar-wrap"><div class="bar-fill" id="ram-bar" style="width:0%"></div></div>
+        </div>
+        <div id="gpu-section" style="display:none; margin-top:4px; flex-direction:column; gap:3px;">
+          <div class="gpu-row"><span class="sk">GPU model</span><span class="sv" id="gpu-model-val">—</span></div>
+          <div class="gpu-row"><span class="sk">Layers</span><span class="sv" id="gpu-layers-val">—</span></div>
+          <div class="gpu-row"><span class="sk">VRAM</span><span class="sv" id="gpu-vram-val">—</span></div>
+        </div>
+      </div>
+
+      <div class="d-section">
+        <div class="d-title">Model</div>
+        <select id="model-select">
+          <optgroup label="Claude">
+            <option value="claude-opus-4-7">Opus 4.7</option>
+            <option value="claude-sonnet-4-6" selected>Sonnet 4.6</option>
+            <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
+          </optgroup>
+          <optgroup label="Ollama (local)">
+            <option value="qwen3.5:9b">Qwen 3.5 9B</option>
+            <option value="gemma4:e2b">Gemma 4 E2B</option>
+          </optgroup>
+        </select>
+      </div>
+
+      <div class="d-section">
+        <div class="d-title">Current Request</div>
+        <div id="current-stats"><span class="d-empty">No active request</span></div>
+      </div>
+
+      <div class="d-section">
+        <div class="d-title">History</div>
+        <div id="history-list"><span class="d-empty">None yet</span></div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────────
+let convHistory  = [];
+let mode         = 'auto';
+let model        = 'claude-sonnet-4-6';
+let busy         = false;
+let reqSeq       = 0;
+let currentReq   = null;
+let reqHistory   = [];
+let sysTimer     = null;
+let abortCtrl    = null;
+
+const modeDefaults = { auto: 'claude-sonnet-4-6', claude: 'claude-sonnet-4-6', local: 'gemma4:e2b' };
+
+// ── DOM ───────────────────────────────────────────────────────────────────────
+const msgsEl    = document.getElementById('messages');
+const msgsIn    = document.getElementById('msgs-inner');
+const inputEl   = document.getElementById('input');
+const sendBtn   = document.getElementById('send');
+const dotEl     = document.getElementById('dot');
+const lblEl     = document.getElementById('status-label');
+const drawer    = document.getElementById('drawer');
+const toggleBtn = document.getElementById('drawer-toggle');
+const closeBtn  = document.getElementById('drawer-close');
+const modelSel  = document.getElementById('model-select');
+const curStats  = document.getElementById('current-stats');
+const histList  = document.getElementById('history-list');
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function setStatus(stage, label) { dotEl.className = 'dot ' + stage; lblEl.textContent = label; }
+function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function fmtModel(m) { return m.replace(/^claude-/,'').replace(/-\d{8}$/,''); }
+function barClass(p) { return p > 85 ? 'bar-fill crit' : p > 70 ? 'bar-fill warn' : 'bar-fill'; }
+function friendlyModel(m) {
+  if (!m) return 'Assistant';
+  const l = m.toLowerCase();
+  if (l.startsWith('claude'))  return 'Claude';
+  if (l.startsWith('gemma'))   return 'Gemma';
+  if (l.startsWith('qwen'))    return 'Qwen';
+  if (l.startsWith('llama'))   return 'Llama';
+  if (l.startsWith('mistral')) return 'Mistral';
+  if (l.startsWith('phi'))     return 'Phi';
+  return m.split(':')[0].split('-')[0];
+}
+
+// ── Mode ──────────────────────────────────────────────────────────────────────
+const localModelValues = new Set(
+  [...document.querySelectorAll('#model-select option')].filter(o => o.closest('optgroup')?.label?.includes('local')).map(o => o.value)
+);
+
+function setMode(m, syncModel = true) {
+  mode = m;
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === m));
+  if (syncModel) { model = modeDefaults[m]; modelSel.value = model; }
+}
+
+document.querySelectorAll('.mode-btn').forEach(btn => {
+  btn.addEventListener('click', () => setMode(btn.dataset.mode));
+});
+
+modelSel.addEventListener('change', () => {
+  model = modelSel.value;
+  setMode(localModelValues.has(model) ? 'local' : 'claude', false);
+});
+
+// ── Drawer ────────────────────────────────────────────────────────────────────
+function openDrawer()  { drawer.classList.add('open');    toggleBtn.classList.add('open');    startSysPoll(); }
+function closeDrawer() { drawer.classList.remove('open'); toggleBtn.classList.remove('open'); stopSysPoll(); }
+toggleBtn.addEventListener('click', () => drawer.classList.contains('open') ? closeDrawer() : openDrawer());
+closeBtn.addEventListener('click', closeDrawer);
+
+// ── System poll ───────────────────────────────────────────────────────────────
+async function fetchSys() {
+  try {
+    const d = await fetch('/system').then(r => r.json());
+    document.getElementById('cpu-val').textContent = d.cpu_percent + '%';
+    const cb = document.getElementById('cpu-bar'); cb.style.width = d.cpu_percent + '%'; cb.className = barClass(d.cpu_percent);
+    document.getElementById('ram-val').textContent = `${d.ram_used_gb} / ${d.ram_total_gb} GB`;
+    const rb = document.getElementById('ram-bar'); rb.style.width = d.ram_percent + '%'; rb.className = barClass(d.ram_percent);
+    const gs = document.getElementById('gpu-section');
+    if (d.gpu) {
+      gs.style.display = 'flex';
+      document.getElementById('gpu-model-val').textContent = d.gpu.model || '—';
+      const vramGb  = (d.gpu.size_vram  / 1e9).toFixed(1);
+      const totalGb = (d.gpu.size_total / 1e9).toFixed(1);
+      let layersText;
+      if (d.gpu.num_gpu != null) {
+        layersText = d.gpu.num_gpu > 0 ? d.gpu.num_gpu + ' layers GPU' : 'CPU only';
+      } else {
+        layersText = d.gpu.size_vram > 0 ? 'Partial GPU' : 'CPU only';
+      }
+      document.getElementById('gpu-layers-val').textContent = layersText;
+      document.getElementById('gpu-vram-val').textContent   = d.gpu.size_vram ? `${vramGb} / ${totalGb} GB` : '—';
+    } else {
+      gs.style.display = 'none';
+    }
+  } catch {}
+}
+function startSysPoll() { if (sysTimer) return; fetchSys(); sysTimer = setInterval(fetchSys, 2000); }
+function stopSysPoll()  { clearInterval(sysTimer); sysTimer = null; }
+
+// ── Markdown ──────────────────────────────────────────────────────────────────
+function renderMd(text) {
+  let s = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  s = s.replace(/```(?:\w*)\n([\s\S]*?)```/g, (_,c) => `<pre><code>${c.trimEnd()}</code></pre>`);
+  s = s.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/\*(.+?)\*/g,   '<em>$1</em>');
+  s = s.split(/\n{2,}/).map(chunk =>
+    chunk.startsWith('<pre') ? chunk : `<p>${chunk.replace(/\n/g,'<br>')}</p>`
+  ).join('');
+  return s;
+}
+
+// ── Bubbles ───────────────────────────────────────────────────────────────────
+function addBubble(role, isLocal, modelName) {
+  const wrap = document.createElement('div');
+  wrap.className = 'msg ' + role + (isLocal ? ' local' : '');
+  const lbl = document.createElement('div');
+  lbl.className = 'role-label';
+  lbl.textContent = role === 'user' ? 'You' : friendlyModel(modelName);
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  wrap.append(lbl, bubble);
+  msgsIn.appendChild(wrap);
+  msgsEl.scrollTop = msgsEl.scrollHeight;
+  return { wrap, bubble };
+}
+
+function addMeta(wrap, m) {
+  const el = document.createElement('div');
+  el.className = 'meta';
+  const inTok = m.input_tokens ? `in ${m.input_tokens}` : '';
+  const outTok = `out ${m.output_tokens}`;
+  const parts = [
+    [inTok, outTok].filter(Boolean).join(' · '),
+    `TTFT ${m.ttft_ms}ms`,
+    `${m.tps} tok/s`,
+    `${m.elapsed_ms}ms total`,
+  ];
+  if (m.preprocess_ms > 50) parts.push(`prep ${m.preprocess_ms}ms`);
+  if (m.summarised > 0)     parts.push(`<span class="ollama-tag">⬡ ${m.summarised} compressed</span>`);
+  el.innerHTML = parts.join(' · ');
+  wrap.appendChild(el);
+}
+
+// ── Drawer stats ──────────────────────────────────────────────────────────────
+function row(k, v, live) {
+  return `<div class="stat-row"><span class="sk">${k}</span><span class="sv${live?' live':''}">${v}</span></div>`;
+}
+
+function renderCurrentStats() {
+  if (!currentReq) { curStats.innerHTML = '<span class="d-empty">No active request</span>'; return; }
+  const r = currentReq, running = r.status === 'running';
+  curStats.innerHTML = [
+    row('Status',  r.status, running),
+    row('Mode',    r.mode),
+    row('Model',   fmtModel(r.model)),
+    r.input_tokens  ? row('Input',   r.input_tokens  + ' tok') : '',
+    row('Output', r.output_tokens + ' tok', running),
+    r.ttft_ms       ? row('TTFT',    r.ttft_ms    + 'ms') : '',
+    r.tps           ? row('Tok/s',   r.tps) : '',
+    r.elapsed_ms    ? row('Elapsed', r.elapsed_ms + 'ms') : '',
+    r.preprocess_ms > 50 ? row('Prep', r.preprocess_ms + 'ms') : '',
+    r.summarised    ? row('Compressed', r.summarised + ' block(s)') : '',
+    r.skipped       ? row('Passed through', r.skipped + ' block(s)') : '',
+    r.failed        ? row('Failed compression', r.failed + ' block(s)') : '',
+  ].filter(Boolean).join('');
+}
+
+function renderHistory() {
+  if (!reqHistory.length) { histList.innerHTML = '<span class="d-empty">None yet</span>'; return; }
+  histList.innerHTML = [...reqHistory].reverse().slice(0, 12).map(r => {
+    const t     = r.timestamp.toTimeString().slice(0,5);
+    const local = r.mode === 'local' ? `<span class="hi-local"> ⬡ local</span>` : '';
+    const err   = r.status === 'error' ? `<span class="hi-err"> error</span>` : '';
+    const toks  = r.input_tokens ? `${r.input_tokens}→${r.output_tokens}` : `~${r.output_tokens}`;
+
+    let bodyHtml = '';
+    if (r.status === 'error') {
+      bodyHtml = `<div class="hi-error">${escHtml(r.errorMsg || 'Unknown error')}</div>`;
+    } else if (r.status === 'cancelled') {
+      bodyHtml = `<div class="hi-cancelled">Cancelled${r.output_tokens ? ` after ${r.output_tokens} tok` : ''}</div>`;
+    } else {
+      let summaryHtml = '';
+      if (r.summary === undefined) {
+        summaryHtml = `<div class="hi-summary hi-pending">summarising…</div>`;
+      } else if (r.summary) {
+        const srcTag = r.summarySource === 'local' ? `<span class="hi-src-tag">⬡</span>` : '';
+        summaryHtml = `<div class="hi-summary">${escHtml(r.summary)}${srcTag}</div>`;
+      }
+      bodyHtml = `${summaryHtml}
+      <div class="hi-stats">
+        <div class="hi-stat"><span class="sk">Tokens</span><span class="sv">${toks}</span></div>
+        <div class="hi-stat"><span class="sk">TTFT</span><span class="sv">${r.ttft_ms}ms</span></div>
+        <div class="hi-stat"><span class="sk">Tok/s</span><span class="sv">${r.tps}</span></div>
+        <div class="hi-stat"><span class="sk">Total</span><span class="sv">${r.elapsed_ms}ms</span></div>
+      </div>`;
+    }
+
+    return `<div class="hist-item">
+      <div class="hi-header">
+        <span class="hi-time">${t}</span>
+        <span class="hi-model">${fmtModel(r.model)}${local}${err}</span>
+      </div>
+      ${bodyHtml}
+    </div>`;
+  }).join('');
+}
+
+// ── Background summarization ──────────────────────────────────────────────────
+async function summarizeInBackground(reqId, userMsg, assistantMsg) {
+  const localModel = mode === 'local' ? model : 'gemma4:e2b';
+  try {
+    const res = await fetch('/summarize', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ user_msg: userMsg, assistant_msg: assistantMsg, local_model: localModel }),
+    });
+    const data = await res.json();
+    const entry = reqHistory.find(r => r.id === reqId);
+    if (entry) {
+      entry.summary = data.summary || null;
+      entry.summarySource = data.source;
+      renderHistory();
+    }
+  } catch {
+    const entry = reqHistory.find(r => r.id === reqId);
+    if (entry) { entry.summary = null; renderHistory(); }
+  }
+}
+
+// ── Cancel ────────────────────────────────────────────────────────────────────
+function setBusy(val) {
+  busy = val;
+  if (val) {
+    sendBtn.textContent = 'Cancel';
+    sendBtn.classList.add('is-cancel');
+  } else {
+    sendBtn.textContent = 'Send';
+    sendBtn.classList.remove('is-cancel');
+  }
+}
+
+// ── Send ──────────────────────────────────────────────────────────────────────
+async function send() {
+  const text = inputEl.value.trim();
+  if (!text || busy) return;
+
+  inputEl.value = '';
+  inputEl.style.height = '';
+  setBusy(true);
+
+  const userMsg = text;
+  convHistory.push({ role: 'user', content: text });
+  addBubble('user', false).bubble.textContent = text;
+
+  const isLocal = mode === 'local';
+  const { wrap, bubble } = addBubble('assistant', isLocal, model);
+  let fullText      = '';
+  let subBubblesEl  = null;
+  const toolBubbles = {};
+
+  reqSeq++;
+  const thisReqId = reqSeq;
+  currentReq = {
+    id: thisReqId, timestamp: new Date(),
+    model, mode, status: 'running',
+    input_tokens: 0, output_tokens: 0,
+    ttft_ms: 0, elapsed_ms: 0, tps: 0,
+    preprocess_ms: 0, summarised: 0, skipped: 0, failed: 0,
+  };
+  renderCurrentStats();
+  setStatus('checking', 'Checking…');
+
+  abortCtrl = new AbortController();
+
+  try {
+    const res = await fetch('/chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ messages: convHistory, model, mode }),
+      signal: abortCtrl.signal,
+    });
+
+    if (!res.ok) {
+      bubble.textContent = `HTTP ${res.status} — check server logs`;
+      setStatus('error', 'error');
+      currentReq.status = 'error';
+      currentReq.errorMsg = `HTTP ${res.status}`;
+      reqHistory.push({ ...currentReq, summary: null });
+      renderCurrentStats();
+      renderHistory();
+      setBusy(false);
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const blocks = buf.split('\n\n');
+      buf = blocks.pop();
+
+      for (const block of blocks) {
+        let evType = null, dataStr = null;
+        for (const line of block.split('\n')) {
+          if      (line.startsWith('event:')) evType  = line.slice(6).trim();
+          else if (line.startsWith('data:'))  dataStr = line.slice(5).trim();
+        }
+        if (!evType || !dataStr) continue;
+        let data;
+        try { data = JSON.parse(dataStr); } catch { continue; }
+
+        if (evType === 'status') {
+          setStatus(data.stage, data.message);
+
+        } else if (evType === 'preprocess') {
+          Object.assign(currentReq, {
+            preprocess_ms: data.preprocess_ms,
+            summarised:    data.summarised,
+            skipped:       data.skipped,
+            failed:        data.failed,
+          });
+          renderCurrentStats();
+
+        } else if (evType === 'input_tokens') {
+          currentReq.input_tokens = data.count;
+          renderCurrentStats();
+
+        } else if (evType === 'delta') {
+          fullText += data.text;
+          bubble.textContent = fullText;
+          msgsEl.scrollTop = msgsEl.scrollHeight;
+          currentReq.output_tokens = Math.round(fullText.length / 4);
+          renderCurrentStats();
+
+        } else if (evType === 'metrics') {
+          bubble.innerHTML = renderMd(fullText);
+          addMeta(wrap, data);
+          setStatus('done', `TTFT ${data.ttft_ms}ms · ${data.tps} tok/s`);
+          Object.assign(currentReq, {
+            status:        'done',
+            input_tokens:  data.input_tokens,
+            output_tokens: data.output_tokens,
+            elapsed_ms:    data.elapsed_ms,
+            ttft_ms:       data.ttft_ms,
+            preprocess_ms: data.preprocess_ms,
+            tps:           data.tps,
+            summarised:    data.summarised,
+            skipped:       data.skipped  || 0,
+            failed:        data.failed   || 0,
+          });
+          reqHistory.push({ ...currentReq, summary: undefined });
+          renderCurrentStats();
+          renderHistory();
+          // Kick off background summarization
+          summarizeInBackground(thisReqId, userMsg, fullText);
+
+        } else if (evType === 'tool_start') {
+          if (!subBubblesEl) {
+            subBubblesEl = document.createElement('div');
+            subBubblesEl.className = 'sub-bubbles';
+            wrap.appendChild(subBubblesEl);
+          }
+          const sb  = document.createElement('div');  sb.className = 'sub-bubble';
+          const hdr = document.createElement('div');  hdr.className = 'sub-bubble-hdr';
+          const bod = document.createElement('div');  bod.className = 'sub-bubble-body';
+          hdr.innerHTML = `<span class="chevron">▶</span><span class="sub-bubble-name">⚙ ${escHtml(data.name)}</span><span style="margin-left:auto;font-size:.68rem;color:var(--subtext)">${escHtml(data.id)}</span>`;
+          hdr.addEventListener('click', () => sb.classList.toggle('open'));
+          sb.append(hdr, bod);
+          subBubblesEl.appendChild(sb);
+          toolBubbles[data.index] = { sb, hdr, bod };
+
+        } else if (evType === 'tool_input') {
+          if (toolBubbles[data.index]) {
+            toolBubbles[data.index].bod.textContent += data.partial_json;
+          }
+
+        } else if (evType === 'tool_end') {
+          const tb = toolBubbles[data.index];
+          if (tb) {
+            try {
+              const pretty = JSON.stringify(JSON.parse(tb.bod.textContent), null, 2);
+              tb.bod.textContent = pretty;
+            } catch {}
+            tb.sb.classList.add('open'); // auto-expand when complete
+          }
+
+        } else if (evType === 'done') {
+          convHistory.push({ role: 'assistant', content: fullText });
+
+        } else if (evType === 'error') {
+          bubble.textContent = 'Error: ' + data.message;
+          setStatus('error', 'error');
+          currentReq.status   = 'error';
+          currentReq.errorMsg = data.message;
+          reqHistory.push({ ...currentReq, summary: null });
+          renderCurrentStats();
+          renderHistory();
+        }
+      }
+    }
+
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      if (fullText) {
+        bubble.innerHTML = renderMd(fullText) + '<p><em style="opacity:.5">— cancelled</em></p>';
+      } else {
+        bubble.textContent = '— cancelled';
+      }
+      setStatus('', 'cancelled');
+      dotEl.className = 'dot';
+      if (currentReq) {
+        currentReq.status = 'cancelled';
+        reqHistory.push({ ...currentReq, summary: null });
+        renderCurrentStats();
+        renderHistory();
+      }
+    } else {
+      bubble.textContent = 'Connection error: ' + e.message;
+      setStatus('error', 'error');
+      if (currentReq) {
+        currentReq.status   = 'error';
+        currentReq.errorMsg = e.message;
+        reqHistory.push({ ...currentReq, summary: null });
+        renderCurrentStats();
+        renderHistory();
+      }
+    }
+  }
+
+  abortCtrl = null;
+  setBusy(false);
+  inputEl.focus();
+}
+
+sendBtn.addEventListener('click', () => {
+  if (busy && abortCtrl) abortCtrl.abort();
+  else send();
+});
+inputEl.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+});
+inputEl.addEventListener('input', () => {
+  inputEl.style.height = '';
+  inputEl.style.height = Math.min(inputEl.scrollHeight, 180) + 'px';
+});
+</script>
+</body>
+</html>
