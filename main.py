@@ -46,6 +46,8 @@ ENTRIES_PER_FILE     = 200
 
 psutil.cpu_percent()  # prime the cpu counter
 
+_agg = {"requests": 0, "summarised": 0, "checked": 0, "preprocess_ms": 0, "failed": 0}
+
 
 # ── Filesystem tools ──────────────────────────────────────────────────────────
 def _safe_path(path: str) -> Path | None:
@@ -401,6 +403,7 @@ async def _stream_ollama(messages: list, model: str):
 
 
 async def _stream_claude(messages: list, model: str, max_tokens: int, skip_preprocess: bool):
+    _agg["requests"] += 1
     req_body = {"model": model, "max_tokens": max_tokens, "messages": messages}
     recent = _load_recent_memories(3)
     sys_prompt = _memory_system_prompt(recent)
@@ -424,6 +427,10 @@ async def _stream_claude(messages: list, model: str, max_tokens: int, skip_prepr
         except Exception as e:
             log.warning("preprocess error: %s", e)
         preprocess_ms = round((time.monotonic() - t0) * 1000)
+        _agg["summarised"]    += stats["summarised"]
+        _agg["checked"]       += stats["summarised"] + stats["skipped"]
+        _agg["preprocess_ms"] += preprocess_ms
+        _agg["failed"]        += stats["failed"]
         yield sse("preprocess", {
             "summarised":    stats["summarised"],
             "skipped":       stats["skipped"],
@@ -675,6 +682,11 @@ async def summarize(request: Request):
     return {"summary": summary, "source": source}
 
 
+@app.get("/stats")
+async def router_stats():
+    return dict(_agg)
+
+
 @app.post("/memory/save")
 async def save_memory(request: Request):
     body       = await request.json()
@@ -772,20 +784,33 @@ async def chat(request: Request):
 @app.post("/v1/messages")
 async def messages(request: Request):
     body    = await request.json()
-    api_key = request.headers.get("x-api-key", "")
+    api_key = (
+      request.headers.get("x-api-key")
+      or request.headers.get("authorization", "").removeprefix("Bearer ")
+      or ""
+    )
     version = request.headers.get("anthropic-version", "2023-06-01")
-    beta    = request.headers.get("anthropic-beta")
+    beta = request.headers.get("anthropic-beta") or request.query_params.get("beta")
 
     log.info("recv model=%s msgs=%d", body.get("model"), len(body.get("messages", [])))
 
-    try:
-        body, stats = await strategy.preprocess(body, ollama_chat)
-        log.info("preprocess summarised=%d skipped=%d failed=%d",
-                 stats["summarised"], stats["skipped"], stats["failed"])
-    except Exception as e:
-        log.warning("preprocess errored, forwarding original: %s", e)
+    stats = {"summarised": 0, "skipped": 0, "failed": 0}
+    if strategy.has_oversized_blocks(body):
+        try:
+            body, stats = await strategy.preprocess(body, ollama_chat)
+            log.info("preprocess summarised=%d skipped=%d failed=%d",
+          stats["summarised"],stats["skipped"], stats["failed"])
+        except Exception as e:
+            log.warning("preprocess errored, forwarding original: %s", e)
 
-    body = {**body, "stream": True}
+        _agg["requests"]   += 1
+        _agg["summarised"] += stats["summarised"]
+        _agg["checked"]    += stats["summarised"] + stats["skipped"]
+        _agg["failed"]     += stats["failed"]
+
+    stream_requested = body.get("stream", False)
+    body = {**body, "stream": stream_requested}
+
     headers = {
         "x-api-key": api_key,
         "anthropic-version": version,
@@ -794,10 +819,21 @@ async def messages(request: Request):
     if beta:
         headers["anthropic-beta"] = beta
 
-    async def upstream():
-        async with httpx.AsyncClient(timeout=None) as client:
-            async with client.stream("POST", ANTHROPIC_URL, json=body, headers=headers) as r:
-                async for chunk in r.aiter_bytes():
-                    yield chunk
+    if stream_requested:
+        async def upstream():
+            async with httpx.AsyncClient(timeout=None) as client:
+                async with client.stream("POST", ANTHROPIC_URL, json=body, headers=headers) as r:
+                    async for chunk in r.aiter_bytes():
+                        yield chunk
 
-    return StreamingResponse(upstream(), media_type="text/event-stream")
+        return StreamingResponse(upstream(), media_type="text/event-stream")
+
+    else:
+        async with httpx.AsyncClient(timeout=None) as client:
+            r = await client.post(ANTHROPIC_URL, json=body, headers=headers)
+            from fastapi.responses import Response
+            return Response(
+                content=r.content,
+                status_code=r.status_code,
+                media_type="application/json",
+            )
