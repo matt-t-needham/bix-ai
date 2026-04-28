@@ -340,6 +340,7 @@
     .hi-model  { color: var(--text); font-weight: 500; }
     .hi-local  { color: var(--yellow); font-size: .72rem; }
     .hi-err    { color: var(--red); font-size: .72rem; }
+    .call-notice { color: var(--yellow); font-size: .8rem; padding: 1px 0; }
     .hi-summary {
       font-size: .78rem;
       color: var(--text);
@@ -547,7 +548,10 @@
         </div>
 
         <div class="d-section" style="border-top:1px solid var(--surface1);padding-top:12px">
-          <div class="d-title">History</div>
+          <div class="d-title" style="display:flex;justify-content:space-between;align-items:baseline">
+            <span>History</span>
+            <span id="hist-cost-total" style="font-size:.72rem;font-weight:400;color:var(--subtext)"></span>
+          </div>
           <div id="history-list"><span class="d-empty">None yet</span></div>
         </div>
 
@@ -604,6 +608,20 @@ function friendlyModel(m) {
   if (l.startsWith('mistral')) return 'Mistral';
   if (l.startsWith('phi'))     return 'Phi';
   return m.split(':')[0].split('-')[0];
+}
+
+// Cost per 1M tokens in USD (input, output)
+const MODEL_RATES = {
+  'claude-opus-4-7':           [15,   75  ],
+  'claude-sonnet-4-6':         [3,    15  ],
+  'claude-haiku-4-5-20251001': [0.80, 4   ],
+};
+function estimateCost(model, inTok, outTok) {
+  if (!inTok && !outTok) return null;
+  const [rIn, rOut] = MODEL_RATES[model] || MODEL_RATES['claude-sonnet-4-6'];
+  const usd = ((inTok || 0) * rIn + (outTok || 0) * rOut) / 1e6;
+  if (usd < 0.0001) return '<$0.0001';
+  return '$' + usd.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
 }
 
 // ── Mode ──────────────────────────────────────────────────────────────────────
@@ -767,12 +785,32 @@ function renderCurrentStats() {
 }
 
 function renderHistory() {
-  if (!reqHistory.length) { histList.innerHTML = '<span class="d-empty">None yet</span>'; return; }
+  const costTotalEl = document.getElementById('hist-cost-total');
+  if (!reqHistory.length) {
+    histList.innerHTML = '<span class="d-empty">None yet</span>';
+    if (costTotalEl) costTotalEl.textContent = '';
+    return;
+  }
+
+  // Session total cost (Claude requests only)
+  const sessionCost = reqHistory
+    .filter(r => r.mode !== 'local' && r.status === 'done')
+    .reduce((sum, r) => {
+      const [rIn, rOut] = MODEL_RATES[r.model] || MODEL_RATES['claude-sonnet-4-6'];
+      return sum + ((r.input_tokens || 0) * rIn + (r.output_tokens || 0) * rOut) / 1e6;
+    }, 0);
+  if (costTotalEl) {
+    costTotalEl.textContent = sessionCost > 0
+      ? `session $${sessionCost.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')}`
+      : '';
+  }
+
   histList.innerHTML = [...reqHistory].reverse().slice(0, 12).map(r => {
     const t     = r.timestamp.toTimeString().slice(0,5);
     const local = r.mode === 'local' ? `<span class="hi-local"> · local</span>` : '';
     const err   = r.status === 'error' ? `<span class="hi-err"> · error</span>` : '';
     const toks  = r.input_tokens ? `${r.input_tokens}→${r.output_tokens}` : `~${r.output_tokens}`;
+    const cost  = r.mode !== 'local' ? estimateCost(r.model, r.input_tokens, r.output_tokens) : null;
 
     let bodyHtml = '';
     if (r.status === 'error') {
@@ -790,6 +828,7 @@ function renderHistory() {
       bodyHtml = `${summaryHtml}
       <div class="hi-stats">
         <div class="hi-stat"><span class="sk">Tokens</span><span class="sv">${toks}</span></div>
+        ${cost ? `<div class="hi-stat"><span class="sk">Cost</span><span class="sv">${cost}</span></div>` : ''}
         <div class="hi-stat"><span class="sk">TTFT</span><span class="sv">${r.ttft_ms}ms</span></div>
         <div class="hi-stat"><span class="sk">Tok/s</span><span class="sv">${r.tps}</span></div>
         <div class="hi-stat"><span class="sk">Total</span><span class="sv">${r.elapsed_ms}ms</span></div>
@@ -868,9 +907,10 @@ async function saveMemoryInBackground() {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        messages:     convHistory,
-        model:        model,
-        input_tokens: currentReq?.input_tokens || 0,
+        messages:      convHistory,
+        model:         model,
+        input_tokens:  currentReq?.input_tokens  || 0,
+        output_tokens: currentReq?.output_tokens || 0,
       }),
     });
     if (res.ok) {
@@ -1044,6 +1084,10 @@ async function send() {
             subBubblesEl.className = 'sub-bubbles';
             wrap.appendChild(subBubblesEl);
           }
+          const cn = document.createElement('div');
+          cn.className = 'call-notice';
+          cn.textContent = `Called ${data.name}.`;
+          subBubblesEl.appendChild(cn);
           const sb  = document.createElement('div');  sb.className = 'sub-bubble';
           const hdr = document.createElement('div');  hdr.className = 'sub-bubble-hdr';
           const bod = document.createElement('div');  bod.className = 'sub-bubble-body';

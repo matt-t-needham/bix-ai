@@ -396,6 +396,7 @@ async def _stream_ollama(messages: list, model: str):
             "tps": round(est_tokens / elapsed, 1),
             "summarised": 0,
         })
+        log.info("chat_done model=%s ttft_ms=%d elapsed_ms=%d", model, ttft_ms or 0, round(elapsed * 1000))
         yield sse("done", {})
     except Exception as e:
         log.error("ollama stream error: %s", e)
@@ -409,6 +410,7 @@ async def _stream_claude(messages: list, model: str, max_tokens: int, skip_prepr
     sys_prompt = _memory_system_prompt(recent)
     if sys_prompt:
         req_body["system"] = sys_prompt
+    log.info("memory loaded count=%d injected=%s", len(recent), bool(sys_prompt))
     stats = {"summarised": 0, "skipped": 0, "failed": 0}
     preprocess_ms = 0
 
@@ -452,6 +454,7 @@ async def _stream_claude(messages: list, model: str, max_tokens: int, skip_prepr
     current_messages   = list(req_body["messages"])
 
     for _turn in range(10):  # cap at 10 tool-use turns
+        log.info("tool_turn turn=%d msgs=%d", _turn, len(current_messages))
         api_body = {
             **req_body,
             "messages": current_messages,
@@ -481,6 +484,7 @@ async def _stream_claude(messages: list, model: str, max_tokens: int, skip_prepr
                             if event_type == "message_start":
                                 tok = data.get("message", {}).get("usage", {}).get("input_tokens", 0)
                                 total_input_tokens += tok
+                                log.info("input_tokens turn=%d count=%d total=%d", _turn, tok, total_input_tokens)
                                 if _turn == 0:
                                     yield sse("input_tokens", {"count": tok})
 
@@ -522,6 +526,8 @@ async def _stream_claude(messages: list, model: str, max_tokens: int, skip_prepr
                             elif event_type == "message_delta":
                                 output_tokens = data.get("usage", {}).get("output_tokens", 0)
                                 stop_reason   = data.get("delta", {}).get("stop_reason")
+                                log.info("output_tokens turn=%d count=%d stop_reason=%s",
+                                         _turn, output_tokens, stop_reason)
 
         except Exception as e:
             log.error("upstream error: %s", e)
@@ -542,6 +548,8 @@ async def _stream_claude(messages: list, model: str, max_tokens: int, skip_prepr
                 "skipped":       stats["skipped"],
                 "failed":        stats["failed"],
             })
+            log.info("chat_done model=%s in=%d out=%d ttft_ms=%d elapsed_ms=%d",
+                     model, total_input_tokens, output_tokens, ttft_ms or 0, round(elapsed * 1000))
             yield sse("done", {})
             return
 
@@ -691,8 +699,9 @@ async def router_stats():
 async def save_memory(request: Request):
     body       = await request.json()
     messages   = body.get("messages", [])
-    model_name = body.get("model", DEFAULT_MODEL)
-    in_tokens  = body.get("input_tokens", 0)
+    model_name  = body.get("model", DEFAULT_MODEL)
+    in_tokens   = body.get("input_tokens", 0)
+    out_tokens  = body.get("output_tokens", 0)
 
     user_msg = next(
         (str(m.get("content", "")) for m in messages if m.get("role") == "user"), ""
@@ -722,21 +731,23 @@ async def save_memory(request: Request):
     try:
         conv_path.write_text(json.dumps({
             "id": uid, "date": now_str, "model": model_name,
-            "input_tokens": in_tokens, "messages": messages,
+            "input_tokens": in_tokens, "output_tokens": out_tokens,
+            "messages": messages,
         }, indent=2))
     except Exception as e:
         log.warning("conversation file write failed: %s", e)
         conv_filename = None
 
     entry = {
-        "id":           f"{now_str}-{uid}",
-        "date":         now_str,
-        "title":        title,
-        "summary":      summary,
-        "model":        model_name,
-        "input_tokens": in_tokens,
-        "tags":         tags,
-        "file":         conv_filename,
+        "id":            f"{now_str}-{uid}",
+        "date":          now_str,
+        "title":         title,
+        "summary":       summary,
+        "model":         model_name,
+        "input_tokens":  in_tokens,
+        "output_tokens": out_tokens,
+        "tags":          tags,
+        "file":          conv_filename,
     }
 
     _append_memory(entry)
@@ -781,59 +792,4 @@ async def chat(request: Request):
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 
-@app.post("/v1/messages")
-async def messages(request: Request):
-    body    = await request.json()
-    api_key = (
-      request.headers.get("x-api-key")
-      or request.headers.get("authorization", "").removeprefix("Bearer ")
-      or ""
-    )
-    version = request.headers.get("anthropic-version", "2023-06-01")
-    beta = request.headers.get("anthropic-beta") or request.query_params.get("beta")
 
-    log.info("recv model=%s msgs=%d", body.get("model"), len(body.get("messages", [])))
-
-    stats = {"summarised": 0, "skipped": 0, "failed": 0}
-    if strategy.has_oversized_blocks(body):
-        try:
-            body, stats = await strategy.preprocess(body, ollama_chat)
-            log.info("preprocess summarised=%d skipped=%d failed=%d",
-          stats["summarised"],stats["skipped"], stats["failed"])
-        except Exception as e:
-            log.warning("preprocess errored, forwarding original: %s", e)
-
-        _agg["requests"]   += 1
-        _agg["summarised"] += stats["summarised"]
-        _agg["checked"]    += stats["summarised"] + stats["skipped"]
-        _agg["failed"]     += stats["failed"]
-
-    stream_requested = body.get("stream", False)
-    body = {**body, "stream": stream_requested}
-
-    headers = {
-        "x-api-key": api_key,
-        "anthropic-version": version,
-        "content-type": "application/json",
-    }
-    if beta:
-        headers["anthropic-beta"] = beta
-
-    if stream_requested:
-        async def upstream():
-            async with httpx.AsyncClient(timeout=None) as client:
-                async with client.stream("POST", ANTHROPIC_URL, json=body, headers=headers) as r:
-                    async for chunk in r.aiter_bytes():
-                        yield chunk
-
-        return StreamingResponse(upstream(), media_type="text/event-stream")
-
-    else:
-        async with httpx.AsyncClient(timeout=None) as client:
-            r = await client.post(ANTHROPIC_URL, json=body, headers=headers)
-            from fastapi.responses import Response
-            return Response(
-                content=r.content,
-                status_code=r.status_code,
-                media_type="application/json",
-            )
