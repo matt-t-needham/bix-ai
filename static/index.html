@@ -54,11 +54,11 @@
       border-radius: 8px;
       padding: 2px;
       gap: 2px;
-      margin-left: auto;
-      flex-shrink: 0;
+      height: 24px;
     }
     .mode-btn {
-      padding: 4px 11px;
+      flex: 1;
+      padding: 0 10px;
       border-radius: 6px;
       border: none;
       background: transparent;
@@ -68,6 +68,9 @@
       cursor: pointer;
       transition: background .15s, color .15s;
       white-space: nowrap;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
     .mode-btn.active             { background: var(--surface1); color: var(--text); }
     .mode-btn.active[data-mode="local"]  { color: var(--yellow); }
@@ -81,6 +84,7 @@
       color: var(--subtext);
       white-space: nowrap;
       flex-shrink: 0;
+      margin-left: auto;
     }
     .dot {
       width: 8px; height: 8px;
@@ -184,11 +188,20 @@
       max-width: 820px;
       padding: 0 32px;
       display: flex;
+      flex-direction: row;
       gap: 8px;
       align-items: flex-end;
     }
+    .input-right {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex-shrink: 0;
+    }
     textarea {
       flex: 1;
+      min-height: 70px;
+      max-height: 180px;
       background: var(--surface0);
       border: 1px solid transparent;
       border-radius: 10px;
@@ -197,8 +210,6 @@
       font: inherit;
       font-size: .93rem;
       resize: none;
-      min-height: 46px;
-      max-height: 180px;
       outline: none;
       line-height: 1.5;
       transition: border-color .15s;
@@ -212,11 +223,11 @@
       border-radius: 10px;
       padding: 0 18px;
       height: 46px;
+      width: 100%;
       font: inherit;
       font-weight: 600;
       font-size: .9rem;
       cursor: pointer;
-      flex-shrink: 0;
       transition: opacity .15s, background .15s, color .15s, border-color .15s;
       white-space: nowrap;
     }
@@ -340,7 +351,7 @@
     .hi-model  { color: var(--text); font-weight: 500; }
     .hi-local  { color: var(--yellow); font-size: .72rem; }
     .hi-err    { color: var(--red); font-size: .72rem; }
-    .call-notice { color: var(--yellow); font-size: .8rem; padding: 1px 0; }
+    .call-notice { color: var(--yellow); font-size: .8rem; margin: .4em 0; }
     .hi-summary {
       font-size: .78rem;
       color: var(--text);
@@ -405,6 +416,17 @@
 
     .d-empty { font-size: .8rem; color: var(--surface1); font-style: italic; }
 
+    .d-collapsible {
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      user-select: none;
+      transition: color .15s;
+    }
+    .d-collapsible:hover { color: var(--text); }
+    .d-chev { font-size: .6rem; transition: transform .18s; display: inline-block; }
+
     .mem-hdr {
       cursor: pointer;
       display: flex;
@@ -448,11 +470,6 @@
 <div class="main-col">
   <header>
     <h1>bix ai</h1>
-    <div class="mode-group">
-      <button class="mode-btn active" data-mode="auto">Auto</button>
-      <button class="mode-btn" data-mode="local">Local</button>
-      <button class="mode-btn" data-mode="claude">Claude</button>
-    </div>
     <div class="status">
       <div class="dot" id="dot"></div>
       <span id="status-label">idle</span>
@@ -467,7 +484,14 @@
   <div class="input-wrap">
     <div class="input-inner">
       <textarea id="input" placeholder="Message… (Shift+Enter for new line)" rows="1"></textarea>
-      <button id="send">Send</button>
+      <div class="input-right">
+        <div class="mode-group">
+          <button class="mode-btn active" data-mode="auto">Auto</button>
+          <button class="mode-btn" data-mode="local">Local</button>
+          <button class="mode-btn" data-mode="claude">Claude</button>
+        </div>
+        <button id="send">Send</button>
+      </div>
     </div>
   </div>
 </div>
@@ -484,53 +508,85 @@
         <a class="metrics-link" href="http://192.168.0.47:9000" target="_blank">Internal Metrics →</a>
 
         <div class="d-section">
-          <div class="d-title">System</div>
-          <div class="sys-metric">
-            <div class="sys-label-row"><span class="sk">CPU</span><span class="sv" id="cpu-val">—</span></div>
-            <div class="bar-wrap"><div class="bar-fill" id="cpu-bar" style="width:0%"></div></div>
+          <div class="d-title d-collapsible" onclick="toggleDSection('router')">
+            <span class="d-chev" id="router-chev" style="transform:rotate(90deg)">▶</span>
+            AI Router
           </div>
-          <div class="sys-metric">
-            <div class="sys-label-row"><span class="sk">RAM</span><span class="sv" id="ram-val">—</span></div>
-            <div class="bar-wrap"><div class="bar-fill" id="ram-bar" style="width:0%"></div></div>
+          <div id="router-body">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:8px;margin-bottom:4px;border-bottom:1px solid var(--surface1)">
+              <div style="display:flex;align-items:center;gap:7px">
+                <div id="auth-dot" style="width:7px;height:7px;border-radius:50%;background:var(--surface1);flex-shrink:0;transition:background .3s"></div>
+                <span id="auth-label" style="font-size:.78rem;color:var(--subtext)">—</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px">
+                <span id="auth-expiry" style="font-size:.72rem;color:var(--subtext);font-variant-numeric:tabular-nums"></span>
+                <button onclick="fetchAuthStatus()" title="Refresh auth status" style="background:transparent;border:1px solid var(--surface1);border-radius:4px;color:var(--subtext);font:inherit;font-size:.75rem;padding:1px 7px;cursor:pointer;line-height:1.6;transition:color .15s,border-color .15s" onmouseover="this.style.color='var(--text)';this.style.borderColor='var(--subtext)'" onmouseout="this.style.color='var(--subtext)';this.style.borderColor='var(--surface1)'">↺</button>
+              </div>
+            </div>
+            <div id="auth-hint" style="display:none;font-size:.71rem;color:var(--yellow);margin-bottom:8px;line-height:1.6"></div>
+            <div class="hi-stats">
+              <div class="hi-stat"><span class="sk">Requests</span><span class="sv" id="rs-requests">—</span></div>
+              <div class="hi-stat"><span class="sk">Compressed</span><span class="sv ollama-tag" id="rs-summarised">—</span></div>
+              <div class="hi-stat"><span class="sk">Checked</span><span class="sv" id="rs-checked">—</span></div>
+              <div class="hi-stat"><span class="sk">Prep time</span><span class="sv" id="rs-prep">—</span></div>
+            </div>
+            <div id="rs-avg-ttft"></div>
           </div>
-          <div id="gpu-section" style="margin-top:4px; display:flex; flex-direction:column; gap:5px;">
-            <div class="gpu-row"><span class="sk">GPU</span><span class="sv" id="gpu-model-val">—</span></div>
-            <div class="gpu-row"><span class="sk">Offload</span><span class="sv" id="gpu-layers-val">—</span></div>
+        </div>
+
+        <div class="d-section">
+          <div class="d-title d-collapsible" onclick="toggleDSection('system')">
+            <span class="d-chev" id="system-chev" style="transform:rotate(90deg)">▶</span>
+            System
+          </div>
+          <div id="system-body">
             <div class="sys-metric">
-              <div class="sys-label-row"><span class="sk">VRAM</span><span class="sv" id="gpu-vram-val">—</span></div>
-              <div class="bar-wrap"><div class="bar-fill" id="vram-bar" style="width:0%"></div></div>
+              <div class="sys-label-row"><span class="sk">CPU</span><span class="sv" id="cpu-val">—</span></div>
+              <div class="bar-wrap"><div class="bar-fill" id="cpu-bar" style="width:0%"></div></div>
+            </div>
+            <div class="sys-metric">
+              <div class="sys-label-row"><span class="sk">RAM</span><span class="sv" id="ram-val">—</span></div>
+              <div class="bar-wrap"><div class="bar-fill" id="ram-bar" style="width:0%"></div></div>
+            </div>
+            <div id="gpu-section" style="margin-top:4px; display:flex; flex-direction:column; gap:5px;">
+              <div class="gpu-row"><span class="sk">GPU</span><span class="sv" id="gpu-model-val">—</span></div>
+              <div class="gpu-row"><span class="sk">Offload</span><span class="sv" id="gpu-layers-val">—</span></div>
+              <div class="sys-metric">
+                <div class="sys-label-row"><span class="sk">VRAM</span><span class="sv" id="gpu-vram-val">—</span></div>
+                <div class="bar-wrap"><div class="bar-fill" id="vram-bar" style="width:0%"></div></div>
+              </div>
             </div>
           </div>
         </div>
 
         <div class="d-section">
-          <div class="d-title">Router</div>
-          <div class="hi-stats">
-            <div class="hi-stat"><span class="sk">Requests</span><span class="sv" id="rs-requests">—</span></div>
-            <div class="hi-stat"><span class="sk">Compressed</span><span class="sv ollama-tag" id="rs-summarised">—</span></div>
-            <div class="hi-stat"><span class="sk">Checked</span><span class="sv" id="rs-checked">—</span></div>
-            <div class="hi-stat"><span class="sk">Prep time</span><span class="sv" id="rs-prep">—</span></div>
+          <div class="d-title d-collapsible" onclick="toggleDSection('model')">
+            <span class="d-chev" id="model-chev">▶</span>
+            Model
+          </div>
+          <div id="model-body" style="display:none">
+            <select id="model-select">
+              <optgroup label="Claude">
+                <option value="claude-opus-4-7">Opus 4.7</option>
+                <option value="claude-sonnet-4-6" selected>Sonnet 4.6</option>
+                <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
+              </optgroup>
+              <optgroup label="Ollama (local)">
+                <option value="qwen3.5:9b">Qwen 3.5 9B</option>
+                <option value="gemma4:e2b">Gemma 4 E2B</option>
+              </optgroup>
+            </select>
           </div>
         </div>
 
         <div class="d-section">
-          <div class="d-title">Model</div>
-          <select id="model-select">
-            <optgroup label="Claude">
-              <option value="claude-opus-4-7">Opus 4.7</option>
-              <option value="claude-sonnet-4-6" selected>Sonnet 4.6</option>
-              <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
-            </optgroup>
-            <optgroup label="Ollama (local)">
-              <option value="qwen3.5:9b">Qwen 3.5 9B</option>
-              <option value="gemma4:e2b">Gemma 4 E2B</option>
-            </optgroup>
-          </select>
-        </div>
-
-        <div class="d-section">
-          <div class="d-title">Current Request</div>
-          <div id="current-stats"><span class="d-empty">No active request</span></div>
+          <div class="d-title d-collapsible" onclick="toggleDSection('curreq')">
+            <span class="d-chev" id="curreq-chev" style="transform:rotate(90deg)">▶</span>
+            Current Request
+          </div>
+          <div id="curreq-body">
+            <div id="current-stats"><span class="d-empty">No active request</span></div>
+          </div>
         </div>
       </div>
 
@@ -609,6 +665,10 @@ function friendlyModel(m) {
   if (l.startsWith('phi'))     return 'Phi';
   return m.split(':')[0].split('-')[0];
 }
+function toolFriendlyName(name) {
+  const map = {read_file: 'Read File', list_directory: 'List Directory', recall_memories: 'Recall Memories'};
+  return map[name] || name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
 
 // Cost per 1M tokens in USD (input, output)
 const MODEL_RATES = {
@@ -648,6 +708,7 @@ modelSel.addEventListener('change', () => {
 function openDrawer()  {
   drawer.classList.add('open'); toggleBtn.classList.add('open');
   startSysPoll();
+  fetchAuthStatus();
   if (!memLoaded) loadMemory();
 }
 function closeDrawer() { drawer.classList.remove('open'); toggleBtn.classList.remove('open'); stopSysPoll(); }
@@ -805,6 +866,7 @@ function renderHistory() {
       : '';
   }
 
+  renderAvgTtft();
   histList.innerHTML = [...reqHistory].reverse().slice(0, 12).map(r => {
     const t     = r.timestamp.toTimeString().slice(0,5);
     const local = r.mode === 'local' ? `<span class="hi-local"> · local</span>` : '';
@@ -887,6 +949,63 @@ function renderMemList() {
 
 function showAllMemories() {
   document.getElementById('mem-list').innerHTML = memEntries.map(memEntryHtml).join('');
+}
+
+async function fetchAuthStatus() {
+  const dot    = document.getElementById('auth-dot');
+  const label  = document.getElementById('auth-label');
+  const expiry = document.getElementById('auth-expiry');
+  const hint   = document.getElementById('auth-hint');
+  if (!dot) return;
+  try {
+    const d = await fetch('/auth/status').then(r => r.json());
+    hint.style.display = 'none';
+    expiry.textContent = '';
+    // Billing is always API key — session line shows Claude Code login state
+    if (d.claude_code_session) {
+      dot.style.background = 'var(--green)';
+      label.textContent    = `Claude Code · ${d.subscription_type || 'pro'}`;
+      label.style.color    = 'var(--green)';
+      if (d.expires_at) {
+        const ms = d.expires_at - Date.now();
+        const h  = Math.floor(ms / 3_600_000);
+        const m  = Math.floor((ms % 3_600_000) / 60_000);
+        expiry.textContent = h > 0 ? `${h}h ${m}m` : `${m}m`;
+      }
+    } else {
+      dot.style.background = 'var(--subtext)';
+      label.textContent    = d.has_api_key ? 'API key only' : 'No auth configured';
+      label.style.color    = d.has_api_key ? 'var(--subtext)' : 'var(--red)';
+    }
+  } catch { label.textContent = '—'; }
+}
+
+function toggleDSection(id) {
+  const body = document.getElementById(id + '-body');
+  const chev = document.getElementById(id + '-chev');
+  if (!body) return;
+  const open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : '';
+  if (chev) chev.style.transform = open ? '' : 'rotate(90deg)';
+}
+
+function renderAvgTtft() {
+  const el = document.getElementById('rs-avg-ttft');
+  if (!el) return;
+  const byModel = {};
+  for (const r of reqHistory) {
+    if (r.status === 'done' && r.ttft_ms > 0 && r.mode !== 'local') {
+      if (!byModel[r.model]) byModel[r.model] = {sum: 0, count: 0};
+      byModel[r.model].sum += r.ttft_ms;
+      byModel[r.model].count++;
+    }
+  }
+  const entries = Object.entries(byModel);
+  if (!entries.length) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div class="d-title" style="margin-top:6px">Avg TTFT</div>
+    <div class="hi-stats" style="padding-top:5px;border-top:none">
+      ${entries.map(([m, d]) => `<div class="hi-stat"><span class="sk">${fmtModel(m)}</span><span class="sv">${Math.round(d.sum / d.count)}ms</span></div>`).join('')}
+    </div>`;
 }
 
 function toggleMemList() {
@@ -977,6 +1096,9 @@ async function send() {
   let fullText      = '';
   let subBubblesEl  = null;
   const toolBubbles = {};
+  let textSegments    = [{type: 'text', content: ''}];
+  let currentTextNode = document.createTextNode('');
+  bubble.appendChild(currentTextNode);
 
   reqSeq++;
   const thisReqId = reqSeq;
@@ -1051,13 +1173,19 @@ async function send() {
 
         } else if (evType === 'delta') {
           fullText += data.text;
-          bubble.textContent = fullText;
+          textSegments[textSegments.length - 1].content += data.text;
+          currentTextNode.textContent += data.text;
           msgsEl.scrollTop = msgsEl.scrollHeight;
           currentReq.output_tokens = Math.round(fullText.length / 4);
           renderCurrentStats();
 
         } else if (evType === 'metrics') {
-          bubble.innerHTML = renderMd(fullText);
+          let html = '';
+          for (const seg of textSegments) {
+            if (seg.type === 'text' && seg.content) html += renderMd(seg.content);
+            else if (seg.type === 'tool') html += `<p class="call-notice">Called ${escHtml(seg.name)}.</p>`;
+          }
+          bubble.innerHTML = html;
           addMeta(wrap, data);
           setStatus('done', `TTFT ${data.ttft_ms}ms · ${data.tps} tok/s`);
           Object.assign(currentReq, {
@@ -1079,15 +1207,22 @@ async function send() {
           summarizeInBackground(thisReqId, userMsg, fullText);
 
         } else if (evType === 'tool_start') {
+          const noticeEl = document.createElement('p');
+          noticeEl.className = 'call-notice';
+          noticeEl.textContent = `Called ${toolFriendlyName(data.name)}.`;
+          bubble.appendChild(noticeEl);
+          const newNode = document.createTextNode('');
+          bubble.appendChild(newNode);
+          currentTextNode = newNode;
+          textSegments.push({type: 'tool', name: toolFriendlyName(data.name)});
+          textSegments.push({type: 'text', content: ''});
+          msgsEl.scrollTop = msgsEl.scrollHeight;
+
           if (!subBubblesEl) {
             subBubblesEl = document.createElement('div');
             subBubblesEl.className = 'sub-bubbles';
             wrap.appendChild(subBubblesEl);
           }
-          const cn = document.createElement('div');
-          cn.className = 'call-notice';
-          cn.textContent = `Called ${data.name}.`;
-          subBubblesEl.appendChild(cn);
           const sb  = document.createElement('div');  sb.className = 'sub-bubble';
           const hdr = document.createElement('div');  hdr.className = 'sub-bubble-hdr';
           const bod = document.createElement('div');  bod.className = 'sub-bubble-body';

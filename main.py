@@ -12,8 +12,7 @@ from pathlib import Path
 import httpx
 import psutil
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, StreamingResponse
-
+from fastapi.responses import FileResponse, StreamingResponse, Response
 import strategy
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -38,11 +37,12 @@ app = FastAPI()
 ANTHROPIC_URL        = "https://api.anthropic.com/v1/messages"
 OLLAMA_URL           = "http://host.docker.internal:11434/v1/chat/completions"
 ANTHROPIC_API_KEY    = os.environ.get("ANTHROPIC_API_KEY", "")
-DEFAULT_MODEL        = os.environ.get("DEFAULT_MODEL", "claude-sonnet-4-6")
+DEFAULT_MODEL        = os.environ.get("DEFAULT_MODEL", "claude-sonnet-4-5")
 OLLAMA_DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.5:9b")
 FS_ROOT              = Path(os.environ.get("FS_ROOT", "/home/matt")).resolve()
 DATA_DIR             = Path(os.environ.get("DATA_DIR", "/app/data"))
 ENTRIES_PER_FILE     = 200
+CLAUDE_CREDS_PATH    = Path("/home/matt/.claude/.credentials.json")
 
 psutil.cpu_percent()  # prime the cpu counter
 
@@ -353,6 +353,22 @@ async def ollama_chat(model: str, messages: list, timeout: float = 120.0) -> str
         return r.json()["choices"][0]["message"]["content"]
 
 
+def _claude_session() -> dict:
+    """Read Claude Code credentials for display purposes only — not used for API auth."""
+    try:
+        data  = json.loads(CLAUDE_CREDS_PATH.read_text())
+        oauth = data.get("claudeAiOauth", {})
+        token      = oauth.get("accessToken")
+        expires_ms = oauth.get("expiresAt", 0)
+        valid = bool(token) and expires_ms > (time.time() * 1000 + 300_000)
+        return {
+            "logged_in":         valid,
+            "expires_at":        expires_ms or None,
+            "subscription_type": oauth.get("subscriptionType"),
+        }
+    except Exception:
+        return {"logged_in": False, "expires_at": None, "subscription_type": None}
+
 def sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
@@ -606,7 +622,7 @@ async def _summarize(user_msg: str, assistant_msg: str, local_model: str) -> tup
             }
             async with httpx.AsyncClient(timeout=10) as client:
                 r = await client.post(ANTHROPIC_URL, json={
-                    "model": "claude-haiku-4-5-20251001",
+                    "model": "claude-haiku-4-5",
                     "max_tokens": 20,
                     "stream": False,
                     "messages": [{"role": "user", "content": prompt}],
@@ -637,7 +653,7 @@ async def _generate_memory_summary(user_msg: str, assistant_msg: str) -> str:
         )
         return result.strip()
     except Exception as e:
-        log.warning("memory summary generation failed: %s", e)
+        log.warning("memory summary generation failed: %s: %s", type(e).__name__, e)
         return assistant_msg[:200].strip()
 
 
@@ -693,6 +709,17 @@ async def summarize(request: Request):
 @app.get("/stats")
 async def router_stats():
     return dict(_agg)
+
+
+@app.get("/auth/status")
+async def auth_status():
+    session = _claude_session()
+    return {
+        "claude_code_session": session["logged_in"],
+        "expires_at":          session["expires_at"],
+        "subscription_type":   session["subscription_type"],
+        "has_api_key":         bool(ANTHROPIC_API_KEY),
+    }
 
 
 @app.post("/memory/save")
@@ -791,5 +818,21 @@ async def chat(request: Request):
 
     return StreamingResponse(stream(), media_type="text/event-stream")
 
-
+@app.post("/v1/messages")
+async def v1_messages(request: Request):
+    body = await request.json()
+    headers = {
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+        **{k: v for k, v in request.headers.items()
+           if k.lower().startswith("anthropic-beta")},
+    }
+    async with httpx.AsyncClient(timeout=None) as client:
+        r = await client.post(ANTHROPIC_URL, json=body, headers=headers)
+        return Response(
+            content=r.content,
+            status_code=r.status_code,
+            media_type=r.headers.get("content-type", "application/json"),
+        )
 
