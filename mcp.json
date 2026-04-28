@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "bix": {
+      "command": "python3",
+      "args": ["/app/bix_mcp.py"],
+      "env": {
+        "MCP_READ_PATHS": "/home/matt/apps",
+        "MCP_WRITE_PATHS": "/app/data:/home/matt/apps/todos",
+        "DATA_DIR": "/app/data"
+      }
+    }
+  }
+}

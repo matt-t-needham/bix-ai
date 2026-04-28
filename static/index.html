@@ -72,9 +72,44 @@
       align-items: center;
       justify-content: center;
     }
-    .mode-btn.active             { background: var(--surface1); color: var(--text); }
-    .mode-btn.active[data-mode="local"]  { color: var(--yellow); }
-    .mode-btn.active[data-mode="claude"] { color: var(--mauve); }
+    .mode-btn.active                    { background: var(--surface1); color: var(--text); }
+    .mode-btn.active[data-mode="local"] { color: var(--yellow); }
+    .mode-btn.active[data-mode="ai"]    { color: var(--mauve); }
+
+    .api-mode-badge {
+      display: none;
+      font-size: .72rem;
+      color: var(--subtext);
+      border: 1px solid var(--surface1);
+      border-radius: 4px;
+      padding: 1px 6px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .api-mode-badge.visible { display: block; }
+
+    .quota-banner {
+      background: color-mix(in srgb, var(--yellow) 15%, var(--surface0));
+      border: 1px solid var(--yellow);
+      border-radius: 6px;
+      padding: 8px 12px;
+      margin-top: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: .85em;
+      color: var(--yellow);
+    }
+    .use-api-btn {
+      background: var(--surface1);
+      border: 1px solid var(--subtext);
+      color: var(--text);
+      border-radius: 4px;
+      padding: 2px 8px;
+      cursor: pointer;
+      font-size: .9em;
+    }
+    .use-api-btn:hover { border-color: var(--text); }
 
     .status {
       display: flex;
@@ -350,7 +385,9 @@
     .hi-time   { color: var(--subtext); font-variant-numeric: tabular-nums; }
     .hi-model  { color: var(--text); font-weight: 500; }
     .hi-local  { color: var(--yellow); font-size: .72rem; }
-    .hi-err    { color: var(--red); font-size: .72rem; }
+    .hi-pro    { color: var(--mauve);  font-size: .72rem; }
+    .hi-api    { color: var(--blue);   font-size: .72rem; }
+    .hi-err    { color: var(--red);    font-size: .72rem; }
     .call-notice { color: var(--yellow); font-size: .8rem; margin: .4em 0; }
     .hi-summary {
       font-size: .78rem;
@@ -486,10 +523,10 @@
       <textarea id="input" placeholder="Message… (Shift+Enter for new line)" rows="1"></textarea>
       <div class="input-right">
         <div class="mode-group">
-          <button class="mode-btn active" data-mode="auto">Auto</button>
+          <button class="mode-btn active" data-mode="ai">AI</button>
           <button class="mode-btn" data-mode="local">Local</button>
-          <button class="mode-btn" data-mode="claude">Claude</button>
         </div>
+        <div class="api-mode-badge" id="api-mode-badge" title="Using API credits (Pro quota reached)">API</div>
         <button id="send">Send</button>
       </div>
     </div>
@@ -620,7 +657,7 @@
 <script>
 // ── State ─────────────────────────────────────────────────────────────────────
 let convHistory  = [];
-let mode         = 'auto';
+let mode         = 'ai';
 let model        = 'claude-sonnet-4-6';
 let busy         = false;
 let reqSeq       = 0;
@@ -632,8 +669,10 @@ let memCount     = 0;
 let memEntries   = [];
 let memExpanded  = false;
 let memLoaded    = false;
+let forceApi     = false;   // set to true when Pro quota is exhausted
+let lastUserMsg  = '';      // stored for quota retry
 
-const modeDefaults = { auto: 'claude-sonnet-4-6', claude: 'claude-sonnet-4-6', local: 'gemma4:e2b' };
+const modeDefaults = { ai: 'claude-sonnet-4-6', local: 'gemma4:e2b' };
 
 // ── DOM ───────────────────────────────────────────────────────────────────────
 const msgsEl    = document.getElementById('messages');
@@ -666,7 +705,7 @@ function friendlyModel(m) {
   return m.split(':')[0].split('-')[0];
 }
 function toolFriendlyName(name) {
-  const map = {read_file: 'Read File', list_directory: 'List Directory', recall_memories: 'Recall Memories'};
+  const map = {read_file: 'Read File', list_directory: 'List Directory', recall_memories: 'Recall Memories', write_file: 'Write File'};
   return map[name] || name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
@@ -692,7 +731,13 @@ const localModelValues = new Set(
 function setMode(m, syncModel = true) {
   mode = m;
   document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === m));
-  if (syncModel) { model = modeDefaults[m]; modelSel.value = model; }
+  if (syncModel) { model = modeDefaults[m] || 'claude-sonnet-4-6'; modelSel.value = model; }
+  if (m !== 'ai') { forceApi = false; updateApiModeBadge(); }
+}
+
+function updateApiModeBadge() {
+  const badge = document.getElementById('api-mode-badge');
+  if (badge) badge.classList.toggle('visible', forceApi);
 }
 
 document.querySelectorAll('.mode-btn').forEach(btn => {
@@ -701,8 +746,24 @@ document.querySelectorAll('.mode-btn').forEach(btn => {
 
 modelSel.addEventListener('change', () => {
   model = modelSel.value;
-  setMode(localModelValues.has(model) ? 'local' : 'claude', false);
+  setMode(localModelValues.has(model) ? 'local' : 'ai', false);
 });
+
+function retryWithApi() {
+  if (!lastUserMsg) return;
+  forceApi = true;
+  updateApiModeBadge();
+  // Re-send the last user message via API credits
+  const text = lastUserMsg;
+  inputEl.value = text;
+  send();
+}
+
+function _resolvedMode() {
+  if (mode === 'local') return 'local';
+  if (forceApi)        return 'api';
+  return 'pro';
+}
 
 // ── Drawer ────────────────────────────────────────────────────────────────────
 function openDrawer()  {
@@ -870,6 +931,8 @@ function renderHistory() {
   histList.innerHTML = [...reqHistory].reverse().slice(0, 12).map(r => {
     const t     = r.timestamp.toTimeString().slice(0,5);
     const local = r.mode === 'local' ? `<span class="hi-local"> · local</span>` : '';
+    const pro   = r.mode === 'pro'   ? `<span class="hi-pro"> · pro</span>`     : '';
+    const api   = r.mode === 'api'   ? `<span class="hi-api"> · api</span>`     : '';
     const err   = r.status === 'error' ? `<span class="hi-err"> · error</span>` : '';
     const toks  = r.input_tokens ? `${r.input_tokens}→${r.output_tokens}` : `~${r.output_tokens}`;
     const cost  = r.mode !== 'local' ? estimateCost(r.model, r.input_tokens, r.output_tokens) : null;
@@ -901,7 +964,7 @@ function renderHistory() {
     return `<div class="hist-item">
       <div class="hi-header">
         <span class="hi-time">${t}</span>
-        <span class="hi-model">${friendlyModel(r.model)}${local}${err}</span>
+        <span class="hi-model">${friendlyModel(r.model)}${local}${pro}${api}${err}</span>
       </div>
       ${bodyHtml}
     </div>`;
@@ -1046,7 +1109,7 @@ async function saveMemoryInBackground() {
 
 // ── Background summarization ──────────────────────────────────────────────────
 async function summarizeInBackground(reqId, userMsg, assistantMsg) {
-  const localModel = mode === 'local' ? model : 'gemma4:e2b';
+  const localModel = _resolvedMode() === 'local' ? model : 'gemma4:e2b';
   try {
     const res = await fetch('/summarize', {
       method: 'POST',
@@ -1087,11 +1150,13 @@ async function send() {
   inputEl.style.height = '';
   setBusy(true);
 
+  lastUserMsg = text;
   const userMsg = text;
   convHistory.push({ role: 'user', content: text });
   addBubble('user', false).bubble.textContent = text;
 
-  const isLocal = mode === 'local';
+  const resolvedMode = _resolvedMode();
+  const isLocal = resolvedMode === 'local';
   const { wrap, bubble } = addBubble('assistant', isLocal, model);
   let fullText      = '';
   let subBubblesEl  = null;
@@ -1104,7 +1169,7 @@ async function send() {
   const thisReqId = reqSeq;
   currentReq = {
     id: thisReqId, timestamp: new Date(),
-    model, mode, status: 'running',
+    model, mode: resolvedMode, status: 'running',
     input_tokens: 0, output_tokens: 0,
     ttft_ms: 0, elapsed_ms: 0, tps: 0,
     preprocess_ms: 0, summarised: 0, skipped: 0, failed: 0,
@@ -1118,7 +1183,7 @@ async function send() {
     const res = await fetch('/chat', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ messages: convHistory, model, mode }),
+      body: JSON.stringify({ messages: convHistory, model, mode: resolvedMode }),
       signal: abortCtrl.signal,
     });
 
@@ -1254,6 +1319,25 @@ async function send() {
               }
             } catch {}
           }
+
+        } else if (evType === 'quota_exceeded') {
+          const banner = document.createElement('div');
+          banner.className = 'quota-banner';
+          banner.innerHTML = `Pro quota reached.
+            <button class="use-api-btn" onclick="retryWithApi()">Use API credits</button>
+            <span style="margin-left:auto;cursor:default;opacity:.7" title="View billing at console.anthropic.com">↗</span>`;
+          wrap.appendChild(banner);
+          msgsEl.scrollTop = msgsEl.scrollHeight;
+          // mark request as quota-exhausted in history
+          if (currentReq) {
+            currentReq.status   = 'error';
+            currentReq.errorMsg = 'Pro quota reached';
+            reqHistory.push({ ...currentReq, summary: null });
+            renderCurrentStats();
+            renderHistory();
+          }
+          setStatus('', 'quota reached');
+          dotEl.className = 'dot';
 
         } else if (evType === 'done') {
           convHistory.push({ role: 'assistant', content: fullText });

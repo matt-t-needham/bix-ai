@@ -373,6 +373,181 @@ def sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+# ── Pro stream helper ─────────────────────────────────────────────────────────
+_TODO_SYSTEM = (
+    "You have a TODOs folder at /home/matt/apps/todos/ accessible via the write_file and read_file tools "
+    "(MCP server: bix). Use it to keep per-project plans and task lists — one .md file per project. "
+    "Read /home/matt/apps/todos/GUIDE.md for the file structure. "
+    "When asked to plan something, read the existing project file first, then write the updated version. "
+    "When asked about pending work, read the relevant file and summarise it."
+)
+
+
+def _build_pro_prompt(messages: list) -> str:
+    """Format conversation history + current message as a single claude -p prompt."""
+    parts = []
+    history = messages[:-1]
+    if history:
+        parts.append("Previous conversation context:")
+        for m in history:
+            role = "User" if m["role"] == "user" else "Assistant"
+            content = str(m.get("content", ""))
+            if len(content) > 3000:
+                content = content[:3000] + "\n[… truncated …]"
+            parts.append(f"{role}: {content}")
+        parts.append("")
+    last = messages[-1]
+    parts.append(str(last.get("content", "")))
+    return "\n".join(parts)
+
+
+async def _stream_pro(messages: list, model: str, max_tokens: int):
+    recent     = _load_recent_memories(3)
+    sys_prompt = _memory_system_prompt(recent)
+    log.info("pro memory loaded count=%d injected=%s", len(recent), bool(sys_prompt))
+
+    stats = {"summarised": 0, "skipped": 0, "failed": 0}
+    preprocess_ms = 0
+
+    req_body = {"model": model, "max_tokens": max_tokens, "messages": messages}
+    if sys_prompt:
+        req_body["system"] = sys_prompt
+
+    if strategy.has_oversized_blocks(req_body):
+        yield sse("status", {"stage": "summarising", "message": "Summarising via Ollama…"})
+    else:
+        yield sse("status", {"stage": "checking", "message": "Checking…"})
+
+    t0 = time.monotonic()
+    try:
+        req_body, stats = await strategy.preprocess(req_body, ollama_chat)
+        log.info("pro preprocess summarised=%d skipped=%d failed=%d",
+                 stats["summarised"], stats["skipped"], stats["failed"])
+    except Exception as e:
+        log.warning("pro preprocess error: %s", e)
+    preprocess_ms = round((time.monotonic() - t0) * 1000)
+
+    yield sse("preprocess", {
+        "summarised":    stats["summarised"],
+        "skipped":       stats["skipped"],
+        "failed":        stats["failed"],
+        "preprocess_ms": preprocess_ms,
+    })
+    yield sse("status", {"stage": "streaming", "message": "Streaming via Claude Pro…"})
+
+    prompt = _build_pro_prompt(list(req_body["messages"]))
+
+    sys_parts = []
+    if req_body.get("system"):
+        sys_parts.append(req_body["system"])
+    sys_parts.append(_TODO_SYSTEM)
+    system_prompt = "\n\n".join(sys_parts)
+
+    cmd = ["claude", "-p", prompt,
+           "--output-format", "stream-json",
+           "--verbose",
+           "--system-prompt", system_prompt,
+           "--mcp-config", "/app/mcp.json",
+           "--allowedTools", "mcp__bix__*",
+           "--model", model]
+
+    start   = time.monotonic()
+    ttft_ms = None
+    input_tokens  = 0
+    output_tokens = 0
+
+    try:
+        # Strip API key so claude -p uses the OAuth Pro session, not API billing
+        proc_env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=proc_env,
+        )
+
+        async for raw in proc.stdout:
+            line = raw.decode("utf-8", errors="replace").strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            etype = event.get("type")
+
+            if etype == "assistant":
+                msg     = event.get("message", {})
+                usage   = msg.get("usage", {})
+                input_tokens  += usage.get("input_tokens",  0)
+                output_tokens += usage.get("output_tokens", 0)
+                if input_tokens and ttft_ms is None:
+                    yield sse("input_tokens", {"count": input_tokens})
+
+                for idx, block in enumerate(msg.get("content", [])):
+                    btype = block.get("type")
+                    if btype == "text":
+                        text = block.get("text", "")
+                        if text:
+                            if ttft_ms is None:
+                                ttft_ms = round((time.monotonic() - start) * 1000)
+                            yield sse("delta", {"text": text})
+                    elif btype == "tool_use":
+                        tool_id   = block.get("id", "")
+                        tool_name = block.get("name", "")
+                        inp       = block.get("input", {})
+                        yield sse("tool_start", {"index": idx, "name": tool_name, "id": tool_id})
+                        if inp:
+                            yield sse("tool_input", {"index": idx, "partial_json": json.dumps(inp)})
+                        yield sse("tool_end", {"index": idx})
+
+            elif etype == "result":
+                if event.get("is_error"):
+                    err = event.get("error", "claude subprocess returned an error")
+                    lower = err.lower() if isinstance(err, str) else ""
+                    if "quota" in lower or "rate limit" in lower or "usage limit" in lower or "529" in lower:
+                        yield sse("quota_exceeded", {})
+                    else:
+                        yield sse("error", {"message": str(err)})
+                    return
+
+        stderr_data = await proc.stderr.read()
+        await proc.wait()
+
+        if proc.returncode != 0:
+            err_text = stderr_data.decode("utf-8", errors="replace")
+            lower = err_text.lower()
+            log.error("pro subprocess exit=%d stderr=%s", proc.returncode, err_text[:500])
+            if "quota" in lower or "rate limit" in lower or "usage limit" in lower or "529" in lower:
+                yield sse("quota_exceeded", {})
+            else:
+                yield sse("error", {"message": err_text or f"claude exited {proc.returncode}"})
+            return
+
+    except Exception as e:
+        log.error("pro stream error: %s", e)
+        yield sse("error", {"message": str(e)})
+        return
+
+    elapsed = time.monotonic() - start
+    tps = output_tokens / elapsed if elapsed > 0 else 0
+    yield sse("metrics", {
+        "input_tokens":  input_tokens,
+        "output_tokens": output_tokens,
+        "elapsed_ms":    round(elapsed * 1000),
+        "ttft_ms":       ttft_ms or 0,
+        "preprocess_ms": preprocess_ms,
+        "tps":           round(tps, 1),
+        "summarised":    stats["summarised"],
+        "skipped":       stats["skipped"],
+        "failed":        stats["failed"],
+    })
+    log.info("pro_done model=%s in=%d out=%d ttft_ms=%d elapsed_ms=%d",
+             model, input_tokens, output_tokens, ttft_ms or 0, round(elapsed * 1000))
+    yield sse("done", {})
+
+
 # ── Stream helpers ────────────────────────────────────────────────────────────
 async def _stream_ollama(messages: list, model: str):
     yield sse("status", {"stage": "streaming", "message": f"Streaming from Ollama ({model})…"})
@@ -608,29 +783,11 @@ async def _stream_claude(messages: list, model: str, max_tokens: int, skip_prepr
 
 # ── Summarisation helper ─────────────────────────────────────────────────────
 async def _summarize(user_msg: str, assistant_msg: str, local_model: str) -> tuple[str, str]:
-    """Return (summary, source). Tries Haiku first, falls back to local Ollama."""
+    """Return (summary, source) using local Ollama only."""
     prompt = (
         "Give a 6-word title for this exchange. No punctuation, no quotes.\n\n"
         f"User: {user_msg[:400]}\nAssistant: {assistant_msg[:400]}"
     )
-    if ANTHROPIC_API_KEY:
-        try:
-            headers = {
-                "x-api-key": ANTHROPIC_API_KEY,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            }
-            async with httpx.AsyncClient(timeout=10) as client:
-                r = await client.post(ANTHROPIC_URL, json={
-                    "model": "claude-haiku-4-5",
-                    "max_tokens": 20,
-                    "stream": False,
-                    "messages": [{"role": "user", "content": prompt}],
-                }, headers=headers)
-                r.raise_for_status()
-                return r.json()["content"][0]["text"].strip(), "haiku"
-        except Exception as e:
-            log.warning("haiku summarize failed: %s", e)
     try:
         summary = await ollama_chat(local_model, [{"role": "user", "content": prompt}], timeout=30)
         return summary.strip(), "local"
@@ -804,7 +961,7 @@ async def chat(request: Request):
     messages   = body.get("messages", [])
     model      = body.get("model", DEFAULT_MODEL)
     max_tokens = body.get("max_tokens", 4096)
-    mode       = body.get("mode", "auto")
+    mode       = body.get("mode", "pro")  # pro | local | api
 
     log.info("chat mode=%s model=%s msgs=%d", mode, model, len(messages))
 
@@ -812,8 +969,11 @@ async def chat(request: Request):
         if mode == "local":
             async for event in _stream_ollama(messages, model):
                 yield event
-        else:
-            async for event in _stream_claude(messages, model, max_tokens, skip_preprocess=(mode == "claude")):
+        elif mode == "api":
+            async for event in _stream_claude(messages, model, max_tokens, skip_preprocess=False):
+                yield event
+        else:  # pro (default)
+            async for event in _stream_pro(messages, model, max_tokens):
                 yield event
 
     return StreamingResponse(stream(), media_type="text/event-stream")
