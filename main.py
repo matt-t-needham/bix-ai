@@ -342,6 +342,18 @@ FS_TOOLS = [
     },
 ]
 
+OLLAMA_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name":        t["name"],
+            "description": t["description"],
+            "parameters":  t["input_schema"],
+        },
+    }
+    for t in FS_TOOLS
+]
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 async def ollama_chat(model: str, messages: list, timeout: float = 120.0) -> str:
@@ -457,8 +469,11 @@ async def _stream_pro(messages: list, model: str, max_tokens: int):
     output_tokens = 0
 
     try:
-        # Strip API key so claude -p uses the OAuth Pro session, not API billing
+        # Strip API key so claude -p uses the OAuth Pro session, not API billing.
+        # Override HOME so claude finds credentials at /home/matt/.claude (volume-mounted from host)
+        # rather than /root/.claude (container root's empty home).
         proc_env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+        proc_env["HOME"] = "/home/matt"
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -504,12 +519,17 @@ async def _stream_pro(messages: list, model: str, max_tokens: int):
 
             elif etype == "result":
                 if event.get("is_error"):
-                    err = event.get("error", "claude subprocess returned an error")
-                    lower = err.lower() if isinstance(err, str) else ""
+                    raw_err = event.get("error") or event.get("result") or event.get("message") or {}
+                    if isinstance(raw_err, dict):
+                        err = raw_err.get("message") or raw_err.get("error") or str(raw_err)
+                    else:
+                        err = str(raw_err) if raw_err else "claude subprocess returned an error"
+                    log.error("pro result is_error event=%s", event)
+                    lower = err.lower()
                     if "quota" in lower or "rate limit" in lower or "usage limit" in lower or "529" in lower:
                         yield sse("quota_exceeded", {})
                     else:
-                        yield sse("error", {"message": str(err)})
+                        yield sse("error", {"message": err})
                     return
 
         stderr_data = await proc.stderr.read()
@@ -549,49 +569,122 @@ async def _stream_pro(messages: list, model: str, max_tokens: int):
 
 
 # ── Stream helpers ────────────────────────────────────────────────────────────
+def _accumulate_tool_call(tool_calls_map: dict, tc: dict) -> None:
+    idx = tc.get("index", 0)
+    if idx not in tool_calls_map:
+        tool_calls_map[idx] = {"id": "", "name": "", "arguments_str": ""}
+    entry = tool_calls_map[idx]
+    if tc.get("id"):
+        entry["id"] = tc["id"]
+    fn = tc.get("function") or {}
+    if fn.get("name"):
+        entry["name"] = fn["name"]
+    if fn.get("arguments"):
+        entry["arguments_str"] += fn["arguments"]
+
+
 async def _stream_ollama(messages: list, model: str):
     yield sse("status", {"stage": "streaming", "message": f"Streaming from Ollama ({model})…"})
     start = time.monotonic()
     ttft_ms = None
     output_chars = 0
-    try:
-        async with httpx.AsyncClient(timeout=None) as client:
-            async with client.stream("POST", OLLAMA_URL, json={
-                "model": model, "messages": messages, "stream": True,
-            }) as r:
-                async for line in r.aiter_lines():
-                    if not line.startswith("data:"):
-                        continue
-                    raw = line[5:].strip()
-                    if raw == "[DONE]":
-                        break
-                    try:
-                        data = json.loads(raw)
-                    except json.JSONDecodeError:
-                        continue
-                    content = (data.get("choices") or [{}])[0].get("delta", {}).get("content") or ""
-                    if content:
-                        if ttft_ms is None:
-                            ttft_ms = round((time.monotonic() - start) * 1000)
-                        output_chars += len(content)
-                        yield sse("delta", {"text": content})
+    current_messages = list(messages)
 
-        elapsed = time.monotonic() - start
-        est_tokens = max(output_chars // 4, 1)
-        yield sse("metrics", {
-            "input_tokens": 0,
-            "output_tokens": est_tokens,
-            "elapsed_ms": round(elapsed * 1000),
-            "ttft_ms": ttft_ms or 0,
-            "preprocess_ms": 0,
-            "tps": round(est_tokens / elapsed, 1),
-            "summarised": 0,
+    for _turn in range(10):
+        tool_calls_map: dict = {}
+        finish_reason = None
+        response_text = ""
+
+        try:
+            async with httpx.AsyncClient(timeout=None) as client:
+                async with client.stream("POST", OLLAMA_URL, json={
+                    "model": model, "messages": current_messages,
+                    "tools": OLLAMA_TOOLS, "stream": True,
+                }) as r:
+                    async for line in r.aiter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        raw = line[5:].strip()
+                        if raw == "[DONE]":
+                            break
+                        try:
+                            data = json.loads(raw)
+                        except json.JSONDecodeError:
+                            continue
+                        choice = (data.get("choices") or [{}])[0]
+                        delta  = choice.get("delta", {})
+                        finish_reason = choice.get("finish_reason") or finish_reason
+
+                        content = delta.get("content") or ""
+                        if content:
+                            if ttft_ms is None:
+                                ttft_ms = round((time.monotonic() - start) * 1000)
+                            response_text += content
+                            output_chars  += len(content)
+                            yield sse("delta", {"text": content})
+
+                        for tc in delta.get("tool_calls") or []:
+                            _accumulate_tool_call(tool_calls_map, tc)
+
+        except Exception as e:
+            log.error("ollama stream error: %s", e)
+            yield sse("error", {"message": str(e)})
+            return
+
+        if finish_reason != "tool_calls":
+            elapsed = time.monotonic() - start
+            est_tokens = max(output_chars // 4, 1)
+            yield sse("metrics", {
+                "input_tokens":  0,
+                "output_tokens": est_tokens,
+                "elapsed_ms":    round(elapsed * 1000),
+                "ttft_ms":       ttft_ms or 0,
+                "preprocess_ms": 0,
+                "tps":           round(est_tokens / elapsed, 1),
+                "summarised":    0,
+                "skipped":       0,
+                "failed":        0,
+            })
+            log.info("chat_done model=%s ttft_ms=%d elapsed_ms=%d",
+                     model, ttft_ms or 0, round(elapsed * 1000))
+            yield sse("done", {})
+            return
+
+        for idx, tc in sorted(tool_calls_map.items()):
+            yield sse("tool_start", {"index": idx, "name": tc["name"], "id": tc["id"]})
+            yield sse("tool_input", {"index": idx, "partial_json": tc["arguments_str"]})
+            yield sse("tool_end",   {"index": idx})
+
+        assistant_tool_calls = [
+            {
+                "index": idx, "id": tc["id"], "type": "function",
+                "function": {"name": tc["name"], "arguments": tc["arguments_str"]},
+            }
+            for idx, tc in sorted(tool_calls_map.items())
+        ]
+        current_messages.append({
+            "role": "assistant",
+            "content": response_text or None,
+            "tool_calls": assistant_tool_calls,
         })
-        log.info("chat_done model=%s ttft_ms=%d elapsed_ms=%d", model, ttft_ms or 0, round(elapsed * 1000))
-        yield sse("done", {})
-    except Exception as e:
-        log.error("ollama stream error: %s", e)
-        yield sse("error", {"message": str(e)})
+
+        for idx, tc in sorted(tool_calls_map.items()):
+            try:
+                inp = json.loads(tc["arguments_str"]) if tc["arguments_str"] else {}
+            except json.JSONDecodeError:
+                inp = {}
+            log.info("ollama tool call name=%s path=%s", tc["name"], inp.get("path", ""))
+            yield sse("status", {"stage": "checking", "message": f"Running {tc['name']}…"})
+            result = await _execute_tool(tc["name"], inp)
+            current_messages.append({
+                "role":         "tool",
+                "tool_call_id": tc["id"],
+                "content":      result,
+            })
+
+        yield sse("status", {"stage": "streaming", "message": f"Streaming from Ollama ({model})…"})
+
+    yield sse("error", {"message": "Maximum tool call depth reached"})
 
 
 async def _stream_claude(messages: list, model: str, max_tokens: int, skip_preprocess: bool):
