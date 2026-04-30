@@ -394,6 +394,24 @@ _TODO_SYSTEM = (
     "When asked about pending work, read the relevant file and summarise it."
 )
 
+OLLAMA_SYSTEM = (
+    "You are a helpful local assistant with filesystem access. "
+    "You have three tools:\n"
+    "- list_directory(path): list files and folders within /home/matt\n"
+    "- read_file(path): read a text file's contents\n"
+    "- recall_memories(query): search past conversation summaries\n\n"
+    "Key locations you should know about:\n"
+    "- /home/matt/apps/todos/ — per-project TODO and plan files (one .md per project)\n"
+    "- /home/matt/apps/logs/tickets/ — daily log-review tickets (YYYY-MM-DD.md), "
+    "generated each morning by a cron process that reviews all service logs\n"
+    "- /home/matt/apps/logs/ — service logs (ai-router, landing, blog, beatshare, graphmode)\n"
+    "- /home/matt/apps/bix-ai/data/ — memory and conversation data\n\n"
+    "You can re-run the same log-review process manually by reading logs and summarising them. "
+    "Use list_directory to explore before reading files. "
+    "Use recall_memories when asked about previous conversations. "
+    "Be concise."
+)
+
 
 def _build_pro_prompt(messages: list) -> str:
     """Format conversation history + current message as a single claude -p prompt."""
@@ -589,6 +607,8 @@ async def _stream_ollama(messages: list, model: str):
     ttft_ms = None
     output_chars = 0
     current_messages = list(messages)
+    if not current_messages or current_messages[0].get("role") != "system":
+        current_messages.insert(0, {"role": "system", "content": OLLAMA_SYSTEM})
 
     for _turn in range(10):
         tool_calls_map: dict = {}
