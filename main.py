@@ -31,6 +31,30 @@ try:
 except Exception:
     pass
 
+ROUTING_LOG = _log_dir / "routing.ndjson"
+
+
+def _write_routing_event(mode: str, model: str, *, summarised: int = 0,
+                          preprocess_ms: int = 0, input_tokens: int = 0,
+                          output_tokens: int = 0, ttft_ms: int = 0,
+                          elapsed_ms: int = 0) -> None:
+    try:
+        with open(ROUTING_LOG, "a") as _f:
+            _f.write(json.dumps({
+                "ts":            datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "mode":          mode,
+                "model":         model,
+                "summarised":    summarised,
+                "preprocess_ms": preprocess_ms,
+                "input_tokens":  input_tokens,
+                "output_tokens": output_tokens,
+                "ttft_ms":       ttft_ms,
+                "elapsed_ms":    elapsed_ms,
+            }) + "\n")
+    except Exception as _e:
+        log.warning("routing log write failed: %s", _e)
+
+
 # ── Config ────────────────────────────────────────────────────────────────────
 app = FastAPI()
 
@@ -41,6 +65,13 @@ DEFAULT_MODEL        = os.environ.get("DEFAULT_MODEL", "claude-sonnet-4-5")
 OLLAMA_DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.5:9b")
 FS_ROOT              = Path(os.environ.get("FS_ROOT", "/home/matt")).resolve()
 DATA_DIR             = Path(os.environ.get("DATA_DIR", "/app/data"))
+_MAX_BODY_BYTES      = int(os.environ.get("MAX_BODY_BYTES", "1000000"))   # 1 MB
+_MAX_TOKENS_CAP      = int(os.environ.get("MAX_TOKENS_CAP", "8192"))
+_ALLOWED_CLAUDE_MODELS = {
+    "claude-haiku-4-5-20251001",
+    "claude-sonnet-4-5", "claude-sonnet-4-6",
+    "claude-opus-4-5",   "claude-opus-4-7",
+}
 ENTRIES_PER_FILE     = 200
 CLAUDE_CREDS_PATH    = Path("/home/matt/.claude/.credentials.json")
 
@@ -58,6 +89,24 @@ def _safe_path(path: str) -> Path | None:
         return p
     except (ValueError, Exception):
         return None
+
+
+_DENY_NAMES    = {".env", ".git", ".ssh", ".claude", ".gnupg", "secrets"}
+_DENY_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".crt", ".cer")
+_DENY_KEYWORDS = ("credential", "secret", "password", "passwd", "token")
+
+
+def _is_denied_path(p: Path) -> bool:
+    """Return True if the path matches a known-secrets pattern and must not be served."""
+    name  = p.name
+    lower = name.lower()
+    if name.startswith(".env"):
+        return True
+    if name.endswith(_DENY_SUFFIXES):
+        return True
+    if any(kw in lower for kw in _DENY_KEYWORDS):
+        return True
+    return any(part in _DENY_NAMES for part in p.parts)
 
 
 # ── Memory helpers ────────────────────────────────────────────────────────────
@@ -197,6 +246,8 @@ async def _execute_tool(name: str, tool_input: dict) -> str:
         p = _safe_path(path)
         if p is None:
             return f"Access denied: '{path}' is outside the allowed root ({FS_ROOT})"
+        if _is_denied_path(p):
+            return f"Access denied: '{path}' is a protected path"
         if not p.exists():
             return f"Path does not exist: {path}"
         if not p.is_dir():
@@ -205,6 +256,8 @@ async def _execute_tool(name: str, tool_input: dict) -> str:
             entries = sorted(p.iterdir(), key=lambda e: (e.is_file(), e.name.lower()))
             lines = []
             for e in entries:
+                if _is_denied_path(e):
+                    continue
                 if e.is_dir():
                     lines.append(f"[dir]  {e.name}/")
                 else:
@@ -218,6 +271,8 @@ async def _execute_tool(name: str, tool_input: dict) -> str:
         p = _safe_path(path)
         if p is None:
             return f"Access denied: '{path}' is outside the allowed root ({FS_ROOT})"
+        if _is_denied_path(p):
+            return f"Access denied: '{path}' is a protected file"
         if not p.exists():
             return f"File does not exist: {path}"
         if not p.is_file():
@@ -431,7 +486,7 @@ def _build_pro_prompt(messages: list) -> str:
     return "\n".join(parts)
 
 
-async def _stream_pro(messages: list, model: str, max_tokens: int):
+async def _stream_pro(messages: list, model: str, max_tokens: int, mode: str = "pro"):
     recent     = _load_recent_memories(3)
     sys_prompt = _memory_system_prompt(recent)
     log.info("pro memory loaded count=%d injected=%s", len(recent), bool(sys_prompt))
@@ -583,6 +638,10 @@ async def _stream_pro(messages: list, model: str, max_tokens: int):
     })
     log.info("pro_done model=%s in=%d out=%d ttft_ms=%d elapsed_ms=%d",
              model, input_tokens, output_tokens, ttft_ms or 0, round(elapsed * 1000))
+    _write_routing_event(mode, model, summarised=stats["summarised"],
+                         preprocess_ms=preprocess_ms, input_tokens=input_tokens,
+                         output_tokens=output_tokens, ttft_ms=ttft_ms or 0,
+                         elapsed_ms=round(elapsed * 1000))
     yield sse("done", {})
 
 
@@ -601,7 +660,7 @@ def _accumulate_tool_call(tool_calls_map: dict, tc: dict) -> None:
         entry["arguments_str"] += fn["arguments"]
 
 
-async def _stream_ollama(messages: list, model: str):
+async def _stream_ollama(messages: list, model: str, mode: str = "local"):
     yield sse("status", {"stage": "streaming", "message": f"Streaming from Ollama ({model})…"})
     start = time.monotonic()
     ttft_ms = None
@@ -667,6 +726,8 @@ async def _stream_ollama(messages: list, model: str):
             })
             log.info("chat_done model=%s ttft_ms=%d elapsed_ms=%d",
                      model, ttft_ms or 0, round(elapsed * 1000))
+            _write_routing_event(mode, model, output_tokens=est_tokens,
+                                 ttft_ms=ttft_ms or 0, elapsed_ms=round(elapsed * 1000))
             yield sse("done", {})
             return
 
@@ -707,7 +768,7 @@ async def _stream_ollama(messages: list, model: str):
     yield sse("error", {"message": "Maximum tool call depth reached"})
 
 
-async def _stream_claude(messages: list, model: str, max_tokens: int, skip_preprocess: bool):
+async def _stream_claude(messages: list, model: str, max_tokens: int, skip_preprocess: bool, mode: str = "api"):
     _agg["requests"] += 1
     req_body = {"model": model, "max_tokens": max_tokens, "messages": messages}
     recent = _load_recent_memories(3)
@@ -854,6 +915,10 @@ async def _stream_claude(messages: list, model: str, max_tokens: int, skip_prepr
             })
             log.info("chat_done model=%s in=%d out=%d ttft_ms=%d elapsed_ms=%d",
                      model, total_input_tokens, output_tokens, ttft_ms or 0, round(elapsed * 1000))
+            _write_routing_event(mode, model, summarised=stats["summarised"],
+                                 preprocess_ms=preprocess_ms, input_tokens=total_input_tokens,
+                                 output_tokens=output_tokens, ttft_ms=ttft_ms or 0,
+                                 elapsed_ms=round(elapsed * 1000))
             yield sse("done", {})
             return
 
@@ -1070,30 +1135,54 @@ async def index():
 
 @app.post("/chat")
 async def chat(request: Request):
-    body       = await request.json()
+    raw = await request.body()
+    if len(raw) > _MAX_BODY_BYTES:
+        return Response(status_code=413,
+                        content=json.dumps({"error": "Request body too large"}),
+                        media_type="application/json")
+    body       = json.loads(raw)
     messages   = body.get("messages", [])
     model      = body.get("model", DEFAULT_MODEL)
-    max_tokens = body.get("max_tokens", 4096)
+    max_tokens = min(body.get("max_tokens", 4096), _MAX_TOKENS_CAP)
     mode       = body.get("mode", "pro")  # pro | local | api
+
+    if mode in ("api", "pro") and model not in _ALLOWED_CLAUDE_MODELS:
+        return Response(status_code=400,
+                        content=json.dumps({"error": f"Model not permitted: {model}"}),
+                        media_type="application/json")
 
     log.info("chat mode=%s model=%s msgs=%d", mode, model, len(messages))
 
     async def stream():
         if mode == "local":
-            async for event in _stream_ollama(messages, model):
+            async for event in _stream_ollama(messages, model, mode=mode):
                 yield event
         elif mode == "api":
-            async for event in _stream_claude(messages, model, max_tokens, skip_preprocess=False):
+            async for event in _stream_claude(messages, model, max_tokens, skip_preprocess=False, mode=mode):
                 yield event
         else:  # pro (default)
-            async for event in _stream_pro(messages, model, max_tokens):
+            async for event in _stream_pro(messages, model, max_tokens, mode=mode):
                 yield event
 
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 @app.post("/v1/messages")
 async def v1_messages(request: Request):
-    body = await request.json()
+    raw = await request.body()
+    if len(raw) > _MAX_BODY_BYTES:
+        return Response(status_code=413,
+                        content=json.dumps({"type": "error", "error": {
+                            "type": "invalid_request_error", "message": "Request body too large"}}),
+                        media_type="application/json")
+    body  = json.loads(raw)
+    model = body.get("model", "")
+    if model not in _ALLOWED_CLAUDE_MODELS:
+        return Response(status_code=400,
+                        content=json.dumps({"type": "error", "error": {
+                            "type": "invalid_request_error", "message": f"Model not permitted: {model}"}}),
+                        media_type="application/json")
+    if body.get("max_tokens", 0) > _MAX_TOKENS_CAP:
+        body = {**body, "max_tokens": _MAX_TOKENS_CAP}
     headers = {
         "x-api-key": ANTHROPIC_API_KEY,
         "anthropic-version": "2023-06-01",
@@ -1103,9 +1192,17 @@ async def v1_messages(request: Request):
     }
     async with httpx.AsyncClient(timeout=None) as client:
         r = await client.post(ANTHROPIC_URL, json=body, headers=headers)
-        return Response(
-            content=r.content,
-            status_code=r.status_code,
-            media_type=r.headers.get("content-type", "application/json"),
-        )
+    try:
+        usage = r.json().get("usage", {})
+        _write_routing_event("v1_proxy", model,
+                             input_tokens=usage.get("input_tokens", 0),
+                             output_tokens=usage.get("output_tokens", 0))
+    except Exception as e:
+        log.warning("v1_proxy routing log failed: %s", e)
+        _write_routing_event("v1_proxy", model)
+    return Response(
+        content=r.content,
+        status_code=r.status_code,
+        media_type=r.headers.get("content-type", "application/json"),
+    )
 

@@ -19,6 +19,24 @@ def _is_under(path: pathlib.Path, roots: list) -> bool:
         return False
 
 
+_DENY_NAMES    = {".env", ".git", ".ssh", ".claude", ".gnupg", "secrets"}
+_DENY_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".crt", ".cer")
+_DENY_KEYWORDS = ("credential", "secret", "password", "passwd", "token")
+
+
+def _is_denied_path(p: pathlib.Path) -> bool:
+    """Return True if the path matches a known-secrets pattern and must not be served."""
+    name  = p.name
+    lower = name.lower()
+    if name.startswith(".env"):
+        return True
+    if name.endswith(_DENY_SUFFIXES):
+        return True
+    if any(kw in lower for kw in _DENY_KEYWORDS):
+        return True
+    return any(part in _DENY_NAMES for part in p.parts)
+
+
 def _tool_error(msg: str) -> dict:
     return {"content": [{"type": "text", "text": msg}], "isError": True}
 
@@ -86,6 +104,8 @@ def _execute(name: str, args: dict) -> dict:
         if not _is_under(p, READ_ROOTS):
             return _tool_error(f"Access denied: '{raw}' is outside allowed read roots")
         rp = p.resolve()
+        if _is_denied_path(rp):
+            return _tool_error(f"Access denied: '{raw}' is a protected path")
         if not rp.exists():
             return _tool_error(f"Path does not exist: {raw}")
         if not rp.is_dir():
@@ -95,6 +115,7 @@ def _execute(name: str, args: dict) -> dict:
             lines = [
                 f"[dir]  {e.name}/" if e.is_dir() else f"[file] {e.name}  ({e.stat().st_size:,} bytes)"
                 for e in entries
+                if not _is_denied_path(e)
             ]
             return _tool_ok("\n".join(lines) if lines else "(empty directory)")
         except PermissionError:
@@ -106,6 +127,8 @@ def _execute(name: str, args: dict) -> dict:
         if not _is_under(p, READ_ROOTS):
             return _tool_error(f"Access denied: '{raw}' is outside allowed read roots")
         rp = p.resolve()
+        if _is_denied_path(rp):
+            return _tool_error(f"Access denied: '{raw}' is a protected file")
         if not rp.exists():
             return _tool_error(f"File does not exist: {raw}")
         if not rp.is_file():
@@ -160,6 +183,8 @@ def _execute(name: str, args: dict) -> dict:
         if not _is_under(p, WRITE_ROOTS):
             return _tool_error(f"Access denied: '{raw}' is outside allowed write roots")
         rp = p.resolve()
+        if _is_denied_path(rp):
+            return _tool_error(f"Access denied: '{raw}' is a protected path")
         try:
             rp.parent.mkdir(parents=True, exist_ok=True)
             rp.write_text(content)
