@@ -388,7 +388,7 @@
     .hi-pro    { color: var(--mauve);  font-size: .72rem; }
     .hi-api    { color: var(--blue);   font-size: .72rem; }
     .hi-err    { color: var(--red);    font-size: .72rem; }
-    .call-notice { color: var(--yellow); font-size: .8rem; margin: .4em 0; }
+
     .hi-summary {
       font-size: .78rem;
       color: var(--text);
@@ -500,6 +500,66 @@
     }
     .gpu-row .sk { color: var(--subtext); }
     .gpu-row .sv { color: var(--text); font-variant-numeric: tabular-nums; }
+
+    /* ── tool group (grouped tool calls) ── */
+    .tool-group { margin-top: 8px; width: 100%; max-width: min(70ch, 90%); }
+    .tool-group-hdr {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 5px 10px;
+      background: var(--bg);
+      border: 1px solid var(--surface1);
+      border-radius: 8px;
+      cursor: pointer;
+      color: var(--subtext);
+      font-size: .78rem;
+      user-select: none;
+      transition: background .15s;
+    }
+    .tool-group.open .tool-group-hdr { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+    .tool-group-hdr:hover { background: color-mix(in srgb, var(--surface1) 50%, var(--bg)); }
+    .tool-group-hdr .chevron { font-size: .6rem; transition: transform .18s; }
+    .tool-group.open .tool-group-hdr .chevron { transform: rotate(90deg); }
+    .tool-group-label { flex: 1; color: var(--yellow); font-weight: 500; }
+    .tool-group-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: transparent;
+      flex-shrink: 0;
+      transition: background .3s;
+    }
+    .tool-group.running .tool-group-dot { background: var(--blue); animation: pulse .8s infinite; }
+    .tool-group-body {
+      display: none;
+      border: 1px solid var(--surface1);
+      border-top: none;
+      border-bottom-left-radius: 8px;
+      border-bottom-right-radius: 8px;
+      overflow: hidden;
+    }
+    .tool-group.open .tool-group-body { display: block; }
+
+    /* ── scroll-lock badge ── */
+    .messages { position: relative; }
+    .scroll-badge {
+      position: absolute;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--surface1);
+      color: var(--text);
+      border: 1px solid var(--surface0);
+      border-radius: 20px;
+      padding: 5px 14px;
+      font-size: .78rem;
+      cursor: pointer;
+      display: none;
+      z-index: 10;
+      white-space: nowrap;
+      box-shadow: 0 2px 8px rgba(0,0,0,.3);
+    }
+    .scroll-badge.visible { display: block; }
   </style>
 </head>
 <body>
@@ -516,6 +576,7 @@
 
   <div class="messages" id="messages">
     <div class="msgs-inner" id="msgs-inner"></div>
+    <div class="scroll-badge" id="scroll-badge" onclick="jumpToBottom()">↓ new content</div>
   </div>
 
   <div class="input-wrap">
@@ -546,10 +607,10 @@
 
         <div class="d-section">
           <div class="d-title d-collapsible" onclick="toggleDSection('router')">
-            <span class="d-chev" id="router-chev" style="transform:rotate(90deg)">▶</span>
+            <span class="d-chev" id="router-chev">▶</span>
             AI Router
           </div>
-          <div id="router-body">
+          <div id="router-body" style="display:none">
             <div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:8px;margin-bottom:4px;border-bottom:1px solid var(--surface1)">
               <div style="display:flex;align-items:center;gap:7px">
                 <div id="auth-dot" style="width:7px;height:7px;border-radius:50%;background:var(--surface1);flex-shrink:0;transition:background .3s"></div>
@@ -573,55 +634,51 @@
 
         <div class="d-section">
           <div class="d-title d-collapsible" onclick="toggleDSection('system')">
-            <span class="d-chev" id="system-chev" style="transform:rotate(90deg)">▶</span>
+            <span class="d-chev" id="system-chev">▶</span>
             System
           </div>
-          <div id="system-body">
-            <div class="sys-metric">
-              <div class="sys-label-row"><span class="sk">CPU</span><span class="sv" id="cpu-val">—</span></div>
-              <div class="bar-wrap"><div class="bar-fill" id="cpu-bar" style="width:0%"></div></div>
-            </div>
-            <div class="sys-metric">
-              <div class="sys-label-row"><span class="sk">RAM</span><span class="sv" id="ram-val">—</span></div>
-              <div class="bar-wrap"><div class="bar-fill" id="ram-bar" style="width:0%"></div></div>
-            </div>
-            <div id="gpu-section" style="margin-top:4px; display:flex; flex-direction:column; gap:5px;">
-              <div class="gpu-row"><span class="sk">GPU</span><span class="sv" id="gpu-model-val">—</span></div>
-              <div class="gpu-row"><span class="sk">Offload</span><span class="sv" id="gpu-layers-val">—</span></div>
+          <div id="system-body" style="display:none">
+            <div style="display:flex;flex-direction:column;gap:8px">
               <div class="sys-metric">
+                <div class="sys-label-row"><span class="sk">CPU</span><span class="sv" id="cpu-val">—</span></div>
+                <div class="bar-wrap"><div class="bar-fill" id="cpu-bar" style="width:0%"></div></div>
+              </div>
+              <div class="sys-metric">
+                <div class="sys-label-row"><span class="sk">RAM</span><span class="sv" id="ram-val">—</span></div>
+                <div class="bar-wrap"><div class="bar-fill" id="ram-bar" style="width:0%"></div></div>
+              </div>
+              <div class="sys-metric" id="vram-metric" style="display:none">
                 <div class="sys-label-row"><span class="sk">VRAM</span><span class="sv" id="gpu-vram-val">—</span></div>
                 <div class="bar-wrap"><div class="bar-fill" id="vram-bar" style="width:0%"></div></div>
               </div>
             </div>
+            <div id="gpu-section" style="margin-top:6px;display:none">
+              <div class="gpu-row"><span class="sk">Offload</span><span class="sv" id="gpu-layers-val">—</span></div>
+            </div>
           </div>
         </div>
 
         <div class="d-section">
-          <div class="d-title d-collapsible" onclick="toggleDSection('model')">
-            <span class="d-chev" id="model-chev">▶</span>
-            Model
-          </div>
-          <div id="model-body" style="display:none">
-            <select id="model-select">
-              <optgroup label="Claude">
-                <option value="claude-opus-4-7">Opus 4.7</option>
-                <option value="claude-sonnet-4-6" selected>Sonnet 4.6</option>
-                <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
-              </optgroup>
-              <optgroup label="Ollama (local)">
-                <option value="qwen3.5:9b">Qwen 3.5 9B</option>
-                <option value="gemma4:e2b">Gemma 4 E2B</option>
-              </optgroup>
-            </select>
-          </div>
+          <div class="d-title">Model</div>
+          <select id="model-select">
+            <optgroup label="Claude">
+              <option value="claude-opus-4-7">Opus 4.7</option>
+              <option value="claude-sonnet-4-6" selected>Sonnet 4.6</option>
+              <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
+            </optgroup>
+            <optgroup label="Ollama (local)">
+              <option value="qwen3.5:9b">Qwen 3.5 9B</option>
+              <option value="gemma4:e2b">Gemma 4 E2B</option>
+            </optgroup>
+          </select>
         </div>
 
         <div class="d-section">
           <div class="d-title d-collapsible" onclick="toggleDSection('curreq')">
-            <span class="d-chev" id="curreq-chev" style="transform:rotate(90deg)">▶</span>
+            <span class="d-chev" id="curreq-chev">▶</span>
             Current Request
           </div>
-          <div id="curreq-body">
+          <div id="curreq-body" style="display:none">
             <div id="current-stats"><span class="d-empty">No active request</span></div>
           </div>
         </div>
@@ -675,18 +732,27 @@ let lastUserMsg  = '';      // stored for quota retry
 const modeDefaults = { ai: 'claude-sonnet-4-6', local: 'gemma4:e2b' };
 
 // ── DOM ───────────────────────────────────────────────────────────────────────
-const msgsEl    = document.getElementById('messages');
-const msgsIn    = document.getElementById('msgs-inner');
-const inputEl   = document.getElementById('input');
-const sendBtn   = document.getElementById('send');
-const dotEl     = document.getElementById('dot');
-const lblEl     = document.getElementById('status-label');
-const drawer    = document.getElementById('drawer');
-const toggleBtn = document.getElementById('drawer-toggle');
-const closeBtn  = document.getElementById('drawer-close');
-const modelSel  = document.getElementById('model-select');
-const curStats  = document.getElementById('current-stats');
-const histList  = document.getElementById('history-list');
+const msgsEl      = document.getElementById('messages');
+const msgsIn      = document.getElementById('msgs-inner');
+const inputEl     = document.getElementById('input');
+const sendBtn     = document.getElementById('send');
+const dotEl       = document.getElementById('dot');
+const lblEl       = document.getElementById('status-label');
+const drawer      = document.getElementById('drawer');
+const toggleBtn   = document.getElementById('drawer-toggle');
+const closeBtn    = document.getElementById('drawer-close');
+const modelSel    = document.getElementById('model-select');
+const curStats    = document.getElementById('current-stats');
+const histList    = document.getElementById('history-list');
+const scrollBadge = document.getElementById('scroll-badge');
+
+// ── Scroll lock ───────────────────────────────────────────────────────────────
+function isAtBottom() { return msgsEl.scrollHeight - msgsEl.scrollTop - msgsEl.clientHeight < 100; }
+function showScrollBadge() { if (scrollBadge) scrollBadge.classList.add('visible'); }
+function hideScrollBadge() { if (scrollBadge) scrollBadge.classList.remove('visible'); }
+function jumpToBottom() { msgsEl.scrollTop = msgsEl.scrollHeight; hideScrollBadge(); }
+function autoScroll()   { if (isAtBottom()) msgsEl.scrollTop = msgsEl.scrollHeight; else showScrollBadge(); }
+msgsEl.addEventListener('scroll', () => { if (isAtBottom()) hideScrollBadge(); });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function setStatus(stage, label) { dotEl.className = 'dot ' + stage; lblEl.textContent = label; }
@@ -794,22 +860,15 @@ async function fetchSys() {
     const cb = document.getElementById('cpu-bar'); cb.style.width = d.cpu_percent + '%'; cb.className = barClass(d.cpu_percent);
     document.getElementById('ram-val').textContent = `${d.ram_used_gb} / ${d.ram_total_gb} GB`;
     const rb = document.getElementById('ram-bar'); rb.style.width = d.ram_percent + '%'; rb.className = barClass(d.ram_percent);
-    const gs = document.getElementById('gpu-section');
+    const vramMetric = document.getElementById('vram-metric');
+    const gpuSection = document.getElementById('gpu-section');
     if (d.gpu) {
       const state = d.gpu.state;
-      const vb = document.getElementById('vram-bar');
-      if (state === 'unreachable') {
-        document.getElementById('gpu-model-val').textContent  = 'Ollama unreachable';
-        document.getElementById('gpu-layers-val').textContent = '—';
-        document.getElementById('gpu-vram-val').textContent   = '—';
-        vb.style.width = '0%'; vb.className = 'bar-fill';
-      } else if (state === 'idle') {
-        document.getElementById('gpu-model-val').textContent  = 'idle';
-        document.getElementById('gpu-layers-val').textContent = '—';
-        document.getElementById('gpu-vram-val').textContent   = '—';
-        vb.style.width = '0%'; vb.className = 'bar-fill';
+      if (state === 'unreachable' || state === 'idle') {
+        if (vramMetric) vramMetric.style.display = 'none';
+        if (gpuSection) gpuSection.style.display = 'none';
       } else {
-        document.getElementById('gpu-model-val').textContent = d.gpu.model || '—';
+        const vb = document.getElementById('vram-bar');
         const vramGb  = (d.gpu.size_vram  / 1e9).toFixed(1);
         const totalGb = (d.gpu.size_total / 1e9).toFixed(1);
         const vramPct = d.gpu.size_total > 0 ? Math.round(d.gpu.size_vram / d.gpu.size_total * 100) : 0;
@@ -822,6 +881,8 @@ async function fetchSys() {
         document.getElementById('gpu-layers-val').textContent = layersText;
         document.getElementById('gpu-vram-val').textContent   = d.gpu.size_vram ? `${vramGb} / ${totalGb} GB` : '—';
         vb.style.width = vramPct + '%'; vb.className = barClass(vramPct);
+        if (vramMetric) vramMetric.style.display = '';
+        if (gpuSection) gpuSection.style.display = '';
       }
     }
   } catch {}
@@ -853,7 +914,7 @@ function addBubble(role, isLocal, modelName) {
   bubble.className = 'bubble';
   wrap.append(lbl, bubble);
   msgsIn.appendChild(wrap);
-  msgsEl.scrollTop = msgsEl.scrollHeight;
+  autoScroll();
   return { wrap, bubble };
 }
 
@@ -1034,6 +1095,9 @@ async function fetchAuthStatus() {
         const h  = Math.floor(ms / 3_600_000);
         const m  = Math.floor((ms % 3_600_000) / 60_000);
         expiry.textContent = h > 0 ? `${h}h ${m}m` : `${m}m`;
+        expiry.title = 'Claude Code session token — time until re-login is required';
+        expiry.style.cursor = 'help';
+        expiry.style.borderBottom = '1px dotted var(--subtext)';
       }
     } else {
       dot.style.background = 'var(--subtext)';
@@ -1043,6 +1107,10 @@ async function fetchAuthStatus() {
   } catch { label.textContent = '—'; }
 }
 
+const SECTION_STORE = 'bixai-sections';
+function _sectionStates() { try { return JSON.parse(localStorage.getItem(SECTION_STORE) || '{}'); } catch { return {}; } }
+function saveSectionState(id, open) { try { const s = _sectionStates(); s[id] = open; localStorage.setItem(SECTION_STORE, JSON.stringify(s)); } catch {} }
+
 function toggleDSection(id) {
   const body = document.getElementById(id + '-body');
   const chev = document.getElementById(id + '-chev');
@@ -1050,7 +1118,21 @@ function toggleDSection(id) {
   const open = body.style.display !== 'none';
   body.style.display = open ? 'none' : '';
   if (chev) chev.style.transform = open ? '' : 'rotate(90deg)';
+  saveSectionState(id, !open);
 }
+
+function initSectionStates() {
+  const saved = _sectionStates();
+  ['router', 'system', 'curreq'].forEach(id => {
+    const open = saved[id] ?? false;
+    const body = document.getElementById(id + '-body');
+    const chev = document.getElementById(id + '-chev');
+    if (!body) return;
+    body.style.display = open ? '' : 'none';
+    if (chev) chev.style.transform = open ? 'rotate(90deg)' : '';
+  });
+}
+initSectionStates();
 
 function renderAvgTtft() {
   const el = document.getElementById('rs-avg-ttft');
@@ -1159,7 +1241,9 @@ async function send() {
   const isLocal = resolvedMode === 'local';
   const { wrap, bubble } = addBubble('assistant', isLocal, model);
   let fullText      = '';
-  let subBubblesEl  = null;
+  let toolGroupEl   = null;
+  let pendingTools  = 0;
+  let totalTools    = 0;
   const toolBubbles = {};
   let textSegments    = [{type: 'text', content: ''}];
   let currentTextNode = document.createTextNode('');
@@ -1240,7 +1324,7 @@ async function send() {
           fullText += data.text;
           textSegments[textSegments.length - 1].content += data.text;
           currentTextNode.textContent += data.text;
-          msgsEl.scrollTop = msgsEl.scrollHeight;
+          autoScroll();
           currentReq.output_tokens = Math.round(fullText.length / 4);
           renderCurrentStats();
 
@@ -1248,7 +1332,7 @@ async function send() {
           let html = '';
           for (const seg of textSegments) {
             if (seg.type === 'text' && seg.content) html += renderMd(seg.content);
-            else if (seg.type === 'tool') html += `<p class="call-notice">Called ${escHtml(seg.name)}.</p>`;
+            // tool segments are shown in the tool-group block, not inline
           }
           bubble.innerHTML = html;
           addMeta(wrap, data);
@@ -1272,30 +1356,38 @@ async function send() {
           summarizeInBackground(thisReqId, userMsg, fullText);
 
         } else if (evType === 'tool_start') {
-          const noticeEl = document.createElement('p');
-          noticeEl.className = 'call-notice';
-          noticeEl.textContent = `Called ${toolFriendlyName(data.name)}.`;
-          bubble.appendChild(noticeEl);
           const newNode = document.createTextNode('');
           bubble.appendChild(newNode);
           currentTextNode = newNode;
           textSegments.push({type: 'tool', name: toolFriendlyName(data.name)});
           textSegments.push({type: 'text', content: ''});
-          msgsEl.scrollTop = msgsEl.scrollHeight;
 
-          if (!subBubblesEl) {
-            subBubblesEl = document.createElement('div');
-            subBubblesEl.className = 'sub-bubbles';
-            wrap.appendChild(subBubblesEl);
+          pendingTools++;
+          totalTools++;
+          if (!toolGroupEl) {
+            toolGroupEl = document.createElement('div');
+            toolGroupEl.className = 'tool-group running';
+            const ghdr = document.createElement('div');
+            ghdr.className = 'tool-group-hdr';
+            ghdr.innerHTML = `<span class="chevron">▶</span><span class="tool-group-label">⚙ Tool Use · 1 call</span><span class="tool-group-dot"></span>`;
+            ghdr.addEventListener('click', () => toolGroupEl.classList.toggle('open'));
+            const gbod = document.createElement('div');
+            gbod.className = 'tool-group-body';
+            toolGroupEl.append(ghdr, gbod);
+            wrap.appendChild(toolGroupEl);
+          } else {
+            toolGroupEl.querySelector('.tool-group-label').textContent = `⚙ Tool Use · ${totalTools} calls`;
           }
+
           const sb  = document.createElement('div');  sb.className = 'sub-bubble';
           const hdr = document.createElement('div');  hdr.className = 'sub-bubble-hdr';
           const bod = document.createElement('div');  bod.className = 'sub-bubble-body';
           hdr.innerHTML = `<span class="chevron">▶</span><span class="sub-bubble-name">⚙ ${escHtml(data.name)}</span><span class="sub-bubble-args"></span>`;
           hdr.addEventListener('click', () => sb.classList.toggle('open'));
           sb.append(hdr, bod);
-          subBubblesEl.appendChild(sb);
+          toolGroupEl.querySelector('.tool-group-body').appendChild(sb);
           toolBubbles[data.index] = { sb, hdr, bod };
+          autoScroll();
 
         } else if (evType === 'tool_input') {
           if (toolBubbles[data.index]) {
@@ -1319,6 +1411,8 @@ async function send() {
               }
             } catch {}
           }
+          pendingTools = Math.max(0, pendingTools - 1);
+          if (pendingTools === 0 && toolGroupEl) toolGroupEl.classList.remove('running');
 
         } else if (evType === 'quota_exceeded') {
           const banner = document.createElement('div');
@@ -1327,7 +1421,7 @@ async function send() {
             <button class="use-api-btn" onclick="retryWithApi()">Use API credits</button>
             <span style="margin-left:auto;cursor:default;opacity:.7" title="View billing at console.anthropic.com">↗</span>`;
           wrap.appendChild(banner);
-          msgsEl.scrollTop = msgsEl.scrollHeight;
+          autoScroll();
           // mark request as quota-exhausted in history
           if (currentReq) {
             currentReq.status   = 'error';
