@@ -8,6 +8,8 @@ import httpx
 
 from config import ANTHROPIC_API_KEY, CLAUDE_CREDS_PATH, OLLAMA_URL, ROUTING_LOG
 
+_ROUTING_LOG_MAX = 5_000_000  # 5 MB; rotate to .1 when exceeded
+
 log = logging.getLogger("router")
 
 # Shared request-aggregate stats, read by /stats route
@@ -46,6 +48,8 @@ async def _write_routing_event(
     }) + "\n"
     try:
         def _write() -> None:
+            if ROUTING_LOG.exists() and ROUTING_LOG.stat().st_size > _ROUTING_LOG_MAX:
+                ROUTING_LOG.rename(ROUTING_LOG.with_suffix(".ndjson.1"))
             with open(ROUTING_LOG, "a") as f:
                 f.write(record)
         await asyncio.to_thread(_write)

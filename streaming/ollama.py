@@ -139,7 +139,10 @@ async def _stream_ollama(messages: list, model: str, mode: str = "local"):
                 inp = {}
             log.info("ollama tool call name=%s path=%s", tc["name"], inp.get("path", ""))
             yield sse("status", {"stage": "checking", "message": f"Running {tc['name']}…"})
+            t_tool = time.monotonic()
             result = await _execute_tool(tc["name"], inp)
+            log.debug("tool done name=%s elapsed_ms=%d result_len=%d",
+                      tc["name"], round((time.monotonic() - t_tool) * 1000), len(result))
             current_messages.append({
                 "role":         "tool",
                 "tool_call_id": tc["id"],

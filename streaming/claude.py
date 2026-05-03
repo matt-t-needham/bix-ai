@@ -26,6 +26,7 @@ async def _stream_claude(
     log.info("memory loaded count=%d injected=%s", len(recent), bool(sys_prompt))
     stats         = {"summarised": 0, "skipped": 0, "failed": 0}
     preprocess_ms = 0
+    log.debug("claude request model=%s msgs=%d skip_preprocess=%s", model, len(messages), skip_preprocess)
 
     if skip_preprocess:
         yield sse("status", {"stage": "streaming", "message": "Streaming from Claude…"})
@@ -198,7 +199,10 @@ async def _stream_claude(
                 inp = {}
             log.info("tool call name=%s path=%s", b["name"], inp.get("path", ""))
             yield sse("status", {"stage": "checking", "message": f"Running {b['name']}…"})
+            t_tool = time.monotonic()
             result = await _execute_tool(b["name"], inp)
+            log.debug("tool done name=%s elapsed_ms=%d result_len=%d",
+                      b["name"], round((time.monotonic() - t_tool) * 1000), len(result))
             tool_results.append({"type": "tool_result", "tool_use_id": b["id"], "content": result})
 
         current_messages.append({"role": "user", "content": tool_results})

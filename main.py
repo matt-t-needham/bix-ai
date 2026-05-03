@@ -2,12 +2,15 @@ import asyncio
 import json
 import logging
 import logging.handlers
+import time
 from pathlib import Path
+from typing import Any
 
 import httpx
 import psutil
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, StreamingResponse, Response
+from pydantic import BaseModel
 
 # Logging must be configured before local imports so all modules inherit handlers.
 _fmt = "%(asctime)s %(levelname)s %(name)s %(message)s"
@@ -40,6 +43,29 @@ from streaming.pro import _stream_pro                             # noqa: E402
 psutil.cpu_percent()  # prime the psutil cpu counter
 
 app = FastAPI()
+
+# ── Request models ────────────────────────────────────────────────────────────
+
+class ChatRequest(BaseModel):
+    messages:   list[dict[str, Any]]
+    model:      str = DEFAULT_MODEL
+    max_tokens: int = 4096
+    mode:       str = "pro"
+
+class MemorySaveRequest(BaseModel):
+    messages:      list[dict[str, Any]]
+    model:         str = DEFAULT_MODEL
+    input_tokens:  int = 0
+    output_tokens: int = 0
+
+class SummarizeRequest(BaseModel):
+    user_msg:      str = ""
+    assistant_msg: str = ""
+    local_model:   str = OLLAMA_DEFAULT_MODEL
+
+# ── GPU response cache (3 s TTL) ──────────────────────────────────────────────
+_gpu_cache: dict = {"data": None, "ts": 0.0}
+_GPU_TTL = 3.0
 
 
 # ── Utility routes ────────────────────────────────────────────────────────────
@@ -75,37 +101,42 @@ async def system_metrics():
         "ram_percent":  round(mem.percent, 1),
         "gpu":          {"state": "unreachable"},
     }
-    try:
-        async with httpx.AsyncClient(timeout=2.0) as client:
-            r = await client.get("http://host.docker.internal:11434/api/ps")
-            if r.status_code == 200:
-                models = r.json().get("models") or []
-                if models:
-                    m = models[0]
-                    result["gpu"] = {
-                        "state":      "loaded",
-                        "model":      m.get("name", ""),
-                        "num_gpu":    m.get("num_gpu"),
-                        "size_vram":  m.get("size_vram", 0),
-                        "size_total": m.get("size", 0),
-                    }
-                else:
-                    result["gpu"] = {"state": "idle"}
-    except Exception:
-        pass
+    now = time.monotonic()
+    if _gpu_cache["data"] is not None and now - _gpu_cache["ts"] < _GPU_TTL:
+        result["gpu"] = _gpu_cache["data"]
+    else:
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                r = await client.get("http://host.docker.internal:11434/api/ps")
+                if r.status_code == 200:
+                    models = r.json().get("models") or []
+                    if models:
+                        m = models[0]
+                        result["gpu"] = {
+                            "state":      "loaded",
+                            "model":      m.get("name", ""),
+                            "num_gpu":    m.get("num_gpu"),
+                            "size_vram":  m.get("size_vram", 0),
+                            "size_total": m.get("size", 0),
+                        }
+                    else:
+                        result["gpu"] = {"state": "idle"}
+        except Exception:
+            pass
+        _gpu_cache["data"] = result["gpu"]
+        _gpu_cache["ts"]   = now
     return result
 
 
 # ── Memory routes ─────────────────────────────────────────────────────────────
 
 @app.post("/memory/save")
-async def save_memory_handler(request: Request):
-    body = await request.json()
+async def save_memory_handler(body: MemorySaveRequest):
     return await save_memory_entry(
-        messages   = body.get("messages", []),
-        model_name = body.get("model", DEFAULT_MODEL),
-        in_tokens  = body.get("input_tokens", 0),
-        out_tokens = body.get("output_tokens", 0),
+        messages   = body.messages,
+        model_name = body.model,
+        in_tokens  = body.input_tokens,
+        out_tokens = body.output_tokens,
     )
 
 
@@ -118,13 +149,8 @@ async def get_memory():
 # ── Summarize route ───────────────────────────────────────────────────────────
 
 @app.post("/summarize")
-async def summarize(request: Request):
-    body = await request.json()
-    summary, source = await _summarize(
-        body.get("user_msg", ""),
-        body.get("assistant_msg", ""),
-        body.get("local_model", OLLAMA_DEFAULT_MODEL),
-    )
+async def summarize(body: SummarizeRequest):
+    summary, source = await _summarize(body.user_msg, body.assistant_msg, body.local_model)
     return {"summary": summary, "source": source}
 
 
@@ -146,11 +172,18 @@ async def chat(request: Request):
             content=json.dumps({"error": "Request body too large"}),
             media_type="application/json",
         )
-    body       = json.loads(raw)
-    messages   = body.get("messages", [])
-    model      = body.get("model", DEFAULT_MODEL)
-    max_tokens = min(body.get("max_tokens", 4096), _MAX_TOKENS_CAP)
-    mode       = body.get("mode", "pro")
+    try:
+        body = ChatRequest.model_validate_json(raw)
+    except Exception as e:
+        return Response(
+            status_code=400,
+            content=json.dumps({"error": f"Invalid request: {e}"}),
+            media_type="application/json",
+        )
+    messages   = body.messages
+    model      = body.model
+    max_tokens = min(body.max_tokens, _MAX_TOKENS_CAP)
+    mode       = body.mode
 
     if mode in ("api", "pro") and model not in _ALLOWED_CLAUDE_MODELS:
         return Response(
