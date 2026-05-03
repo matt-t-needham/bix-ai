@@ -1,0 +1,70 @@
+import asyncio
+import json
+import logging
+import time
+from datetime import datetime, timezone
+
+import httpx
+
+from config import ANTHROPIC_API_KEY, CLAUDE_CREDS_PATH, OLLAMA_URL, ROUTING_LOG
+
+log = logging.getLogger("router")
+
+# Shared request-aggregate stats, read by /stats route
+_agg: dict = {"requests": 0, "summarised": 0, "checked": 0, "preprocess_ms": 0, "failed": 0}
+
+
+def sse(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+async def ollama_chat(model: str, messages: list, timeout: float = 120.0) -> str:
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        r = await client.post(OLLAMA_URL, json={
+            "model": model, "messages": messages, "stream": False,
+        })
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"]
+
+
+async def _write_routing_event(
+    mode: str, model: str, *,
+    summarised: int = 0, preprocess_ms: int = 0,
+    input_tokens: int = 0, output_tokens: int = 0,
+    ttft_ms: int = 0, elapsed_ms: int = 0,
+) -> None:
+    record = json.dumps({
+        "ts":            datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "mode":          mode,
+        "model":         model,
+        "summarised":    summarised,
+        "preprocess_ms": preprocess_ms,
+        "input_tokens":  input_tokens,
+        "output_tokens": output_tokens,
+        "ttft_ms":       ttft_ms,
+        "elapsed_ms":    elapsed_ms,
+    }) + "\n"
+    try:
+        def _write() -> None:
+            with open(ROUTING_LOG, "a") as f:
+                f.write(record)
+        await asyncio.to_thread(_write)
+    except Exception as e:
+        log.warning("routing log write failed: %s", e)
+
+
+def _claude_session() -> dict:
+    """Read Claude Code credentials for display purposes only — not used for API auth."""
+    try:
+        data       = json.loads(CLAUDE_CREDS_PATH.read_text())
+        oauth      = data.get("claudeAiOauth", {})
+        token      = oauth.get("accessToken")
+        expires_ms = oauth.get("expiresAt", 0)
+        valid = bool(token) and expires_ms > (time.time() * 1000 + 300_000)
+        return {
+            "logged_in":         valid,
+            "expires_at":        expires_ms or None,
+            "subscription_type": oauth.get("subscriptionType"),
+        }
+    except Exception:
+        return {"logged_in": False, "expires_at": None, "subscription_type": None}
