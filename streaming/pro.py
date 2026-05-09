@@ -12,9 +12,9 @@ from memory import _load_recent_memories, _memory_system_prompt
 log = logging.getLogger("router")
 
 _TODO_SYSTEM = (
-    "You have a TODOs folder at /home/matt/apps/todos/ accessible via the write_file and read_file tools "
+    "You have a TODOs folder at /home/matt/apps/bix-infra/todos/ accessible via the write_file and read_file tools "
     "(MCP server: bix). Use it to keep per-project plans and task lists — one .md file per project. "
-    "Read /home/matt/apps/todos/GUIDE.md for the file structure. "
+    "Read /home/matt/apps/bix-infra/todos/GUIDE.md for the file structure. "
     "When asked to plan something, read the existing project file first, then write the updated version. "
     "When asked about pending work, read the relevant file and summarise it."
 )
@@ -101,6 +101,7 @@ async def _stream_pro(messages: list, model: str, max_tokens: int, mode: str = "
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=proc_env,
+            limit=2**22,  # 4MB — default 64KB is too small for large Claude JSON events
         )
 
         async for raw in proc.stdout:

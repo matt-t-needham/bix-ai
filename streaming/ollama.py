@@ -4,7 +4,7 @@ import time
 
 import httpx
 
-from config import OLLAMA_URL
+from config import OLLAMA_TOOL_MODEL, OLLAMA_URL
 from helpers import _write_routing_event, sse
 from tools import OLLAMA_TOOLS, _execute_tool
 
@@ -17,10 +17,10 @@ OLLAMA_SYSTEM = (
     "- read_file(path): read a text file's contents\n"
     "- recall_memories(query): search past conversation summaries\n\n"
     "Key locations you should know about:\n"
-    "- /home/matt/apps/todos/ — per-project TODO and plan files (one .md per project)\n"
-    "- /home/matt/apps/logs/tickets/ — daily log-review tickets (YYYY-MM-DD.md), "
+    "- /home/matt/apps/bix-infra/todos/ — per-project TODO and plan files (one .md per project)\n"
+    "- /home/matt/apps/bix-infra/logs/tickets/ — daily log-review tickets (YYYY-MM-DD.md), "
     "generated each morning by a cron process that reviews all service logs\n"
-    "- /home/matt/apps/logs/ — service logs (ai-router, landing, blog, beatshare, graphmode)\n"
+    "- /home/matt/apps/bix-infra/logs/ — service logs (ai-router, landing, blog, beatshare, graphmode)\n"
     "- /home/matt/apps/bix-ai/data/ — memory and conversation data\n\n"
     "You can re-run the same log-review process manually by reading logs and summarising them. "
     "Use list_directory to explore before reading files. "
@@ -43,7 +43,12 @@ def _accumulate_tool_call(tool_calls_map: dict, tc: dict) -> None:
         entry["arguments_str"] += fn["arguments"]
 
 
-async def _stream_ollama(messages: list, model: str, mode: str = "local"):
+async def _stream_ollama(messages: list, model: str, mode: str = "local", tool_offload: bool = False):
+    if tool_offload and model != OLLAMA_TOOL_MODEL:
+        original = model
+        model = OLLAMA_TOOL_MODEL
+        log.info("ollama tool_offload from=%s to=%s", original, model)
+        yield sse("model_swap", {"from": original, "to": model})
     yield sse("status", {"stage": "streaming", "message": f"Streaming from Ollama ({model})…"})
     start            = time.monotonic()
     ttft_ms          = None

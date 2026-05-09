@@ -669,8 +669,13 @@
             <optgroup label="Ollama (local)">
               <option value="qwen3.5:9b">Qwen 3.5 9B</option>
               <option value="gemma4:e2b">Gemma 4 E2B</option>
+              <option value="gemma4:27b">Gemma 4 27B</option>
             </optgroup>
           </select>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
+            <span style="font-size:.78rem;color:var(--subtext)" title="Route tool calls to qwen3.5:9b instead of the selected model">Tool offloading</span>
+            <button id="tool-offload-btn" style="font-size:.7rem;padding:1px 9px;border-radius:4px;border:1px solid var(--surface1);background:transparent;color:var(--subtext);cursor:pointer;transition:color .15s,border-color .15s,background .15s">off</button>
+          </div>
         </div>
 
         <div class="d-section">
@@ -728,8 +733,9 @@ let memExpanded  = false;
 let memLoaded    = false;
 let forceApi     = false;   // set to true when Pro quota is exhausted
 let lastUserMsg  = '';      // stored for quota retry
+let toolOffload  = false;
 
-const modeDefaults = { ai: 'claude-sonnet-4-6', local: 'gemma4:e2b' };
+const modeDefaults = { ai: 'claude-sonnet-4-6', local: 'gemma4:27b' };
 
 // ── DOM ───────────────────────────────────────────────────────────────────────
 const msgsEl      = document.getElementById('messages');
@@ -813,6 +819,15 @@ document.querySelectorAll('.mode-btn').forEach(btn => {
 modelSel.addEventListener('change', () => {
   model = modelSel.value;
   setMode(localModelValues.has(model) ? 'local' : 'ai', false);
+});
+
+const toolOffloadBtn = document.getElementById('tool-offload-btn');
+toolOffloadBtn.addEventListener('click', () => {
+  toolOffload = !toolOffload;
+  toolOffloadBtn.textContent = toolOffload ? 'on' : 'off';
+  toolOffloadBtn.style.color       = toolOffload ? 'var(--yellow)' : 'var(--subtext)';
+  toolOffloadBtn.style.borderColor = toolOffload ? 'var(--yellow)' : 'var(--surface1)';
+  toolOffloadBtn.style.background  = toolOffload ? 'color-mix(in srgb, var(--yellow) 10%, transparent)' : 'transparent';
 });
 
 function retryWithApi() {
@@ -1244,6 +1259,7 @@ async function send() {
   let toolGroupEl   = null;
   let pendingTools  = 0;
   let totalTools    = 0;
+  let modelSwap     = null;
   const toolBubbles = {};
   let textSegments    = [{type: 'text', content: ''}];
   let currentTextNode = document.createTextNode('');
@@ -1267,7 +1283,7 @@ async function send() {
     const res = await fetch('/chat', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ messages: convHistory, model, mode: resolvedMode }),
+      body: JSON.stringify({ messages: convHistory, model, mode: resolvedMode, tool_offload: toolOffload }),
       signal: abortCtrl.signal,
     });
 
@@ -1304,7 +1320,11 @@ async function send() {
         let data;
         try { data = JSON.parse(dataStr); } catch { continue; }
 
-        if (evType === 'status') {
+        if (evType === 'model_swap') {
+          modelSwap = data;
+          setStatus('checking', `↳ ${data.to} (tool-capable)`);
+
+        } else if (evType === 'status') {
           setStatus(data.stage, data.message);
 
         } else if (evType === 'preprocess') {
@@ -1369,14 +1389,15 @@ async function send() {
             toolGroupEl.className = 'tool-group running';
             const ghdr = document.createElement('div');
             ghdr.className = 'tool-group-hdr';
-            ghdr.innerHTML = `<span class="chevron">▶</span><span class="tool-group-label">⚙ Tool Use · 1 call</span><span class="tool-group-dot"></span>`;
+            const toolModelTag = modelSwap ? ` · ${modelSwap.to}` : '';
+            ghdr.innerHTML = `<span class="chevron">▶</span><span class="tool-group-label">⚙ Tool Use${toolModelTag} · 1 call</span><span class="tool-group-dot"></span>`;
             ghdr.addEventListener('click', () => toolGroupEl.classList.toggle('open'));
             const gbod = document.createElement('div');
             gbod.className = 'tool-group-body';
             toolGroupEl.append(ghdr, gbod);
             wrap.appendChild(toolGroupEl);
           } else {
-            toolGroupEl.querySelector('.tool-group-label').textContent = `⚙ Tool Use · ${totalTools} calls`;
+            toolGroupEl.querySelector('.tool-group-label').textContent = `⚙ Tool Use${modelSwap ? ` · ${modelSwap.to}` : ''} · ${totalTools} calls`;
           }
 
           const sb  = document.createElement('div');  sb.className = 'sub-bubble';

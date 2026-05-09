@@ -47,10 +47,11 @@ app = FastAPI()
 # ── Request models ────────────────────────────────────────────────────────────
 
 class ChatRequest(BaseModel):
-    messages:   list[dict[str, Any]]
-    model:      str = DEFAULT_MODEL
-    max_tokens: int = 4096
-    mode:       str = "pro"
+    messages:     list[dict[str, Any]]
+    model:        str = DEFAULT_MODEL
+    max_tokens:   int = 4096
+    mode:         str = "pro"
+    tool_offload: bool = False
 
 class MemorySaveRequest(BaseModel):
     messages:      list[dict[str, Any]]
@@ -180,10 +181,11 @@ async def chat(request: Request):
             content=json.dumps({"error": f"Invalid request: {e}"}),
             media_type="application/json",
         )
-    messages   = body.messages
-    model      = body.model
-    max_tokens = min(body.max_tokens, _MAX_TOKENS_CAP)
-    mode       = body.mode
+    messages     = body.messages
+    model        = body.model
+    max_tokens   = min(body.max_tokens, _MAX_TOKENS_CAP)
+    mode         = body.mode
+    tool_offload = body.tool_offload
 
     if mode in ("api", "pro") and model not in _ALLOWED_CLAUDE_MODELS:
         return Response(
@@ -196,7 +198,7 @@ async def chat(request: Request):
 
     async def stream():
         if mode == "local":
-            async for event in _stream_ollama(messages, model, mode=mode):
+            async for event in _stream_ollama(messages, model, mode=mode, tool_offload=tool_offload):
                 yield event
         elif mode == "api":
             async for event in _stream_claude(messages, model, max_tokens, skip_preprocess=False, mode=mode):
