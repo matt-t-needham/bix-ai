@@ -4,16 +4,11 @@ import logging
 from pathlib import Path
 
 from config import CONV_DIR, FS_ROOT, OLLAMA_DEFAULT_MODEL
+from fs_core import is_denied_path, list_directory, read_file
 from helpers import ollama_chat
 from memory import _load_all_memories
 
 log = logging.getLogger("router")
-
-# ── Path guards ───────────────────────────────────────────────────────────────
-
-_DENY_NAMES    = {".env", ".git", ".ssh", ".claude", ".gnupg", "secrets"}
-_DENY_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".crt", ".cer")
-_DENY_KEYWORDS = ("credential", "secret", "password", "passwd", "token")
 
 
 def _safe_path(path: str) -> Path | None:
@@ -26,18 +21,6 @@ def _safe_path(path: str) -> Path | None:
         return None
 
 
-def _is_denied_path(p: Path) -> bool:
-    name  = p.name
-    lower = name.lower()
-    if name.startswith(".env"):
-        return True
-    if name.endswith(_DENY_SUFFIXES):
-        return True
-    if any(kw in lower for kw in _DENY_KEYWORDS):
-        return True
-    return any(part in _DENY_NAMES for part in p.parts)
-
-
 # ── Tool execution ────────────────────────────────────────────────────────────
 
 async def _execute_tool(name: str, tool_input: dict) -> str:
@@ -46,46 +29,26 @@ async def _execute_tool(name: str, tool_input: dict) -> str:
         p = _safe_path(path)
         if p is None:
             return f"Access denied: '{path}' is outside the allowed root ({FS_ROOT})"
-        if _is_denied_path(p):
+        if is_denied_path(p):
             return f"Access denied: '{path}' is a protected path"
         if not p.exists():
             return f"Path does not exist: {path}"
         if not p.is_dir():
             return f"Not a directory: {path}"
-        try:
-            entries = sorted(p.iterdir(), key=lambda e: (e.is_file(), e.name.lower()))
-            lines = []
-            for e in entries:
-                if _is_denied_path(e):
-                    continue
-                if e.is_dir():
-                    lines.append(f"[dir]  {e.name}/")
-                else:
-                    lines.append(f"[file] {e.name}  ({e.stat().st_size:,} bytes)")
-            return "\n".join(lines) if lines else "(empty directory)"
-        except PermissionError:
-            return f"Permission denied: {path}"
+        return list_directory(p)
 
     elif name == "read_file":
         path = tool_input.get("path", "")
         p = _safe_path(path)
         if p is None:
             return f"Access denied: '{path}' is outside the allowed root ({FS_ROOT})"
-        if _is_denied_path(p):
+        if is_denied_path(p):
             return f"Access denied: '{path}' is a protected file"
         if not p.exists():
             return f"File does not exist: {path}"
         if not p.is_file():
             return f"Not a file: {path}"
-        size = p.stat().st_size
-        if size > 200_000:
-            return f"File too large ({size:,} bytes). Max 200 KB."
-        try:
-            return p.read_text(errors="replace")
-        except PermissionError:
-            return f"Permission denied: {path}"
-        except Exception as e:
-            return f"Error reading file: {e}"
+        return read_file(p)
 
     elif name == "recall_memories":
         query = tool_input.get("query", "").strip()

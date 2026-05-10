@@ -43,8 +43,22 @@ def _load_all_memories() -> list[dict]:
 
 
 def _load_recent_memories(n: int = 3) -> list[dict]:
-    all_m = _load_all_memories()
-    return all_m[-n:] if len(all_m) >= n else all_m
+    # Read files from newest to oldest, stop as soon as we have n entries.
+    # Avoids deserializing every file just to slice the tail.
+    files = sorted(MEM_DIR.glob("memories-*.json"))
+    if not files:
+        return []
+    collected: list[dict] = []
+    for f in reversed(files):
+        try:
+            data = json.loads(f.read_text())
+            if isinstance(data, list):
+                collected = data + collected
+        except Exception as e:
+            log.warning("memory file unreadable path=%s err=%s", f, e)
+        if len(collected) >= n:
+            break
+    return collected[-n:]
 
 
 def _append_memory(entry: dict) -> None:
@@ -234,6 +248,6 @@ async def save_memory_entry(
 
     all_m = await asyncio.to_thread(_load_all_memories)
     if len(all_m) > 0 and len(all_m) % 10 == 0:
-        await asyncio.to_thread(_consolidate_active_file)
+        asyncio.create_task(asyncio.to_thread(_consolidate_active_file))
 
     return {"ok": True, "id": entry["id"]}

@@ -5,6 +5,8 @@ import os
 import pathlib
 import sys
 
+from fs_core import is_denied_path, list_directory, read_file
+
 READ_ROOTS  = [pathlib.Path(p).resolve() for p in os.environ.get("MCP_READ_PATHS",  "/home/matt/apps").split(":") if p]
 WRITE_ROOTS = [pathlib.Path(p).resolve() for p in os.environ.get("MCP_WRITE_PATHS", "/app/data").split(":") if p]
 DATA_DIR    = pathlib.Path(os.environ.get("DATA_DIR", "/app/data"))
@@ -17,24 +19,6 @@ def _is_under(path: pathlib.Path, roots: list) -> bool:
         return any(resolved == r or r in resolved.parents for r in roots)
     except Exception:
         return False
-
-
-_DENY_NAMES    = {".env", ".git", ".ssh", ".claude", ".gnupg", "secrets"}
-_DENY_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".crt", ".cer")
-_DENY_KEYWORDS = ("credential", "secret", "password", "passwd", "token")
-
-
-def _is_denied_path(p: pathlib.Path) -> bool:
-    """Return True if the path matches a known-secrets pattern and must not be served."""
-    name  = p.name
-    lower = name.lower()
-    if name.startswith(".env"):
-        return True
-    if name.endswith(_DENY_SUFFIXES):
-        return True
-    if any(kw in lower for kw in _DENY_KEYWORDS):
-        return True
-    return any(part in _DENY_NAMES for part in p.parts)
 
 
 def _tool_error(msg: str) -> dict:
@@ -104,22 +88,13 @@ def _execute(name: str, args: dict) -> dict:
         if not _is_under(p, READ_ROOTS):
             return _tool_error(f"Access denied: '{raw}' is outside allowed read roots")
         rp = p.resolve()
-        if _is_denied_path(rp):
+        if is_denied_path(rp):
             return _tool_error(f"Access denied: '{raw}' is a protected path")
         if not rp.exists():
             return _tool_error(f"Path does not exist: {raw}")
         if not rp.is_dir():
             return _tool_error(f"Not a directory: {raw}")
-        try:
-            entries = sorted(rp.iterdir(), key=lambda e: (e.is_file(), e.name.lower()))
-            lines = [
-                f"[dir]  {e.name}/" if e.is_dir() else f"[file] {e.name}  ({e.stat().st_size:,} bytes)"
-                for e in entries
-                if not _is_denied_path(e)
-            ]
-            return _tool_ok("\n".join(lines) if lines else "(empty directory)")
-        except PermissionError:
-            return _tool_error(f"Permission denied: {raw}")
+        return _tool_ok(list_directory(rp))
 
     elif name == "read_file":
         raw = args.get("path", "")
@@ -127,21 +102,13 @@ def _execute(name: str, args: dict) -> dict:
         if not _is_under(p, READ_ROOTS):
             return _tool_error(f"Access denied: '{raw}' is outside allowed read roots")
         rp = p.resolve()
-        if _is_denied_path(rp):
+        if is_denied_path(rp):
             return _tool_error(f"Access denied: '{raw}' is a protected file")
         if not rp.exists():
             return _tool_error(f"File does not exist: {raw}")
         if not rp.is_file():
             return _tool_error(f"Not a file: {raw}")
-        size = rp.stat().st_size
-        if size > 200_000:
-            return _tool_error(f"File too large ({size:,} bytes). Max 200 KB.")
-        try:
-            return _tool_ok(rp.read_text(errors="replace"))
-        except PermissionError:
-            return _tool_error(f"Permission denied: {raw}")
-        except Exception as e:
-            return _tool_error(f"Error reading file: {e}")
+        return _tool_ok(read_file(rp))
 
     elif name == "recall_memories":
         query = args.get("query", "").strip()
@@ -183,7 +150,7 @@ def _execute(name: str, args: dict) -> dict:
         if not _is_under(p, WRITE_ROOTS):
             return _tool_error(f"Access denied: '{raw}' is outside allowed write roots")
         rp = p.resolve()
-        if _is_denied_path(rp):
+        if is_denied_path(rp):
             return _tool_error(f"Access denied: '{raw}' is a protected path")
         try:
             rp.parent.mkdir(parents=True, exist_ok=True)
