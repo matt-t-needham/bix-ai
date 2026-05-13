@@ -71,6 +71,15 @@ async def _stream_ollama(messages: list, model: str, mode: str = "local", tool_o
                     "model": model, "messages": current_messages,
                     "tools": OLLAMA_TOOLS, "stream": True,
                 }) as r:
+                    if r.status_code != 200:
+                        body = await r.aread()
+                        try:
+                            err = json.loads(body).get("error", f"HTTP {r.status_code}")
+                        except Exception:
+                            err = f"HTTP {r.status_code}"
+                        log.error("ollama error model=%s status=%d err=%s", model, r.status_code, err)
+                        yield sse("error", {"message": f"Ollama: {err}"})
+                        return
                     async for line in r.aiter_lines():
                         if not line.startswith("data:"):
                             continue
