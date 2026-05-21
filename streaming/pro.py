@@ -157,15 +157,23 @@ async def _stream_pro(messages: list, model: str, max_tokens: int, mode: str = "
 
         stderr_data = await proc.stderr.read()
         await proc.wait()
+        err_text = stderr_data.decode("utf-8", errors="replace")
+        lower    = err_text.lower()
 
         if proc.returncode != 0:
-            err_text = stderr_data.decode("utf-8", errors="replace")
-            lower    = err_text.lower()
             log.error("pro subprocess exit=%d stderr=%s", proc.returncode, err_text[:500])
             if "quota" in lower or "rate limit" in lower or "usage limit" in lower or "529" in lower:
                 yield sse("quota_exceeded", {})
             else:
                 yield sse("error", {"message": err_text or f"claude exited {proc.returncode}"})
+            return
+
+        if input_tokens == 0 and output_tokens == 0:
+            log.error("pro subprocess produced no output exit=0 stderr=%s", err_text[:500])
+            if "quota" in lower or "rate limit" in lower or "usage limit" in lower or "529" in lower:
+                yield sse("quota_exceeded", {})
+            else:
+                yield sse("error", {"message": err_text.strip() or "claude subprocess produced no output"})
             return
 
     except Exception as e:
