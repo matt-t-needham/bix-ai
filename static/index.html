@@ -673,8 +673,15 @@
             </optgroup>
           </select>
           <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
-            <span style="font-size:.78rem;color:var(--subtext)" title="Route tool calls to qwen3.5:9b instead of the selected model">Tool offloading</span>
+            <span style="font-size:.78rem;color:var(--subtext)">
+              Tool offloading
+              <span onclick="const e=document.getElementById('tool-offload-info');e.style.display=e.style.display==='none'?'block':'none'" style="cursor:pointer;color:var(--blue);margin-left:4px;font-size:.7rem;user-select:none">(?)</span>
+            </span>
             <button id="tool-offload-btn" style="font-size:.7rem;padding:1px 9px;border-radius:4px;border:1px solid var(--surface1);background:transparent;color:var(--subtext);cursor:pointer;transition:color .15s,border-color .15s,background .15s">off</button>
+          </div>
+          <div id="tool-offload-info" style="display:none;font-size:.7rem;color:var(--subtext);background:var(--surface0);border-left:2px solid var(--blue);padding:6px 8px;margin-top:6px;line-height:1.5;border-radius:0 3px 3px 0">
+            <strong style="color:var(--text)">Local Ollama only.</strong> When ON, swaps the selected model for <code style="background:var(--surface1);padding:0 3px;border-radius:2px">qwen3.5:9b</code> on requests that may use tools (read/write files, recall memories). Smaller models often produce broken tool JSON — qwen3.5 handles structured outputs reliably.<br>
+            <span style="color:var(--subtext)">Turn ON when your chosen Ollama model returns malformed tool calls. Leave OFF for plain chat without tools, or in Claude mode (this setting has no effect there).</span>
           </div>
         </div>
 
@@ -1060,18 +1067,16 @@ async function loadMemory() {
 }
 
 function memEntryHtml(m) {
-  const date    = (m.date || '').slice(0, 10);
-  const title   = escHtml(m.title || '—');
-  const summary = escHtml(m.summary || '');
-  const tags    = (m.tags || []).map(t => `<span style="font-size:.65rem;color:var(--subtext);background:var(--surface1);border-radius:3px;padding:1px 5px">${escHtml(t)}</span>`).join(' ');
-  return `<div class="sub-bubble">
-    <div class="sub-bubble-hdr" onclick="this.parentElement.classList.toggle('open')">
-      <span class="chevron">▶</span>
+  const date  = (m.date || '').slice(0, 10);
+  const title = escHtml(m.title || '—');
+  const href  = '/memory/' + encodeURIComponent(m.id || '');
+  return `<a class="sub-bubble" href="${href}" target="_blank" rel="noopener" style="display:block;text-decoration:none;color:inherit">
+    <div class="sub-bubble-hdr" title="Open full memory in new tab">
       <span style="font-size:.68rem;color:var(--subtext);white-space:nowrap">${date}</span>
       <span style="flex:1;margin-left:6px;color:var(--text);font-size:.75rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${title}</span>
+      <span style="font-size:.7rem;color:var(--subtext);opacity:.6;margin-left:6px">↗</span>
     </div>
-    <div class="sub-bubble-body">${summary || title}${tags ? '<div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap">' + tags + '</div>' : ''}</div>
-  </div>`;
+  </a>`;
 }
 
 function renderMemList() {
