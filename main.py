@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import logging.handlers
+import secrets
 import time
 from pathlib import Path
 from typing import Any
@@ -30,9 +31,10 @@ except Exception:
 import strategy  # noqa: E402 — after logging setup
 
 from config import (  # noqa: E402
-    ANTHROPIC_API_KEY, ANTHROPIC_URL,
+    ANTHROPIC_API_KEY, ANTHROPIC_URL, BIX_PROXY_SECRET,
     DEFAULT_MODEL, OLLAMA_DEFAULT_MODEL,
-    _ALLOWED_CLAUDE_MODELS, _MAX_BODY_BYTES, _MAX_TOKENS_CAP,
+    _ALLOWED_ANTHROPIC_BETAS, _ALLOWED_CLAUDE_MODELS, _ALLOWED_OLLAMA_MODELS,
+    _MAX_BODY_BYTES, _MAX_TOKENS_CAP,
 )
 from helpers import _agg, _claude_session, _write_routing_event  # noqa: E402
 from config import CONV_DIR                                          # noqa: E402
@@ -306,6 +308,12 @@ async def chat(request: Request):
             content=json.dumps({"error": f"Model not permitted: {model}"}),
             media_type="application/json",
         )
+    if mode == "local" and model not in _ALLOWED_OLLAMA_MODELS:
+        return Response(
+            status_code=400,
+            content=json.dumps({"error": f"Model not permitted: {model}"}),
+            media_type="application/json",
+        )
 
     log.info("chat mode=%s model=%s msgs=%d", mode, model, len(messages))
 
@@ -327,6 +335,21 @@ async def chat(request: Request):
 
 @app.post("/v1/messages")
 async def v1_messages(request: Request):
+    # Defence-in-depth: require a shared secret as x-api-key, then substitute
+    # the real ANTHROPIC_API_KEY. Cloudflare Access is the primary gate; this
+    # ensures the API key cannot be drained even if the loopback port is ever
+    # reachable on LAN or Access misroutes.
+    if BIX_PROXY_SECRET:
+        client_key = request.headers.get("x-api-key", "")
+        if not secrets.compare_digest(client_key, BIX_PROXY_SECRET):
+            log.warning("v1_proxy auth failed remote=%s", request.client.host if request.client else "?")
+            return Response(
+                status_code=401,
+                content=json.dumps({"type": "error", "error": {
+                    "type": "authentication_error", "message": "Unauthorized"}}),
+                media_type="application/json",
+            )
+
     raw = await request.body()
     if len(raw) > _MAX_BODY_BYTES:
         return Response(
@@ -335,7 +358,17 @@ async def v1_messages(request: Request):
                 "type": "invalid_request_error", "message": "Request body too large"}}),
             media_type="application/json",
         )
-    body  = json.loads(raw)
+    try:
+        body = json.loads(raw)
+        if not isinstance(body, dict):
+            raise ValueError("body must be a JSON object")
+    except (ValueError, json.JSONDecodeError):
+        return Response(
+            status_code=400,
+            content=json.dumps({"type": "error", "error": {
+                "type": "invalid_request_error", "message": "Invalid JSON body"}}),
+            media_type="application/json",
+        )
     model = body.get("model", "")
     if model not in _ALLOWED_CLAUDE_MODELS:
         return Response(
@@ -346,13 +379,24 @@ async def v1_messages(request: Request):
         )
     if body.get("max_tokens", 0) > _MAX_TOKENS_CAP:
         body = {**body, "max_tokens": _MAX_TOKENS_CAP}
+
+    # Filter anthropic-beta values against the server-side allowlist. Each
+    # client header value may itself be a comma-separated list per Anthropic's API.
+    forwarded_betas = []
+    for k, v in request.headers.items():
+        if k.lower() != "anthropic-beta":
+            continue
+        for beta in (s.strip() for s in v.split(",")):
+            if beta and beta in _ALLOWED_ANTHROPIC_BETAS:
+                forwarded_betas.append(beta)
     headers = {
         "x-api-key":         ANTHROPIC_API_KEY,
         "anthropic-version": "2023-06-01",
         "content-type":      "application/json",
-        **{k: v for k, v in request.headers.items()
-           if k.lower().startswith("anthropic-beta")},
     }
+    if forwarded_betas:
+        headers["anthropic-beta"] = ",".join(forwarded_betas)
+
     async with httpx.AsyncClient(timeout=None) as client:
         r = await client.post(ANTHROPIC_URL, json=body, headers=headers)
     try:

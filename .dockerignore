@@ -1,5 +1,11 @@
+.git
+.gitignore
 __pycache__
 .venv
 .pytest_cache
 *.pyc
 .env
+.DS_Store
+tests/
+logs/
+data/
