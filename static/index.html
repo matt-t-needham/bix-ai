@@ -75,6 +75,14 @@
     .mode-btn.active                    { background: var(--surface1); color: var(--text); }
     .mode-btn.active[data-mode="local"] { color: var(--yellow); }
     .mode-btn.active[data-mode="ai"]    { color: var(--mauve); }
+    .mode-btn.active[data-mode="auto"]  { color: var(--mauve); }
+
+    .fallback-label {
+      display: block;
+      font-size: .72rem;
+      color: var(--subtext);
+      margin-bottom: 4px;
+    }
 
     .api-mode-badge {
       display: none;
@@ -585,6 +593,7 @@
       <div class="input-right">
         <div class="mode-group">
           <button class="mode-btn active" data-mode="ai">AI</button>
+          <button class="mode-btn" data-mode="auto">Auto</button>
           <button class="mode-btn" data-mode="local">Local</button>
         </div>
         <div class="api-mode-badge" id="api-mode-badge" title="Using API credits (Pro quota reached)">API</div>
@@ -735,7 +744,7 @@ let forceApi     = false;   // set to true when Pro quota is exhausted
 let lastUserMsg  = '';      // stored for quota retry
 let toolOffload  = false;
 
-const modeDefaults = { ai: 'claude-sonnet-4-6', local: 'gemma4:26b' };
+const modeDefaults = { ai: 'claude-sonnet-4-6', auto: 'claude-sonnet-4-6', local: 'gemma4:26b' };
 
 // ── DOM ───────────────────────────────────────────────────────────────────────
 const msgsEl      = document.getElementById('messages');
@@ -818,7 +827,8 @@ document.querySelectorAll('.mode-btn').forEach(btn => {
 
 modelSel.addEventListener('change', () => {
   model = modelSel.value;
-  setMode(localModelValues.has(model) ? 'local' : 'ai', false);
+  if (localModelValues.has(model)) setMode('local', false);
+  else if (mode === 'local')       setMode('ai', false);
 });
 
 const toolOffloadBtn = document.getElementById('tool-offload-btn');
@@ -842,6 +852,7 @@ function retryWithApi() {
 
 function _resolvedMode() {
   if (mode === 'local') return 'local';
+  if (mode === 'auto')  return 'auto';
   if (forceApi)        return 'api';
   return 'pro';
 }
@@ -1009,6 +1020,7 @@ function renderHistory() {
     const local = r.mode === 'local' ? `<span class="hi-local"> · local</span>` : '';
     const pro   = r.mode === 'pro'   ? `<span class="hi-pro"> · pro</span>`     : '';
     const api   = r.mode === 'api'   ? `<span class="hi-api"> · api</span>`     : '';
+    const auto  = r.mode === 'auto'  ? `<span class="hi-pro"> · auto</span>`    : '';
     const err   = r.status === 'error' ? `<span class="hi-err"> · error</span>` : '';
     const toks  = r.input_tokens ? `${r.input_tokens}→${r.output_tokens}` : `~${r.output_tokens}`;
     const cost  = r.mode !== 'local' ? estimateCost(r.model, r.input_tokens, r.output_tokens) : null;
@@ -1040,7 +1052,7 @@ function renderHistory() {
     return `<div class="hist-item">
       <div class="hi-header">
         <span class="hi-time">${t}</span>
-        <span class="hi-model">${friendlyModel(r.model)}${local}${pro}${api}${err}</span>
+        <span class="hi-model">${friendlyModel(r.model)}${local}${pro}${api}${auto}${err}</span>
       </div>
       ${bodyHtml}
     </div>`;
@@ -1374,6 +1386,21 @@ async function send() {
           renderHistory();
           // Kick off background summarization
           summarizeInBackground(thisReqId, userMsg, fullText);
+
+        } else if (evType === 'fallback_triggered') {
+          fullText = '';
+          textSegments = [{type: 'text', content: ''}];
+          bubble.innerHTML = '';
+          const label = document.createElement('span');
+          label.className = 'fallback-label';
+          label.textContent = '↪ Claude';
+          bubble.appendChild(label);
+          const newNode = document.createTextNode('');
+          bubble.appendChild(newNode);
+          currentTextNode = newNode;
+          currentReq.output_tokens = 0;
+          renderCurrentStats();
+          autoScroll();
 
         } else if (evType === 'tool_start') {
           const newNode = document.createTextNode('');

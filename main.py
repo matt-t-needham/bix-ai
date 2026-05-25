@@ -37,6 +37,7 @@ from config import (  # noqa: E402
 from helpers import _agg, _claude_session, _write_routing_event  # noqa: E402
 from memory import _load_all_memories, _summarize, save_memory_entry  # noqa: E402
 from streaming.claude import _stream_claude                       # noqa: E402
+from streaming.local_first import _stream_local_first             # noqa: E402
 from streaming.ollama import _stream_ollama                       # noqa: E402
 from streaming.pro import _stream_pro                             # noqa: E402
 
@@ -187,7 +188,7 @@ async def chat(request: Request):
     mode         = body.mode
     tool_offload = body.tool_offload
 
-    if mode in ("api", "pro") and model not in _ALLOWED_CLAUDE_MODELS:
+    if mode in ("api", "pro", "auto") and model not in _ALLOWED_CLAUDE_MODELS:
         return Response(
             status_code=400,
             content=json.dumps({"error": f"Model not permitted: {model}"}),
@@ -202,6 +203,11 @@ async def chat(request: Request):
                 yield event
         elif mode == "api":
             async for event in _stream_claude(messages, model, max_tokens, skip_preprocess=False, mode=mode):
+                yield event
+        elif mode == "auto":
+            async for event in _stream_local_first(
+                messages, OLLAMA_DEFAULT_MODEL, model, max_tokens, mode=mode,
+            ):
                 yield event
         else:
             async for event in _stream_pro(messages, model, max_tokens, mode=mode):
