@@ -119,7 +119,12 @@ Imported and adapted from the shared project standards:
 - **Container rebuild required for any change.** `static/index.html` is `COPY`-ed at build time — there is no volume mount for it. Always rebuild after editing frontend or backend files.
 - **`ANTHROPIC_API_KEY` comes from `/home/matt/apps/.env`**, not from `.env` inside `bix-ai/`. If Claude requests fail, check the key is present in the running container: `docker exec apps-ai-router-1 env | grep ANTHROPIC`.
 - **Ollama unreachable from container** unless `OLLAMA_HOST=0.0.0.0` is set in the Ollama systemd override. The container reaches Ollama via `host.docker.internal:11434`.
-- **AMD GPU (RX 6600M / gfx1032)** requires `HSA_OVERRIDE_GFX_VERSION=10.3.0` in the Ollama systemd override for GPU offloading. Without it, Ollama falls back to CPU.
+- **AMD GPU (RX 6600M / gfx1032) uses the Vulkan backend, not ROCm.** Ollama's bundled rocBLAS has never shipped gfx1032 kernels (checked through v0.24.0 — preset includes gfx1030 but not gfx1032). The old `HSA_OVERRIDE_GFX_VERSION=10.3.0` spoof made the GPU pretend to be gfx1030 so it could borrow those kernels — it worked silently until Ollama 0.21 tightened GPU discovery, after which the spoofed device hangs the ROCm probe for 30s every cold start and Ollama falls back to CPU. Required env vars in the systemd override (`/etc/systemd/system/ollama.service.d/override.conf`):
+    - `OLLAMA_VULKAN=1` — enable the Vulkan backend
+    - `OLLAMA_LLM_LIBRARY=vulkan` — skip the ROCm probe entirely (saves the 30s timeout)
+    - Do NOT set `HSA_OVERRIDE_GFX_VERSION` or any `*_VISIBLE_DEVICES` envs — they trigger an "override visible devices" warning and don't help.
+
+    Symptom of regression: `curl localhost:11434/api/ps` shows `size_vram: 0` after loading a model, and `journalctl -u ollama` shows `failure during GPU discovery` or `inference compute id=cpu library=cpu` at startup. Expected healthy state: startup log line `inference compute id=gpu0 library=vulkan ...` and `size_vram > 0` after model load. Vulkan delivers ~70-90% of theoretical ROCm perf on RDNA2 for chat workloads — fine for this use case.
 - **Ollama unloads models** after ~5 minutes idle. The GPU section in the sidebar shows "idle" when this happens — that's expected.
 - **`strategy.py` tests:** `cd bix-ai && pytest tests/` — four tests covering below-threshold, above-threshold, already-summarised, and tool_result blocks.
 

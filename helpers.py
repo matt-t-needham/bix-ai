@@ -20,6 +20,47 @@ def sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+async def with_keepalive(gen, interval: float = 15.0):
+    # Cloudflare Tunnel resets idle streams after ~100s, so emit a comment
+    # heartbeat during long gaps (e.g. while a subprocess thinks between tool
+    # turns). The heartbeat also forces a write that surfaces client disconnects
+    # so the inner generator's finally blocks can clean up.
+    aiter = gen.__aiter__()
+    next_task: asyncio.Task | None = None
+    sentinel = object()
+
+    async def _safe_next() -> object:
+        try:
+            return await aiter.__anext__()
+        except StopAsyncIteration:
+            return sentinel
+
+    try:
+        while True:
+            if next_task is None:
+                next_task = asyncio.create_task(_safe_next())
+            try:
+                result = await asyncio.wait_for(asyncio.shield(next_task), timeout=interval)
+            except asyncio.TimeoutError:
+                yield ": keepalive\n\n"
+                continue
+            next_task = None
+            if result is sentinel:
+                return
+            yield result
+    finally:
+        if next_task is not None and not next_task.done():
+            next_task.cancel()
+            try:
+                await next_task
+            except BaseException:
+                pass
+        try:
+            await aiter.aclose()
+        except Exception:
+            pass
+
+
 async def ollama_chat(model: str, messages: list, timeout: float = 120.0) -> str:
     async with httpx.AsyncClient(timeout=timeout) as client:
         r = await client.post(OLLAMA_URL, json={

@@ -36,7 +36,7 @@ from config import (  # noqa: E402
     _ALLOWED_ANTHROPIC_BETAS, _ALLOWED_CLAUDE_MODELS, _ALLOWED_OLLAMA_MODELS,
     _MAX_BODY_BYTES, _MAX_TOKENS_CAP,
 )
-from helpers import _agg, _claude_session, _write_routing_event  # noqa: E402
+from helpers import _agg, _claude_session, _write_routing_event, with_keepalive  # noqa: E402
 from config import CONV_DIR                                          # noqa: E402
 from memory import _load_all_memories, _summarize, save_memory_entry  # noqa: E402
 from streaming.claude import _stream_claude                       # noqa: E402
@@ -334,7 +334,7 @@ async def chat(request: Request):
             async for event in _stream_pro(messages, model, max_tokens, mode=mode):
                 yield event
 
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return StreamingResponse(with_keepalive(stream()), media_type="text/event-stream")
 
 
 # ── API proxy route ───────────────────────────────────────────────────────────

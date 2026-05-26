@@ -93,6 +93,7 @@ async def _stream_pro(messages: list, model: str, max_tokens: int, mode: str = "
     input_tokens  = 0
     output_tokens = 0
 
+    proc = None
     try:
         proc_env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
         proc_env["HOME"] = "/home/matt"
@@ -140,6 +141,28 @@ async def _stream_pro(messages: list, model: str, max_tokens: int, mode: str = "
                             yield sse("tool_input", {"index": idx, "partial_json": json.dumps(inp)})
                         yield sse("tool_end", {"index": idx})
 
+            elif etype == "user":
+                msg = event.get("message", {})
+                for block in msg.get("content", []):
+                    if block.get("type") != "tool_result":
+                        continue
+                    tool_use_id = block.get("tool_use_id", "")
+                    content = block.get("content", "")
+                    if isinstance(content, list):
+                        content = "\n".join(
+                            c.get("text", "") if isinstance(c, dict) else str(c)
+                            for c in content
+                        )
+                    elif not isinstance(content, str):
+                        content = str(content)
+                    if len(content) > 4000:
+                        content = content[:4000] + "\n…(truncated)"
+                    yield sse("tool_result", {
+                        "tool_use_id": tool_use_id,
+                        "content":     content,
+                        "is_error":    bool(block.get("is_error", False)),
+                    })
+
             elif etype == "result":
                 if event.get("is_error"):
                     raw_err = event.get("error") or event.get("result") or event.get("message") or {}
@@ -180,6 +203,21 @@ async def _stream_pro(messages: list, model: str, max_tokens: int, mode: str = "
         log.error("pro stream error: %s", e)
         yield sse("error", {"message": str(e)})
         return
+    finally:
+        if proc is not None and proc.returncode is None:
+            log.info("pro subprocess cleanup pid=%d (client disconnect or generator exit)", proc.pid)
+            try:
+                proc.terminate()
+            except ProcessLookupError:
+                pass
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5.0)
+            except (asyncio.TimeoutError, Exception):
+                try:
+                    proc.kill()
+                    await proc.wait()
+                except (ProcessLookupError, Exception):
+                    pass
 
     elapsed = time.monotonic() - start
     tps     = output_tokens / elapsed if elapsed > 0 else 0

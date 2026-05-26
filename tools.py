@@ -175,3 +175,67 @@ OLLAMA_TOOLS = [
     }
     for t in FS_TOOLS
 ]
+
+
+# ── Forge tool definitions (mode="auto") ──────────────────────────────────────
+# These wrap _execute_tool so the agentic loop in WorkflowRunner can call the
+# same fs/memory backends as the api/pro/local paths. Kept lazy: forge is not
+# importable in test environments that haven't pip-installed it. Anything that
+# imports tools.py must still work without forge installed.
+
+try:
+    from pydantic import BaseModel, Field
+    from forge import ToolDef, ToolSpec
+
+    class _ListDirParams(BaseModel):
+        path: str = Field(description=f"Absolute path to list. Must be within {FS_ROOT}.")
+
+    class _ReadFileParams(BaseModel):
+        path: str = Field(description=f"Absolute path to the file. Must be within {FS_ROOT}.")
+
+    class _RecallMemoriesParams(BaseModel):
+        query: str = Field(description="Keywords or topic to search for in past conversations.")
+
+    async def _forge_list_directory(path: str) -> str:
+        return await _execute_tool("list_directory", {"path": path})
+
+    async def _forge_read_file(path: str) -> str:
+        return await _execute_tool("read_file", {"path": path})
+
+    async def _forge_recall_memories(query: str) -> str:
+        return await _execute_tool("recall_memories", {"query": query})
+
+    FORGE_TOOLS: dict = {
+        "list_directory": ToolDef(
+            spec=ToolSpec(
+                name="list_directory",
+                description=(
+                    f"List files and directories at a path. Accessible root is "
+                    f"{FS_ROOT}. Use before reading files."
+                ),
+                parameters=_ListDirParams,
+            ),
+            callable=_forge_list_directory,
+        ),
+        "read_file": ToolDef(
+            spec=ToolSpec(
+                name="read_file",
+                description="Read the text contents of a file. Limited to 200 KB.",
+                parameters=_ReadFileParams,
+            ),
+            callable=_forge_read_file,
+        ),
+        "recall_memories": ToolDef(
+            spec=ToolSpec(
+                name="recall_memories",
+                description=(
+                    "Search past conversation summaries. Use when asked about "
+                    "previous sessions."
+                ),
+                parameters=_RecallMemoriesParams,
+            ),
+            callable=_forge_recall_memories,
+        ),
+    }
+except ImportError:
+    FORGE_TOOLS = {}  # forge not installed — auto mode will fail loudly on import

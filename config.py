@@ -35,6 +35,7 @@ _ALLOWED_ANTHROPIC_BETAS = frozenset(
 ENTRIES_PER_FILE  = 200
 CLAUDE_CREDS_PATH = Path("/home/matt/.claude/.credentials.json")
 ROUTING_LOG       = Path("logs") / "routing.ndjson"
+AUTO_LOG          = Path("logs") / "auto.ndjson"
 
 MEM_DIR  = DATA_DIR / "memories"
 CONV_DIR = DATA_DIR / "convos"
