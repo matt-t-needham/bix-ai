@@ -11,7 +11,8 @@ log = logging.getLogger("strategy")
 LOCAL_MODEL = "gemma4:e2b"          # summariser; gemma4:e2b is the faster fallback
 SUMMARY_THRESHOLD_TOKENS = 6000     # blocks above this get summarised
 SUMMARY_TARGET_WORDS = 300          # rough budget for the summary
-SUMMARY_MARKER = "[router-summary v1]"  # idempotency sentinel
+SUMMARY_MARKER = "[router-summary v1]"        # opening sentinel; also used by is_already_summarised
+SUMMARY_END_MARKER = "[end-router-summary]"   # closing sentinel — defines an unambiguous data boundary
 
 SUMMARY_SYSTEM = (
     "You are a compression layer for an AI coding assistant. "
@@ -85,7 +86,11 @@ async def summarise(ollama_chat, text: str) -> str:
         {"role": "system", "content": sys_prompt},
         {"role": "user", "content": text},
     ])
-    return f"{SUMMARY_MARKER}\n{out.strip()}"
+    # Strip any markers an injected payload might have planted, then wrap in our own.
+    # The begin/end pair gives downstream consumers an unambiguous data boundary
+    # so instructions inside the summary can be treated as data, not commands.
+    body = out.strip().replace(SUMMARY_MARKER, "").replace(SUMMARY_END_MARKER, "").strip()
+    return f"{SUMMARY_MARKER}\n{body}\n{SUMMARY_END_MARKER}"
 
 
 # --- Main entry point ---

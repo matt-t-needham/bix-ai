@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import logging.handlers
+import secrets
 import time
 from pathlib import Path
 from typing import Any
@@ -30,11 +31,13 @@ except Exception:
 import strategy  # noqa: E402 — after logging setup
 
 from config import (  # noqa: E402
-    ANTHROPIC_API_KEY, ANTHROPIC_URL,
+    ANTHROPIC_API_KEY, ANTHROPIC_URL, BIX_PROXY_SECRET,
     DEFAULT_MODEL, OLLAMA_DEFAULT_MODEL,
-    _ALLOWED_CLAUDE_MODELS, _MAX_BODY_BYTES, _MAX_TOKENS_CAP,
+    _ALLOWED_ANTHROPIC_BETAS, _ALLOWED_CLAUDE_MODELS, _ALLOWED_OLLAMA_MODELS,
+    _MAX_BODY_BYTES, _MAX_TOKENS_CAP,
 )
 from helpers import _agg, _claude_session, _write_routing_event  # noqa: E402
+from config import CONV_DIR                                          # noqa: E402
 from memory import _load_all_memories, _summarize, save_memory_entry  # noqa: E402
 from streaming.claude import _stream_claude                       # noqa: E402
 from streaming.local_first import _stream_local_first             # noqa: E402
@@ -148,6 +151,118 @@ async def get_memory():
     return {"entries": list(reversed(all_m)), "count": len(all_m)}
 
 
+def _esc(s: Any) -> str:
+    return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            .replace('"', "&quot;").replace("'", "&#39;"))
+
+
+def _render_memory_html(entry: dict, convo: dict | None) -> str:
+    title = _esc(entry.get("title") or "—")
+    date  = _esc((entry.get("date") or "")[:19].replace("T", " "))
+    model = _esc(entry.get("model") or "—")
+    in_t  = entry.get("input_tokens") or 0
+    out_t = entry.get("output_tokens") or 0
+    tags  = " ".join(
+        f'<span class="tag">{_esc(t)}</span>' for t in (entry.get("tags") or [])
+    )
+    summary = _esc(entry.get("summary") or "")
+
+    msgs_html = ""
+    if convo and isinstance(convo.get("messages"), list):
+        for m in convo["messages"]:
+            role = m.get("role", "?")
+            content = m.get("content", "")
+            if isinstance(content, list):
+                parts = []
+                for c in content:
+                    if isinstance(c, dict):
+                        if c.get("type") == "text":
+                            parts.append(c.get("text", ""))
+                        elif c.get("type") == "tool_use":
+                            parts.append(f"[tool_use: {c.get('name','?')}({json.dumps(c.get('input', {}))})]")
+                        elif c.get("type") == "tool_result":
+                            tc = c.get("content", "")
+                            if isinstance(tc, list):
+                                tc = "\n".join(p.get("text", "") for p in tc if isinstance(p, dict))
+                            parts.append(f"[tool_result] {tc}")
+                content = "\n".join(parts)
+            msgs_html += (
+                f'<div class="msg msg-{_esc(role)}">'
+                f'<div class="role">{_esc(role)}</div>'
+                f'<div class="body">{_esc(content)}</div>'
+                f'</div>'
+            )
+    elif convo is None:
+        msgs_html = '<div class="note">Conversation file unavailable — summary only.</div>'
+
+    return f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<title>{title} — memory</title>
+<style>
+:root {{
+  --bg:#1e1e2e; --surface0:#313244; --surface1:#45475a;
+  --text:#cdd6f4; --subtext:#a6adc8;
+  --blue:#89b4fa; --mauve:#cba6f7; --green:#a6e3a1;
+}}
+*,*::before,*::after {{ box-sizing:border-box; margin:0; padding:0; }}
+body {{
+  font-family:system-ui,-apple-system,sans-serif; background:var(--bg);
+  color:var(--text); padding:32px 24px; max-width:880px; margin:0 auto;
+  line-height:1.5;
+}}
+.hdr {{ border-bottom:1px solid var(--surface1); padding-bottom:14px; margin-bottom:18px; }}
+.hdr h1 {{ font-size:1.3rem; font-weight:600; color:var(--text); margin-bottom:6px; }}
+.meta {{ font-size:.78rem; color:var(--subtext); display:flex; gap:14px; flex-wrap:wrap; font-variant-numeric:tabular-nums; }}
+.tag {{ background:var(--surface1); color:var(--subtext); padding:1px 7px; border-radius:3px; font-size:.7rem; margin-right:3px; }}
+.summary {{ background:var(--surface0); border-left:2px solid var(--mauve); padding:10px 14px; margin:14px 0; font-size:.86rem; color:var(--subtext); border-radius:0 4px 4px 0; }}
+.msg {{ margin:14px 0; padding:10px 14px; border-radius:6px; background:var(--surface0); }}
+.msg-user {{ border-left:2px solid var(--mauve); }}
+.msg-assistant {{ border-left:2px solid var(--blue); }}
+.msg-tool, .msg-system {{ border-left:2px solid var(--surface1); opacity:.85; }}
+.role {{ font-size:.68rem; text-transform:uppercase; letter-spacing:.06em; color:var(--subtext); margin-bottom:5px; }}
+.body {{ font-size:.85rem; white-space:pre-wrap; word-wrap:break-word; color:var(--text); }}
+.note {{ color:var(--subtext); font-size:.85rem; font-style:italic; padding:14px 0; }}
+</style></head>
+<body>
+<div class="hdr">
+  <h1>{title}</h1>
+  <div class="meta">
+    <span>{date}</span>
+    <span>{model}</span>
+    <span>in: {in_t:,}</span>
+    <span>out: {out_t:,}</span>
+    {('<span>' + tags + '</span>') if tags else ''}
+  </div>
+</div>
+{f'<div class="summary">{summary}</div>' if summary else ''}
+{msgs_html}
+</body></html>"""
+
+
+@app.get("/memory/{entry_id}")
+async def get_memory_entry(entry_id: str):
+    all_m = await asyncio.to_thread(_load_all_memories)
+    entry = next((m for m in all_m if m.get("id") == entry_id), None)
+    if not entry:
+        return Response(
+            "<h1>Memory not found</h1>",
+            status_code=404, media_type="text/html",
+        )
+
+    convo = None
+    fname = entry.get("file")
+    if fname:
+        conv_path = CONV_DIR / fname
+        if conv_path.exists():
+            try:
+                convo = json.loads(conv_path.read_text())
+            except (OSError, ValueError) as e:
+                log.warning("memory conv read failed id=%s err=%s", entry_id, e)
+
+    html = _render_memory_html(entry, convo)
+    return Response(html, media_type="text/html; charset=utf-8")
+
+
 # ── Summarize route ───────────────────────────────────────────────────────────
 
 @app.post("/summarize")
@@ -194,6 +309,12 @@ async def chat(request: Request):
             content=json.dumps({"error": f"Model not permitted: {model}"}),
             media_type="application/json",
         )
+    if mode == "local" and model not in _ALLOWED_OLLAMA_MODELS:
+        return Response(
+            status_code=400,
+            content=json.dumps({"error": f"Model not permitted: {model}"}),
+            media_type="application/json",
+        )
 
     log.info("chat mode=%s model=%s msgs=%d", mode, model, len(messages))
 
@@ -220,6 +341,21 @@ async def chat(request: Request):
 
 @app.post("/v1/messages")
 async def v1_messages(request: Request):
+    # Defence-in-depth: require a shared secret as x-api-key, then substitute
+    # the real ANTHROPIC_API_KEY. Cloudflare Access is the primary gate; this
+    # ensures the API key cannot be drained even if the loopback port is ever
+    # reachable on LAN or Access misroutes.
+    if BIX_PROXY_SECRET:
+        client_key = request.headers.get("x-api-key", "")
+        if not secrets.compare_digest(client_key, BIX_PROXY_SECRET):
+            log.warning("v1_proxy auth failed remote=%s", request.client.host if request.client else "?")
+            return Response(
+                status_code=401,
+                content=json.dumps({"type": "error", "error": {
+                    "type": "authentication_error", "message": "Unauthorized"}}),
+                media_type="application/json",
+            )
+
     raw = await request.body()
     if len(raw) > _MAX_BODY_BYTES:
         return Response(
@@ -228,7 +364,17 @@ async def v1_messages(request: Request):
                 "type": "invalid_request_error", "message": "Request body too large"}}),
             media_type="application/json",
         )
-    body  = json.loads(raw)
+    try:
+        body = json.loads(raw)
+        if not isinstance(body, dict):
+            raise ValueError("body must be a JSON object")
+    except (ValueError, json.JSONDecodeError):
+        return Response(
+            status_code=400,
+            content=json.dumps({"type": "error", "error": {
+                "type": "invalid_request_error", "message": "Invalid JSON body"}}),
+            media_type="application/json",
+        )
     model = body.get("model", "")
     if model not in _ALLOWED_CLAUDE_MODELS:
         return Response(
@@ -239,13 +385,24 @@ async def v1_messages(request: Request):
         )
     if body.get("max_tokens", 0) > _MAX_TOKENS_CAP:
         body = {**body, "max_tokens": _MAX_TOKENS_CAP}
+
+    # Filter anthropic-beta values against the server-side allowlist. Each
+    # client header value may itself be a comma-separated list per Anthropic's API.
+    forwarded_betas = []
+    for k, v in request.headers.items():
+        if k.lower() != "anthropic-beta":
+            continue
+        for beta in (s.strip() for s in v.split(",")):
+            if beta and beta in _ALLOWED_ANTHROPIC_BETAS:
+                forwarded_betas.append(beta)
     headers = {
         "x-api-key":         ANTHROPIC_API_KEY,
         "anthropic-version": "2023-06-01",
         "content-type":      "application/json",
-        **{k: v for k, v in request.headers.items()
-           if k.lower().startswith("anthropic-beta")},
     }
+    if forwarded_betas:
+        headers["anthropic-beta"] = ",".join(forwarded_betas)
+
     async with httpx.AsyncClient(timeout=None) as client:
         r = await client.post(ANTHROPIC_URL, json=body, headers=headers)
     try:
