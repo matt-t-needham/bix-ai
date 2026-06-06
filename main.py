@@ -56,7 +56,7 @@ class ChatRequest(BaseModel):
     messages:     list[dict[str, Any]]
     model:        str = DEFAULT_MODEL
     max_tokens:   int = 4096
-    mode:         str = "pro"
+    mode:         str = "auto"
     tool_offload: bool = False
 
 class MemorySaveRequest(BaseModel):

@@ -45,3 +45,6 @@ STAGING_DIR = DATA_DIR / "staging"
 # Steam's logs dir is mounted read-only into the container separately.
 INTERNAL_LOG_ROOT = Path(os.environ.get("INTERNAL_LOG_ROOT", "/home/matt/apps/bix-infra/logs"))
 STEAM_LOG_ROOT    = Path(os.environ.get("STEAM_LOG_ROOT", "/home/matt/.steam/debian-installation/logs"))
+
+# Project TODO files (read-only). ALL.md is the compiled all-projects view.
+TODOS_DIR = Path(os.environ.get("TODOS_DIR", "/home/matt/apps/bix-infra/todos"))

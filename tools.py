@@ -6,6 +6,7 @@ from pathlib import Path
 import logtools
 import staging
 import steam
+import todos
 from config import CONV_DIR, FS_ROOT, OLLAMA_DEFAULT_MODEL
 from fs_core import is_denied_path, list_directory, read_file
 from helpers import ollama_chat
@@ -81,6 +82,14 @@ async def _execute_tool(name: str, tool_input: dict) -> str:
             log.warning("list_steam_games failed: %s", e)
             return f"Failed to read Steam library: {e}"
         return steam.format_games(games)
+
+    elif name == "read_todos":
+        project = (tool_input.get("project") or "").strip() or None
+        try:
+            return await asyncio.to_thread(todos.read_todos, project)
+        except Exception as e:
+            log.warning("read_todos failed: %s", e)
+            return f"Failed to read TODOs: {e}"
 
     elif name == "list_log_sources":
         return await asyncio.to_thread(logtools.list_sources)
@@ -244,6 +253,26 @@ FS_TOOLS = [
         },
     },
     {
+        "name": "read_todos",
+        "description": (
+            "Read the project TODO / pending-work list. With no argument it returns "
+            "the compiled list of ALL pending TODOs across every project (bix-ai, "
+            "infra, demucs). Pass a project name to get just that project's todos. "
+            "Use this whenever the user asks about TODOs, pending work, tasks, or "
+            "'what's left to do' — do NOT browse directories looking for it."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Optional project name (e.g. 'bix-ai', 'infra', 'demucs'). Omit for all.",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "list_log_sources",
         "description": (
             "List the log files available for review — both the internal app/"
@@ -343,6 +372,9 @@ try:
         target_path: str = Field(description=f"Absolute path to write. Must be within {FS_ROOT}.")
         content: str = Field(description="Full file contents (whole-file; overwrites on edit).")
 
+    class _ReadTodosParams(BaseModel):
+        project: str | None = Field(default=None, description="Optional project name; omit for all pending TODOs.")
+
     class _ListLogSourcesParams(BaseModel):
         pass
 
@@ -367,6 +399,9 @@ try:
         return await _execute_tool(
             "stage_write", {"target_path": target_path, "content": content}
         )
+
+    async def _forge_read_todos(project: str | None = None) -> str:
+        return await _execute_tool("read_todos", {"project": project})
 
     async def _forge_list_log_sources() -> str:
         return await _execute_tool("list_log_sources", {})
@@ -430,6 +465,19 @@ try:
                 parameters=_StageWriteParams,
             ),
             callable=_forge_stage_write,
+        ),
+        "read_todos": ToolDef(
+            spec=ToolSpec(
+                name="read_todos",
+                description=(
+                    "Read the project TODO / pending-work list. No argument = all "
+                    "pending TODOs across every project; pass a project name for one. "
+                    "Use whenever asked about TODOs, pending work, or tasks — don't "
+                    "browse directories for it."
+                ),
+                parameters=_ReadTodosParams,
+            ),
+            callable=_forge_read_todos,
         ),
         "list_log_sources": ToolDef(
             spec=ToolSpec(

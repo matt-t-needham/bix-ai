@@ -184,6 +184,32 @@
       color: var(--subtext);
       padding: 0 4px;
     }
+    /* Responder indicator: yellow = local model, mauve = Claude (cloud). */
+    .role-label.local { color: var(--yellow); }
+    .role-label.cloud { color: var(--mauve); }
+    .role-label.local::before, .role-label.cloud::before {
+      content: ''; display: inline-block; width: 6px; height: 6px;
+      border-radius: 50%; margin-right: 5px; vertical-align: middle;
+      background: currentColor;
+    }
+    /* Composite indicator: mode + ordered chain of every model used. */
+    .role-label.composite { display: inline-flex; align-items: center; flex-wrap: wrap; }
+    .ind-mode  { color: var(--subtext); font-weight: 600; }
+    .ind-sep, .ind-arrow { color: var(--surface1); margin: 0 5px; }
+    .ind-model { display: inline-flex; align-items: center; }
+    .ind-model::before {
+      content: ''; display: inline-block; width: 5px; height: 5px;
+      border-radius: 50%; background: currentColor; margin-right: 4px;
+    }
+    .ind-model.local { color: var(--yellow); }
+    .ind-model.cloud { color: var(--mauve); }
+    /* Inline marker in the bubble body at a model offload / switch / escalation. */
+    .switch-marker {
+      width: fit-content; max-width: 100%;
+      font-size: .68rem; color: var(--subtext);
+      background: var(--surface0); border: 1px solid var(--surface1);
+      border-radius: 10px; padding: 2px 10px; margin: 8px 0;
+    }
     .bubble {
       padding: 11px 16px;
       border-radius: 14px;
@@ -604,8 +630,8 @@
       <textarea id="input" placeholder="Message… (Shift+Enter for new line)" rows="1"></textarea>
       <div class="input-right">
         <div class="mode-group">
-          <button class="mode-btn active" data-mode="ai">AI</button>
-          <button class="mode-btn" data-mode="auto">Auto</button>
+          <button class="mode-btn" data-mode="ai">Cloud</button>
+          <button class="mode-btn active" data-mode="auto">Auto</button>
           <button class="mode-btn" data-mode="local">Local</button>
         </div>
         <div class="api-mode-badge" id="api-mode-badge" title="Using API credits (Pro quota reached)">API</div>
@@ -748,7 +774,7 @@
 <script>
 // ── State ─────────────────────────────────────────────────────────────────────
 let convHistory  = [];
-let mode         = 'ai';
+let mode         = 'auto';
 let model        = 'claude-sonnet-4-6';
 let busy         = false;
 let reqSeq       = 0;
@@ -804,6 +830,35 @@ function friendlyModel(m) {
   if (l.startsWith('mistral')) return 'Mistral';
   if (l.startsWith('phi'))     return 'Phi';
   return m.split(':')[0].split('-')[0];
+}
+// The local model used for local/auto modes (auto's `model` var is the Claude
+// escalation target, not the responder, so derive the local name separately).
+function localModelName() { return mode === 'local' ? model : (modeDefaults.local || 'gemma4:26b'); }
+
+// Display name for the calling mode (the Local / Auto / Cloud taxonomy).
+function modeName(resolvedMode) {
+  return resolvedMode === 'local' ? 'Local'
+       : resolvedMode === 'auto'  ? 'Auto'
+       : 'Cloud';   // pro / api
+}
+// Append a model to the ordered usage chain, de-duping consecutive repeats.
+function pushModel(chain, name, isLocal) {
+  const last = chain[chain.length - 1];
+  if (!last || last.name !== name) chain.push({ name, isLocal });
+}
+// Render the composite indicator atop a bubble: mode + every model used, in order
+// (e.g. "Auto · Gemma → Qwen → Claude"). Local models are yellow, Claude mauve.
+function renderIndicator(wrap, modeLabel, chain) {
+  const rl = wrap.querySelector('.role-label');
+  if (!rl) return;
+  rl.classList.remove('local', 'cloud');
+  rl.classList.add('composite');
+  const parts = [`<span class="ind-mode">${modeLabel}</span>`];
+  chain.forEach((m, i) => {
+    parts.push(`<span class="ind-${i === 0 ? 'sep' : 'arrow'}">${i === 0 ? '·' : '→'}</span>`);
+    parts.push(`<span class="ind-model ${m.isLocal ? 'local' : 'cloud'}">${friendlyModel(m.name)}</span>`);
+  });
+  rl.innerHTML = parts.join('');
 }
 function toolFriendlyName(name) {
   const map = {read_file: 'Read File', list_directory: 'List Directory', recall_memories: 'Recall Memories', write_file: 'Write File'};
@@ -967,6 +1022,7 @@ function addBubble(role, isLocal, modelName) {
   wrap.className = 'msg ' + role + (isLocal ? ' local' : '');
   const lbl = document.createElement('div');
   lbl.className = 'role-label';
+  if (role !== 'user') lbl.classList.add(isLocal ? 'local' : 'cloud');
   lbl.textContent = role === 'user' ? 'You' : friendlyModel(modelName);
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
@@ -1084,7 +1140,7 @@ function renderHistory() {
     return `<div class="hist-item">
       <div class="hi-header">
         <span class="hi-time">${t}</span>
-        <span class="hi-model">${friendlyModel(r.model)}${local}${pro}${api}${auto}${err}</span>
+        <span class="hi-model">${r.models && r.models.length ? r.models.map(m => friendlyModel(m.name)).join(' → ') : friendlyModel(r.model)}${local}${pro}${api}${auto}${err}</span>
       </div>
       ${bodyHtml}
     </div>`;
@@ -1295,8 +1351,16 @@ async function send() {
   addBubble('user', false).bubble.textContent = text;
 
   const resolvedMode = _resolvedMode();
-  const isLocal = resolvedMode === 'local';
-  const { wrap, bubble } = addBubble('assistant', isLocal, model);
+  // local + auto are local-first; auto's responder is the local model unless it
+  // escalates to Claude (handled on `fallback_triggered`).
+  const isLocal = (resolvedMode === 'local' || resolvedMode === 'auto');
+  const responderModel = isLocal
+    ? (resolvedMode === 'local' ? model : localModelName())
+    : model;
+  const { wrap, bubble } = addBubble('assistant', isLocal, responderModel);
+  const modeLabel  = modeName(resolvedMode);
+  const modelsUsed = [{ name: responderModel, isLocal }];
+  renderIndicator(wrap, modeLabel, modelsUsed);
   let fullText      = '';
   let toolGroupEl   = null;
   let pendingTools  = 0;
@@ -1308,11 +1372,27 @@ async function send() {
   let currentTextNode = document.createTextNode('');
   bubble.appendChild(currentTextNode);
 
+  // Insert an inline marker in the bubble body at a model transition (offload /
+  // switch / escalation), then continue text into a fresh node. The marker is
+  // stored as a segment so the markdown rebuild on `metrics` preserves it.
+  function addSwitch(labelText) {
+    const markerHtml = `<div class="switch-marker">${escHtml(labelText)}</div>`;
+    const marker = document.createElement('div');
+    marker.className = 'switch-marker';
+    marker.textContent = labelText;
+    bubble.appendChild(marker);
+    textSegments.push({ type: 'transition', html: markerHtml });
+    const node = document.createTextNode('');
+    bubble.appendChild(node);
+    currentTextNode = node;
+    textSegments.push({ type: 'text', content: '' });
+  }
+
   reqSeq++;
   const thisReqId = reqSeq;
   currentReq = {
     id: thisReqId, timestamp: new Date(),
-    model, mode: resolvedMode, status: 'running',
+    model, mode: resolvedMode, models: modelsUsed, status: 'running',
     input_tokens: 0, output_tokens: 0,
     ttft_ms: 0, elapsed_ms: 0, tps: 0,
     preprocess_ms: 0, summarised: 0, skipped: 0, failed: 0,
@@ -1366,6 +1446,11 @@ async function send() {
         if (evType === 'model_swap') {
           modelSwap = data;
           setStatus('checking', `↳ ${data.to} (tool-capable)`);
+          if (isLocal) {   // e.g. local model offloaded to Qwen for reliable tool JSON
+            pushModel(modelsUsed, data.to, true);
+            renderIndicator(wrap, modeLabel, modelsUsed);
+            addSwitch(`⚙ offloaded to ${friendlyModel(data.to)} for tools`);
+          }
 
         } else if (evType === 'status') {
           setStatus(data.stage, data.message);
@@ -1395,6 +1480,7 @@ async function send() {
           let html = '';
           for (const seg of textSegments) {
             if (seg.type === 'text' && seg.content) html += renderMd(seg.content);
+            else if (seg.type === 'transition') html += seg.html;  // inline switch marker
             // tool segments are shown in the tool-group block, not inline
           }
           bubble.innerHTML = html;
@@ -1419,16 +1505,15 @@ async function send() {
           summarizeInBackground(thisReqId, userMsg, fullText);
 
         } else if (evType === 'fallback_triggered') {
+          // local attempt failed — discard the partial, escalate to Claude, and
+          // mark the switch point inline.
+          pushModel(modelsUsed, model, false);
+          renderIndicator(wrap, modeLabel, modelsUsed);
           fullText = '';
           textSegments = [{type: 'text', content: ''}];
           bubble.innerHTML = '';
-          const label = document.createElement('span');
-          label.className = 'fallback-label';
-          label.textContent = '↪ Claude';
-          bubble.appendChild(label);
-          const newNode = document.createTextNode('');
-          bubble.appendChild(newNode);
-          currentTextNode = newNode;
+          const reason = (data && data.reason) ? ` (${data.reason})` : '';
+          addSwitch(`↪ escalated to Claude${reason}`);
           currentReq.output_tokens = 0;
           renderCurrentStats();
           autoScroll();
