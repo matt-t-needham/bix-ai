@@ -5,10 +5,10 @@ import os
 import pathlib
 import sys
 
+import staging
 from fs_core import is_denied_path, list_directory, read_file
 
 READ_ROOTS  = [pathlib.Path(p).resolve() for p in os.environ.get("MCP_READ_PATHS",  "/home/matt/apps").split(":") if p]
-WRITE_ROOTS = [pathlib.Path(p).resolve() for p in os.environ.get("MCP_WRITE_PATHS", "/app/data").split(":") if p]
 DATA_DIR    = pathlib.Path(os.environ.get("DATA_DIR", "/app/data"))
 MEM_DIR     = DATA_DIR / "memories"
 
@@ -68,7 +68,12 @@ TOOL_DEFS = [
     },
     {
         "name": "write_file",
-        "description": "Write text content to a file. Must be within an allowed write root.",
+        "description": (
+            "Stage a file write for human review. The file is NOT written "
+            "immediately — it is recorded as a proposal and only applied after a "
+            "person approves it at /staging. Secrets, shell scripts, container/CI "
+            "config, and bix-ai source are refused."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -146,20 +151,16 @@ def _execute(name: str, args: dict) -> dict:
     elif name == "write_file":
         raw     = args.get("path", "")
         content = args.get("content", "")
-        p = pathlib.Path(raw)
-        if not _is_under(p, WRITE_ROOTS):
-            return _tool_error(f"Access denied: '{raw}' is outside allowed write roots")
-        rp = p.resolve()
-        if is_denied_path(rp):
-            return _tool_error(f"Access denied: '{raw}' is a protected path")
         try:
-            rp.parent.mkdir(parents=True, exist_ok=True)
-            rp.write_text(content)
-            return _tool_ok(f"Written {len(content)} bytes to {rp}")
-        except PermissionError:
-            return _tool_error(f"Permission denied: {raw}")
+            rec = staging.create(raw, content, proposed_by="mcp")
+        except ValueError as e:
+            return _tool_error(f"Cannot stage write: {e}")
         except Exception as e:
-            return _tool_error(f"Error writing file: {e}")
+            return _tool_error(f"Error staging write: {e}")
+        return _tool_ok(
+            f"Staged for review (id={rec['id']}). NOT written to {rec['target_path']} "
+            "until a human approves it at /staging."
+        )
 
     return _tool_error(f"Unknown tool: {name}")
 

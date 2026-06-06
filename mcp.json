@@ -5,7 +5,7 @@
       "args": ["/app/bix_mcp.py"],
       "env": {
         "MCP_READ_PATHS": "/home/matt/apps",
-        "MCP_WRITE_PATHS": "/home/matt/apps/todos",
+        "FS_ROOT": "/home/matt/apps",
         "DATA_DIR": "/app/data"
       }
     }

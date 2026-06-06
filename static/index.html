@@ -625,6 +625,7 @@
 
       <div class="d-fixed">
         <a class="metrics-link" href="https://metrics.bix.computer" target="_blank">Internal Metrics →</a>
+        <a class="metrics-link" id="staging-link" href="/staging" target="_blank">Staged writes →</a>
 
         <div class="d-section">
           <div class="d-title d-collapsible" onclick="toggleDSection('router')">
@@ -881,7 +882,19 @@ function openDrawer()  {
   drawer.classList.add('open'); toggleBtn.classList.add('open');
   startSysPoll();
   fetchAuthStatus();
+  fetchStagingCount();
   if (!memLoaded) loadMemory();
+}
+async function fetchStagingCount() {
+  try {
+    const r = await fetch('/staging/count');
+    if (!r.ok) return;
+    const { pending } = await r.json();
+    const el = document.getElementById('staging-link');
+    if (el) el.textContent = pending > 0
+      ? `Staged writes (${pending} pending) →`
+      : 'Staged writes →';
+  } catch (_) { /* best-effort */ }
 }
 function closeDrawer() { drawer.classList.remove('open'); toggleBtn.classList.remove('open'); stopSysPoll(); }
 toggleBtn.addEventListener('click', () => drawer.classList.contains('open') ? closeDrawer() : openDrawer());

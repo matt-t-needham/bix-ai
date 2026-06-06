@@ -3,6 +3,9 @@ import json
 import logging
 from pathlib import Path
 
+import logtools
+import staging
+import steam
 from config import CONV_DIR, FS_ROOT, OLLAMA_DEFAULT_MODEL
 from fs_core import is_denied_path, list_directory, read_file
 from helpers import ollama_chat
@@ -49,6 +52,50 @@ async def _execute_tool(name: str, tool_input: dict) -> str:
         if not p.is_file():
             return f"Not a file: {path}"
         return read_file(p)
+
+    elif name == "stage_write":
+        target  = tool_input.get("target_path") or tool_input.get("path", "")
+        content = tool_input.get("content", "")
+        if not target:
+            return "No target_path provided."
+        try:
+            rec = await asyncio.to_thread(staging.create, target, content, "assistant")
+        except ValueError as e:
+            return f"Cannot stage write: {e}"
+        except Exception as e:
+            log.warning("stage_write failed: %s", e)
+            return f"Failed to stage write: {e}"
+        return (
+            f"Staged for review (id={rec['id']}). This was NOT written to "
+            f"{rec['target_path']} — it will only be applied after a human "
+            "approves it at /staging."
+        )
+
+    elif name == "list_steam_games":
+        include_runtimes = bool(tool_input.get("include_runtimes", False))
+        try:
+            games = await asyncio.to_thread(
+                steam.list_games, include_non_games=include_runtimes
+            )
+        except Exception as e:
+            log.warning("list_steam_games failed: %s", e)
+            return f"Failed to read Steam library: {e}"
+        return steam.format_games(games)
+
+    elif name == "list_log_sources":
+        return await asyncio.to_thread(logtools.list_sources)
+
+    elif name == "read_log":
+        path = tool_input.get("path", "")
+        if not path:
+            return "No log path provided. Call list_log_sources first to see available logs."
+        lines    = tool_input.get("lines", 200)
+        contains = tool_input.get("contains") or None
+        try:
+            return await asyncio.to_thread(logtools.read_log, path, lines, contains)
+        except Exception as e:
+            log.warning("read_log failed path=%s: %s", path, e)
+            return f"Failed to read log: {e}"
 
     elif name == "recall_memories":
         query = tool_input.get("query", "").strip()
@@ -113,6 +160,32 @@ async def _execute_tool(name: str, tool_input: dict) -> str:
 
 FS_TOOLS = [
     {
+        "name": "stage_write",
+        "description": (
+            "Propose writing a file. The write is NOT applied immediately — it is "
+            "staged for human review and only written to disk after a person "
+            "approves it at /staging. Use this to create or edit files (e.g. draft "
+            "a blog post, write a note, scaffold source). Provide the full intended "
+            "file contents; on an existing file this overwrites it. Secrets, shell "
+            "scripts, container/CI config, and bix-ai's own source are refused. "
+            "Always tell the user the change was staged for review, not written."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "target_path": {
+                    "type": "string",
+                    "description": f"Absolute path to write. Must be within {FS_ROOT}.",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "The full file contents (whole-file; overwrites on edit).",
+                },
+            },
+            "required": ["target_path", "content"],
+        },
+    },
+    {
         "name": "list_directory",
         "description": (
             f"List files and directories at a path. "
@@ -140,6 +213,70 @@ FS_TOOLS = [
                     "type": "string",
                     "description": f"Absolute path to the file. Must be within {FS_ROOT}.",
                 }
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "list_steam_games",
+        "description": (
+            "List the Steam games installed on this machine. Reads Steam's own "
+            "manifest files (libraryfolders.vdf + appmanifest_*.acf) across every "
+            "library folder, so it covers all drives. Returns one line per game "
+            "with its name, Steam appid, on-disk size, and which library it lives "
+            "in. Use this whenever the user asks what games are installed, the "
+            "size of a game, or which drive a game is on. By default Valve "
+            "runtimes (Proton, Steam Linux Runtime, redistributables) are "
+            "excluded; set include_runtimes=true to list those too."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "include_runtimes": {
+                    "type": "boolean",
+                    "description": (
+                        "Include Valve runtime/redistributable apps (Proton, "
+                        "Steam Linux Runtime, etc.). Default false."
+                    ),
+                }
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "list_log_sources",
+        "description": (
+            "List the log files available for review — both the internal app/"
+            "service logs (ai-router, demucs, nginx access/error, nightly deploy "
+            "logs, daily review tickets, etc.) and the Steam client logs. Returns "
+            "each log's full path, size, and last-modified time. Call this first to "
+            "discover what exists, then pass a path to read_log."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "read_log",
+        "description": (
+            "Read the tail of a log file (internal app logs or Steam logs). Returns "
+            "the last N lines; large files are tailed efficiently. Optionally filter "
+            "to lines containing a substring. Use this to review errors, crashes, or "
+            "recent activity. The path must be one shown by list_log_sources."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Absolute path to a log file under a known log root.",
+                },
+                "lines": {
+                    "type": "integer",
+                    "description": "How many trailing lines to return (default 200, max 2000).",
+                },
+                "contains": {
+                    "type": "string",
+                    "description": "Optional case-insensitive substring; only matching lines are returned.",
+                },
             },
             "required": ["path"],
         },
@@ -196,6 +333,24 @@ try:
     class _RecallMemoriesParams(BaseModel):
         query: str = Field(description="Keywords or topic to search for in past conversations.")
 
+    class _ListSteamGamesParams(BaseModel):
+        include_runtimes: bool = Field(
+            default=False,
+            description="Include Valve runtimes (Proton, Steam Linux Runtime). Default false.",
+        )
+
+    class _StageWriteParams(BaseModel):
+        target_path: str = Field(description=f"Absolute path to write. Must be within {FS_ROOT}.")
+        content: str = Field(description="Full file contents (whole-file; overwrites on edit).")
+
+    class _ListLogSourcesParams(BaseModel):
+        pass
+
+    class _ReadLogParams(BaseModel):
+        path: str = Field(description="Absolute path to a log file under a known log root.")
+        lines: int = Field(default=200, description="Trailing lines to return (default 200, max 2000).")
+        contains: str | None = Field(default=None, description="Optional case-insensitive substring filter.")
+
     async def _forge_list_directory(path: str) -> str:
         return await _execute_tool("list_directory", {"path": path})
 
@@ -204,6 +359,20 @@ try:
 
     async def _forge_recall_memories(query: str) -> str:
         return await _execute_tool("recall_memories", {"query": query})
+
+    async def _forge_list_steam_games(include_runtimes: bool = False) -> str:
+        return await _execute_tool("list_steam_games", {"include_runtimes": include_runtimes})
+
+    async def _forge_stage_write(target_path: str, content: str) -> str:
+        return await _execute_tool(
+            "stage_write", {"target_path": target_path, "content": content}
+        )
+
+    async def _forge_list_log_sources() -> str:
+        return await _execute_tool("list_log_sources", {})
+
+    async def _forge_read_log(path: str, lines: int = 200, contains: str | None = None) -> str:
+        return await _execute_tool("read_log", {"path": path, "lines": lines, "contains": contains})
 
     FORGE_TOOLS: dict = {
         "list_directory": ToolDef(
@@ -235,6 +404,55 @@ try:
                 parameters=_RecallMemoriesParams,
             ),
             callable=_forge_recall_memories,
+        ),
+        "list_steam_games": ToolDef(
+            spec=ToolSpec(
+                name="list_steam_games",
+                description=(
+                    "List the Steam games installed on this machine (all library "
+                    "folders / drives), with name, appid, size, and library. Set "
+                    "include_runtimes=true to also list Proton/Steam Linux Runtime."
+                ),
+                parameters=_ListSteamGamesParams,
+            ),
+            callable=_forge_list_steam_games,
+        ),
+        "stage_write": ToolDef(
+            spec=ToolSpec(
+                name="stage_write",
+                description=(
+                    "Propose a file write. NOT applied immediately — staged for "
+                    "human review and only written after a person approves it at "
+                    "/staging. Provide the full file contents (overwrites on edit). "
+                    "Secrets, shell scripts, container/CI config, and bix-ai source "
+                    "are refused. Tell the user it was staged, not written."
+                ),
+                parameters=_StageWriteParams,
+            ),
+            callable=_forge_stage_write,
+        ),
+        "list_log_sources": ToolDef(
+            spec=ToolSpec(
+                name="list_log_sources",
+                description=(
+                    "List available log files (internal app/service logs and Steam "
+                    "logs) with path, size, and mtime. Call before read_log."
+                ),
+                parameters=_ListLogSourcesParams,
+            ),
+            callable=_forge_list_log_sources,
+        ),
+        "read_log": ToolDef(
+            spec=ToolSpec(
+                name="read_log",
+                description=(
+                    "Read the tail of a log file (internal or Steam). Returns the "
+                    "last N lines, optionally filtered to a substring. Path must come "
+                    "from list_log_sources."
+                ),
+                parameters=_ReadLogParams,
+            ),
+            callable=_forge_read_log,
         ),
     }
 except ImportError:

@@ -12,6 +12,9 @@ _DENY_NAMES    = {".env", ".git", ".ssh", ".claude", ".gnupg", "secrets"}
 _DENY_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".crt", ".cer")
 _DENY_KEYWORDS = ("credential", "secret", "password", "passwd", "token")
 
+# Directories under which writing could subvert the guardrails or privilege model.
+_WRITE_DENY_DIRS = {"scripts", ".github", "bix-ai"}
+
 
 def is_denied_path(p: Path) -> bool:
     """Return True if the path matches a known-secrets pattern and must not be served."""
@@ -24,6 +27,26 @@ def is_denied_path(p: Path) -> bool:
     if any(kw in lower for kw in _DENY_KEYWORDS):
         return True
     return any(part in _DENY_NAMES for part in p.parts)
+
+
+def is_write_denied_path(p: Path) -> bool:
+    """Return True if writing to this path could subvert guardrails/privilege.
+
+    Applied *in addition to* is_denied_path (secrets) on any write. Covers the
+    privilege/guardrail-subverting class: shell scripts, container/CI config, and
+    bix-ai's own source (self-modification could rewrite these very checks). Does
+    not restrict ordinary app source or content elsewhere — that is the point of
+    the staged-write feature.
+    """
+    lower = p.name.lower()
+    if lower.endswith(".sh"):
+        return True
+    if lower.startswith("dockerfile"):
+        return True
+    if (lower.startswith("docker-compose") or lower.startswith("compose")) and \
+            lower.endswith((".yml", ".yaml")):
+        return True
+    return any(part in _WRITE_DENY_DIRS for part in p.parts)
 
 
 def list_directory(p: Path) -> str:

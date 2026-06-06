@@ -7,7 +7,9 @@ async def fake_ollama(model, messages):
 
 
 def run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    # asyncio.get_event_loop() raises under Python 3.12 when no loop is running;
+    # asyncio.run() creates and tears down a fresh loop per call.
+    return asyncio.run(coro)
 
 
 def test_below_threshold_is_untouched():

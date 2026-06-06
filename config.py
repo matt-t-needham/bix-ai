@@ -37,5 +37,11 @@ CLAUDE_CREDS_PATH = Path("/home/matt/.claude/.credentials.json")
 ROUTING_LOG       = Path("logs") / "routing.ndjson"
 AUTO_LOG          = Path("logs") / "auto.ndjson"
 
-MEM_DIR  = DATA_DIR / "memories"
-CONV_DIR = DATA_DIR / "convos"
+MEM_DIR     = DATA_DIR / "memories"
+CONV_DIR    = DATA_DIR / "convos"
+STAGING_DIR = DATA_DIR / "staging"
+
+# Log-review roots (read-only). Internal logs sit under the bix-infra mount;
+# Steam's logs dir is mounted read-only into the container separately.
+INTERNAL_LOG_ROOT = Path(os.environ.get("INTERNAL_LOG_ROOT", "/home/matt/apps/bix-infra/logs"))
+STEAM_LOG_ROOT    = Path(os.environ.get("STEAM_LOG_ROOT", "/home/matt/.steam/debian-installation/logs"))

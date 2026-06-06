@@ -9,12 +9,12 @@ from pathlib import Path
 MCP_SCRIPT = str(Path(__file__).parent.parent / "bix_mcp.py")
 
 
-def _spawn(read_paths: str | None = None, write_paths: str | None = None, data_dir: str | None = None):
+def _spawn(read_paths: str | None = None, fs_root: str | None = None, data_dir: str | None = None):
     """Start the MCP server as a subprocess with optional path overrides."""
     env = {**os.environ}
-    if read_paths  is not None: env["MCP_READ_PATHS"]  = read_paths
-    if write_paths is not None: env["MCP_WRITE_PATHS"] = write_paths
-    if data_dir    is not None: env["DATA_DIR"]        = data_dir
+    if read_paths is not None: env["MCP_READ_PATHS"] = read_paths
+    if fs_root    is not None: env["FS_ROOT"]        = fs_root
+    if data_dir   is not None: env["DATA_DIR"]       = data_dir
     return subprocess.Popen(
         [sys.executable, MCP_SCRIPT],
         stdin=subprocess.PIPE,
@@ -129,12 +129,12 @@ def test_list_directory_valid():
             proc.terminate()
 
 
-# ── Test 6: write_file — valid write path ────────────────────────────────────
+# ── Test 6: write_file — stages, does not write live ─────────────────────────
 
-def test_write_file_valid():
-    with tempfile.TemporaryDirectory() as tmpdir:
-        target = Path(tmpdir) / "out.txt"
-        proc = _spawn(read_paths=tmpdir, write_paths=tmpdir)
+def test_write_file_stages():
+    with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as data:
+        target = Path(root) / "out.txt"
+        proc = _spawn(read_paths=root, fs_root=root, data_dir=data)
         try:
             _init(proc)
             resp = _send(proc, {
@@ -142,49 +142,50 @@ def test_write_file_valid():
                 "params": {"name": "write_file", "arguments": {"path": str(target), "content": "written!"}},
             })
             assert not resp["result"].get("isError")
-            assert target.read_text() == "written!"
+            assert "Staged" in resp["result"]["content"][0]["text"]
+            assert not target.exists()                                   # NOT written live
+            assert list((Path(data) / "staging").glob("*.json"))         # record persisted
         finally:
             proc.terminate()
 
 
-# ── Test 7: write_file — path outside write roots ────────────────────────────
+# ── Test 7: write_file — outside FS_ROOT is refused ──────────────────────────
 
-def test_write_file_denied():
-    with tempfile.TemporaryDirectory() as tmpdir:
-        proc = _spawn(write_paths="/nonexistent_write_path")
+def test_write_file_outside_root_denied():
+    with tempfile.TemporaryDirectory() as root, \
+         tempfile.TemporaryDirectory() as outside, \
+         tempfile.TemporaryDirectory() as data:
+        proc = _spawn(fs_root=root, data_dir=data)
         try:
             _init(proc)
             resp = _send(proc, {
                 "jsonrpc": "2.0", "id": 7, "method": "tools/call",
                 "params": {
                     "name": "write_file",
-                    "arguments": {"path": str(Path(tmpdir) / "bad.txt"), "content": "oops"},
+                    "arguments": {"path": str(Path(outside) / "bad.txt"), "content": "oops"},
                 },
             })
             assert resp["result"].get("isError") is True
-            assert "Access denied" in resp["result"]["content"][0]["text"]
+            assert "outside the allowed root" in resp["result"]["content"][0]["text"]
+            assert not (Path(outside) / "bad.txt").exists()
         finally:
             proc.terminate()
 
 
-# ── Test 8: write_file — path traversal attack ────────────────────────────────
+# ── Test 8: write_file — guardrail path (shell script) is refused ────────────
 
-def test_write_file_traversal():
-    with tempfile.TemporaryDirectory() as allowed:
-        with tempfile.TemporaryDirectory() as outside:
-            # Craft a path that looks inside `allowed` but resolves outside via ../
-            traversal = str(Path(allowed) / ".." / Path(outside).name / "evil.txt")
-            proc = _spawn(write_paths=allowed)
-            try:
-                _init(proc)
-                resp = _send(proc, {
-                    "jsonrpc": "2.0", "id": 8, "method": "tools/call",
-                    "params": {
-                        "name": "write_file",
-                        "arguments": {"path": traversal, "content": "evil"},
-                    },
-                })
-                assert resp["result"].get("isError") is True
-                assert "Access denied" in resp["result"]["content"][0]["text"]
-            finally:
-                proc.terminate()
+def test_write_file_guardrail_denied():
+    with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as data:
+        target = Path(root) / "deploy.sh"
+        proc = _spawn(fs_root=root, data_dir=data)
+        try:
+            _init(proc)
+            resp = _send(proc, {
+                "jsonrpc": "2.0", "id": 8, "method": "tools/call",
+                "params": {"name": "write_file", "arguments": {"path": str(target), "content": "rm -rf /"}},
+            })
+            assert resp["result"].get("isError") is True
+            assert "guardrail" in resp["result"]["content"][0]["text"]
+            assert not target.exists()
+        finally:
+            proc.terminate()

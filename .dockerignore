@@ -6,6 +6,7 @@ __pycache__
 *.pyc
 .env
 .DS_Store
-tests/
+# tests/ is intentionally NOT ignored — the Dockerfile `test` stage runs pytest
+# against it as a pre-deploy gate. pytest itself stays out of the runtime image.
 logs/
 data/
