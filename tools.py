@@ -15,7 +15,6 @@ import blobstore
 import logtools
 import staging
 import steam
-import todos
 from config import CONV_DIR, FS_ROOT, OLLAMA_DEFAULT_MODEL
 from fs_core import is_denied_path, list_directory, read_file
 from helpers import ollama_chat
@@ -96,15 +95,6 @@ async def _tool_list_steam_games(tool_input: dict) -> str:
         log.warning("list_steam_games failed: %s", e)
         return f"Failed to read Steam library: {e}"
     return steam.format_games(games)
-
-
-async def _tool_read_todos(tool_input: dict) -> str:
-    project = (tool_input.get("project") or "").strip() or None
-    try:
-        return await asyncio.to_thread(todos.read_todos, project)
-    except Exception as e:
-        log.warning("read_todos failed: %s", e)
-        return f"Failed to read TODOs: {e}"
 
 
 async def _tool_list_log_sources(tool_input: dict) -> str:
@@ -314,27 +304,6 @@ TOOL_TABLE: list[dict] = [
             "required": [],
         },
         "handler": _tool_list_steam_games,
-    },
-    {
-        "name": "read_todos",
-        "description": (
-            "Read the project TODO / pending-work list. With no argument it returns "
-            "the compiled list of ALL pending TODOs across every project (bix-ai, "
-            "infra, demucs). Pass a project name to get just that project's todos. "
-            "Use this whenever the user asks about TODOs, pending work, tasks, or "
-            "'what's left to do' — do NOT browse directories looking for it."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "project": {
-                    "type": "string",
-                    "description": "Optional project name (e.g. 'bix-ai', 'infra', 'demucs'). Omit for all.",
-                },
-            },
-            "required": [],
-        },
-        "handler": _tool_read_todos,
     },
     {
         "name": "list_log_sources",
