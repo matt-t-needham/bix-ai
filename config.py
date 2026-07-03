@@ -19,6 +19,11 @@ FS_ROOT              = Path(os.environ.get("FS_ROOT", "/home/matt")).resolve()
 DATA_DIR             = Path(os.environ.get("DATA_DIR", "/app/data"))
 _MAX_BODY_BYTES      = int(os.environ.get("MAX_BODY_BYTES", "1000000"))
 _MAX_TOKENS_CAP      = int(os.environ.get("MAX_TOKENS_CAP", "8192"))
+# Governor for the agentic tool loop (streaming/claude.py, streaming/ollama.py).
+# Iteration cap (10 turns) is hardcoded at each loop's `range(10)`; these two are
+# the remaining budgets — generous defaults so they only bite runaway loops.
+LOOP_MAX_TOKENS      = int(os.environ.get("LOOP_MAX_TOKENS", "500000"))
+LOOP_MAX_SECONDS     = float(os.environ.get("LOOP_MAX_SECONDS", "300"))
 _ALLOWED_CLAUDE_MODELS = {
     "claude-haiku-4-5-20251001",
     "claude-sonnet-4-5", "claude-sonnet-4-6",

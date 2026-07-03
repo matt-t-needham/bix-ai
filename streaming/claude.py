@@ -5,7 +5,7 @@ import time
 import httpx
 import strategy
 
-from config import ANTHROPIC_API_KEY, ANTHROPIC_URL
+from config import ANTHROPIC_API_KEY, ANTHROPIC_URL, LOOP_MAX_SECONDS, LOOP_MAX_TOKENS
 from helpers import _agg, _write_routing_event, ollama_chat, sse
 from memory import _load_recent_memories, _memory_system_prompt
 from tools import FS_TOOLS, _execute_tool
@@ -61,13 +61,31 @@ async def _stream_claude(
         "content-type":      "application/json",
     }
 
-    start              = time.monotonic()
-    ttft_ms            = None
-    total_input_tokens = 0
-    output_tokens      = 0
-    current_messages   = list(req_body["messages"])
+    start               = time.monotonic()
+    ttft_ms             = None
+    total_input_tokens  = 0
+    total_output_tokens = 0  # governor accumulator; `output_tokens` below is per-turn only
+    output_tokens       = 0
+    current_messages    = list(req_body["messages"])
 
     for _turn in range(10):
+        elapsed_so_far = time.monotonic() - start
+        if total_input_tokens + total_output_tokens > LOOP_MAX_TOKENS or elapsed_so_far > LOOP_MAX_SECONDS:
+            log.warning("loop budget exceeded turn=%d tokens=%d elapsed=%.1fs",
+                        _turn, total_input_tokens + total_output_tokens, elapsed_so_far)
+            yield sse("metrics", {
+                "input_tokens":  total_input_tokens,
+                "output_tokens": total_output_tokens,
+                "elapsed_ms":    round(elapsed_so_far * 1000),
+                "ttft_ms":       ttft_ms or 0,
+                "preprocess_ms": preprocess_ms,
+                "tps":           0,
+                "summarised":    stats["summarised"],
+                "skipped":       stats["skipped"],
+                "failed":        stats["failed"],
+            })
+            yield sse("error", {"message": "Loop budget exceeded (token or wall-clock limit) — stopping."})
+            return
         log.info("tool_turn turn=%d msgs=%d", _turn, len(current_messages))
         api_body = {
             **req_body,
@@ -77,6 +95,7 @@ async def _stream_claude(
         }
         content_blocks: dict = {}
         stop_reason = None
+        output_tokens = 0
 
         try:
             async with httpx.AsyncClient(timeout=None) as client:
@@ -149,6 +168,8 @@ async def _stream_claude(
             yield sse("error", {"message": str(e)})
             return
 
+        total_output_tokens += output_tokens
+
         if stop_reason != "tool_use":
             elapsed = time.monotonic() - start
             tps     = output_tokens / elapsed if elapsed > 0 else 0
@@ -169,6 +190,7 @@ async def _stream_claude(
                                        preprocess_ms=preprocess_ms, input_tokens=total_input_tokens,
                                        output_tokens=output_tokens, ttft_ms=ttft_ms or 0,
                                        elapsed_ms=round(elapsed * 1000))
+            yield sse("history", {"messages": current_messages})
             yield sse("done", {})
             return
 
@@ -204,6 +226,10 @@ async def _stream_claude(
             log.debug("tool done name=%s elapsed_ms=%d result_len=%d",
                       b["name"], round((time.monotonic() - t_tool) * 1000), len(result))
             tool_results.append({"type": "tool_result", "tool_use_id": b["id"], "content": result})
+            sse_content = result if len(result) <= 4000 else result[:4000] + "\n…(truncated)"
+            yield sse("tool_result", {
+                "tool_use_id": b["id"], "content": sse_content, "is_error": False,
+            })
 
         current_messages.append({"role": "user", "content": tool_results})
         yield sse("status", {"stage": "streaming", "message": "Streaming from Claude…"})

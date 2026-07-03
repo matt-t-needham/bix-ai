@@ -4,8 +4,9 @@ import time
 
 import httpx
 
-from config import OLLAMA_TOOL_MODEL, OLLAMA_URL
+from config import LOOP_MAX_SECONDS, LOOP_MAX_TOKENS, OLLAMA_TOOL_MODEL, OLLAMA_URL
 from helpers import _write_routing_event, sse
+from strategy import estimate_tokens
 from tools import OLLAMA_TOOLS, _execute_tool
 
 log = logging.getLogger("router")
@@ -60,6 +61,27 @@ async def _stream_ollama(messages: list, model: str, mode: str = "local", tool_o
         current_messages.insert(0, {"role": "system", "content": OLLAMA_SYSTEM})
 
     for _turn in range(10):
+        elapsed_so_far = time.monotonic() - start
+        # Ollama's OpenAI-compatible endpoint doesn't report usage on stream chunks
+        # here, so the token budget is estimated from the growing message payload
+        # (mirrors strategy.estimate_tokens' chars/4 heuristic).
+        est_tokens = estimate_tokens(json.dumps(current_messages))
+        if est_tokens > LOOP_MAX_TOKENS or elapsed_so_far > LOOP_MAX_SECONDS:
+            log.warning("loop budget exceeded turn=%d est_tokens=%d elapsed=%.1fs",
+                        _turn, est_tokens, elapsed_so_far)
+            yield sse("metrics", {
+                "input_tokens":  0,
+                "output_tokens": est_tokens,
+                "elapsed_ms":    round(elapsed_so_far * 1000),
+                "ttft_ms":       ttft_ms or 0,
+                "preprocess_ms": 0,
+                "tps":           0,
+                "summarised":    0,
+                "skipped":       0,
+                "failed":        0,
+            })
+            yield sse("error", {"message": "Loop budget exceeded (token or wall-clock limit) — stopping."})
+            return
         tool_calls_map: dict = {}
         finish_reason        = None
         response_text        = ""
@@ -127,6 +149,11 @@ async def _stream_ollama(messages: list, model: str, mode: str = "local", tool_o
                      model, ttft_ms or 0, round(elapsed * 1000))
             await _write_routing_event(mode, model, output_tokens=est_tokens,
                                        ttft_ms=ttft_ms or 0, elapsed_ms=round(elapsed * 1000))
+            history_messages = current_messages
+            if (history_messages and history_messages[0].get("role") == "system"
+                    and history_messages[0].get("content") == OLLAMA_SYSTEM):
+                history_messages = history_messages[1:]
+            yield sse("history", {"messages": history_messages})
             yield sse("done", {})
             return
 
@@ -163,6 +190,10 @@ async def _stream_ollama(messages: list, model: str, mode: str = "local", tool_o
                 "role":         "tool",
                 "tool_call_id": tc["id"],
                 "content":      result,
+            })
+            sse_content = result if len(result) <= 4000 else result[:4000] + "\n…(truncated)"
+            yield sse("tool_result", {
+                "tool_use_id": tc["id"], "content": sse_content, "is_error": False,
             })
 
         yield sse("status", {"stage": "streaming", "message": f"Streaming from Ollama ({model})…"})

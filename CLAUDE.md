@@ -66,8 +66,7 @@ pytest itself never ships in the runtime image.
 
 ## SSE event protocol
 
-`POST /chat` streams these events (not all paths emit all events — `pro.py` is the only
-path currently emitting `tool_result`; see `PLAN-pi-tools.md` Phase 1):
+`POST /chat` streams these events (not all paths emit all events — see notes):
 
 | Event | Payload | Notes |
 |-------|---------|-------|
@@ -78,13 +77,14 @@ path currently emitting `tool_result`; see `PLAN-pi-tools.md` Phase 1):
 | `tool_start` | `{index, name, id}` | tool call begins |
 | `tool_input` | `{index, partial_json}` | streaming tool input |
 | `tool_end` | `{index}` | tool call complete |
-| `tool_result` | `{tool_use_id, content, is_error}` | **pro path only today**; UI already handles it |
+| `tool_result` | `{tool_use_id, content, is_error}` | emitted by all three loop paths (`claude.py`, `ollama.py`, `pro.py`); content truncated to 4000 chars for the SSE event only — the full result still goes into `history` |
+| `history` | `{messages}` | fires **once, at clean loop completion, before `done`** — the canonical transformed message list (assistant `tool_use` + `tool_result` turns included). `claude.py`/`ollama.py` only; `pro.py` doesn't emit it (subprocess owns its own loop) — the UI keeps a text-only `convHistory` fallback for that path. Never emitted on `error`/disconnect |
 | `model_swap` | — | mode="auto" escalation/model change |
 | `fallback_triggered` | — | mode="auto" forge→Claude escalation; clears partial local output in the UI |
 | `quota_exceeded` | — | upstream quota error |
-| `metrics` | `{input_tokens, output_tokens, elapsed_ms, ttft_ms, preprocess_ms, tps, summarised, skipped, failed}` | fires once at loop exit, aggregated across all tool-loop turns |
+| `metrics` | `{input_tokens, output_tokens, elapsed_ms, ttft_ms, preprocess_ms, tps, summarised, skipped, failed}` | fires once per stream — either at loop exit (aggregated across all tool-loop turns) or on a governor budget breach (partial values, no `history`/`done` follow) |
 | `done` | `{}` | stream complete |
-| `error` | `{message}` | upstream or internal error |
+| `error` | `{message}` | upstream or internal error, **or** a governor breach (`LOOP_MAX_TOKENS`/`LOOP_MAX_SECONDS` in `config.py`) |
 
 The UI JS handles all of these. Do not reorder or rename without updating both sides.
 

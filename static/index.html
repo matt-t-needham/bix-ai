@@ -1361,11 +1361,12 @@ async function send() {
   const modeLabel  = modeName(resolvedMode);
   const modelsUsed = [{ name: responderModel, isLocal }];
   renderIndicator(wrap, modeLabel, modelsUsed);
-  let fullText      = '';
-  let toolGroupEl   = null;
-  let pendingTools  = 0;
-  let totalTools    = 0;
-  let modelSwap     = null;
+  let fullText        = '';
+  let toolGroupEl     = null;
+  let pendingTools    = 0;
+  let totalTools      = 0;
+  let modelSwap       = null;
+  let historyReceived = false;  // set on `history` SSE — suppresses the text-only convHistory fallback push on `done`
   const toolBubbles     = {};
   const toolBubblesById = {};
   let textSegments    = [{type: 'text', content: ''}];
@@ -1592,6 +1593,13 @@ async function send() {
             resultEl.textContent = data.content;
           }
 
+        } else if (evType === 'history') {
+          // Clean-completion-only: server's canonical transformed history (tool
+          // turns, post-preprocess pointers) replaces convHistory wholesale so
+          // the next request carries the full tool evidence, not just text.
+          convHistory = data.messages;
+          historyReceived = true;
+
         } else if (evType === 'quota_exceeded') {
           const banner = document.createElement('div');
           banner.className = 'quota-banner';
@@ -1612,7 +1620,11 @@ async function send() {
           dotEl.className = 'dot';
 
         } else if (evType === 'done') {
-          convHistory.push({ role: 'assistant', content: fullText });
+          // pro path (subprocess) doesn't emit `history` — fall back to the
+          // text-only push so that mode still accumulates conversation context.
+          if (!historyReceived) {
+            convHistory.push({ role: 'assistant', content: fullText });
+          }
           saveMemoryInBackground();
 
         } else if (evType === 'error') {
