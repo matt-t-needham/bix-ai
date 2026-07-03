@@ -58,6 +58,14 @@ MODEL_COSTS = {
     "claude-opus-4-7":           (5.00, 25.00),
 }
 
+# Cost tiering for mode="auto" (routing.py). Requests that reach Claude purely
+# on *size* grounds (long request / large context, with no code/prose/multi-step
+# intent anywhere in the conversation) are downshifted to this cheaper Claude
+# model instead of the user-selected one. Must stay in _ALLOWED_CLAUDE_MODELS
+# and MODEL_COSTS. Empty string disables the downshift.
+ROUTING_CHEAP_CLAUDE_MODEL = os.environ.get(
+    "ROUTING_CHEAP_CLAUDE_MODEL", "claude-haiku-4-5-20251001")
+
 ENTRIES_PER_FILE  = 200
 CLAUDE_CREDS_PATH = Path("/home/matt/.claude/.credentials.json")
 ROUTING_LOG       = Path("logs") / "routing.ndjson"

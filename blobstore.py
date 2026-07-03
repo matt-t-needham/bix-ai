@@ -119,6 +119,68 @@ def grep(h: str, pattern: str, context_lines: int = 2) -> str:
     return "\n".join(out)
 
 
+def list_blobs() -> list[dict]:
+    """Every stored blob, newest-recency first:
+    {hash, bytes, lines, mtime, pinned, preview}. Housekeeping UI backing."""
+    d = _blob_dir()
+    if not d.exists():
+        return []
+    with _pin_lock:
+        pinned = set(_pinned)
+    out = []
+    for p in d.glob(f"*{_SUFFIX}"):
+        try:
+            st = p.stat()
+            with open(p, errors="replace") as f:
+                head = f.read(200)
+        except OSError:
+            continue
+        out.append({
+            "hash":    p.stem,
+            "bytes":   st.st_size,
+            "mtime":   st.st_mtime,
+            "pinned":  p.stem in pinned,
+            "preview": " ".join(head.split())[:160],
+        })
+    out.sort(key=lambda b: b["mtime"], reverse=True)
+    return out
+
+
+def delete(h: str) -> bool:
+    """Delete one blob unless it's pinned by an in-flight request.
+    Returns True if a file was removed. Same lock discipline as eviction."""
+    p = _blob_path(h)
+    with _pin_lock:
+        if h in _pinned:
+            return False
+        try:
+            p.unlink()
+            return True
+        except OSError:
+            return False
+
+
+def purge_unpinned() -> dict:
+    """Delete every blob not pinned by an in-flight request.
+    Returns {deleted, freed_bytes}."""
+    d = _blob_dir()
+    deleted, freed = 0, 0
+    if not d.exists():
+        return {"deleted": 0, "freed_bytes": 0}
+    for p in list(d.glob(f"*{_SUFFIX}")):
+        with _pin_lock:
+            if p.stem in _pinned:
+                continue
+            try:
+                sz = p.stat().st_size
+                p.unlink()
+            except OSError:
+                continue
+        deleted += 1
+        freed += sz
+    return {"deleted": deleted, "freed_bytes": freed}
+
+
 def pin(hashes) -> None:
     """Mark blobs as in-use by the request being processed — protects them from
     eviction until unpin(). Safe to call with hashes that don't exist on disk."""

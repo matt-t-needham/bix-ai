@@ -3,8 +3,10 @@ import difflib
 import json
 import logging
 import logging.handlers
+import re
 import secrets
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -30,12 +32,14 @@ except Exception:
     pass
 
 import blobstore  # noqa: E402 — after logging setup
+import routing_dash  # noqa: E402 — after logging setup
 import staging  # noqa: E402 — after logging setup
 import strategy  # noqa: E402 — after logging setup
 
+import config  # noqa: E402
 from config import (  # noqa: E402
     ANTHROPIC_API_KEY, ANTHROPIC_URL, BIX_PROXY_SECRET,
-    DEFAULT_MODEL, OLLAMA_DEFAULT_MODEL, OLLAMA_HOST,
+    DEFAULT_MODEL, OLLAMA_DEFAULT_MODEL, OLLAMA_HOST, ROUTING_LOG,
     _ALLOWED_ANTHROPIC_BETAS, _ALLOWED_CLAUDE_MODELS, _ALLOWED_OLLAMA_MODELS,
     _MAX_BODY_BYTES, _MAX_TOKENS_CAP,
 )
@@ -59,6 +63,9 @@ class ChatRequest(BaseModel):
     max_tokens:   int = 4096
     mode:         str = "auto"
     tool_offload: bool = False
+    # mode="pro" only: claude-CLI session to resume (from the pro_session SSE
+    # event). Preserves tool turns across requests; empty = fresh session.
+    session_id:   str = ""
 
 class MemorySaveRequest(BaseModel):
     messages:      list[dict[str, Any]]
@@ -475,6 +482,91 @@ async def staging_review(rec_id: str):
     return RedirectResponse(f"/staging/{rec_id}", status_code=303)
 
 
+# ── Routing dashboard ─────────────────────────────────────────────────────────
+
+@app.get("/routing")
+async def routing_dashboard():
+    events = await asyncio.to_thread(routing_dash.load_events, ROUTING_LOG)
+    agg = routing_dash.aggregate(events)
+    return Response(routing_dash.render_html(agg), media_type="text/html; charset=utf-8")
+
+
+# ── Blob store housekeeping ───────────────────────────────────────────────────
+
+_BLOB_HASH_RE = re.compile(r"[0-9a-f]{64}")
+
+
+def _render_blob_list(blobs: list[dict]) -> str:
+    total = sum(b["bytes"] for b in blobs)
+    cap = config.BLOB_STORE_MAX_BYTES
+    pct = min(total / cap * 100, 100) if cap else 0
+    bar_cls = "crit" if pct > 85 else "warn" if pct > 70 else ""
+    if not blobs:
+        body = '<div class="note">Blob store is empty.</div>'
+    else:
+        rows = []
+        for b in blobs:
+            age = datetime.fromtimestamp(b["mtime"], tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
+            pin_badge = ' <span class="badge pending">pinned</span>' if b["pinned"] else ""
+            action = (
+                '<span class="sub">in use</span>' if b["pinned"] else
+                f'<form method="post" action="/blobs/{_esc(b["hash"])}/delete" '
+                f'style="display:inline"><button class="btn-reject btn-sm">Delete</button></form>'
+            )
+            rows.append(
+                f'<div class="row">'
+                f'<div class="path"><code>{_esc(b["hash"][:16])}…</code>'
+                f' · {b["bytes"]:,} B{pin_badge} <span style="float:right">{action}</span></div>'
+                f'<div class="sub">{_esc(age)} UTC · {_esc(b["preview"])}</div>'
+                f'</div>'
+            )
+        body = "\n".join(rows)
+    purge = (
+        '<div class="actions"><form method="post" action="/blobs/purge">'
+        '<button class="btn-reject">Purge all unpinned</button></form></div>'
+        if blobs else ""
+    )
+    extra_css = """
+.bar-wrap { background:var(--surface1); border-radius:4px; height:8px; margin:10px 0 4px; }
+.bar-fill { background:var(--green); height:100%; border-radius:4px; min-width:2px; }
+.bar-fill.warn { background:var(--yellow); } .bar-fill.crit { background:var(--red); }
+.btn-sm { font-size:.72rem !important; padding:3px 10px !important; }
+code { font-size:.82em; }
+"""
+    return (
+        f'<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">'
+        f'<title>Blob store</title><style>{_STAGING_CSS}{extra_css}</style></head><body>'
+        f'<div class="hdr"><h1>Blob store</h1>'
+        f'<div class="meta"><span>{len(blobs)} blob(s)</span>'
+        f'<span>{total:,} of {cap:,} bytes ({pct:.1f}%)</span>'
+        f'<span><a href="/">← chat</a></span></div>'
+        f'<div class="bar-wrap"><div class="bar-fill {bar_cls}" style="width:{max(pct, 0.5):.1f}%"></div></div>'
+        f'</div>{purge}{body}</body></html>'
+    )
+
+
+@app.get("/blobs")
+async def blob_list():
+    blobs = await asyncio.to_thread(blobstore.list_blobs)
+    return Response(_render_blob_list(blobs), media_type="text/html; charset=utf-8")
+
+
+@app.post("/blobs/purge")
+async def blob_purge():
+    result = await asyncio.to_thread(blobstore.purge_unpinned)
+    log.info("blob purge deleted=%d freed=%d", result["deleted"], result["freed_bytes"])
+    return RedirectResponse("/blobs", status_code=303)
+
+
+@app.post("/blobs/{blob_hash}/delete")
+async def blob_delete(blob_hash: str):
+    if not _BLOB_HASH_RE.fullmatch(blob_hash):
+        return Response("<h1>Bad blob hash</h1>", status_code=400, media_type="text/html")
+    ok = await asyncio.to_thread(blobstore.delete, blob_hash)
+    log.info("blob delete hash=%s ok=%s", blob_hash[:16], ok)
+    return RedirectResponse("/blobs", status_code=303)
+
+
 # ── Summarize route ───────────────────────────────────────────────────────────
 
 @app.post("/summarize")
@@ -550,7 +642,8 @@ async def chat(request: Request):
                 ):
                     yield event
             else:
-                async for event in _stream_pro(messages, model, max_tokens, mode=mode):
+                async for event in _stream_pro(messages, model, max_tokens, mode=mode,
+                                               session_id=body.session_id):
                     yield event
         finally:
             blobstore.unpin(pinned)

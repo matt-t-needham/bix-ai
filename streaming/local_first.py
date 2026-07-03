@@ -40,16 +40,27 @@ async def _stream_local_first(
     entirely. Every decision lands in routing.ndjson via the `reason` field.
     """
     decision = await routing.decide(messages, ollama_chat)
-    log.info("auto route=%s rule=%s reason=%s",
-             decision["route"], decision["rule"], decision["reason"])
+    log.info("auto route=%s rule=%s reason=%s claude_model=%s",
+             decision["route"], decision["rule"], decision["reason"],
+             decision.get("claude_model"))
 
     if decision["route"] == "claude":
+        # Cost tier: size-only routes carry a cheaper-model hint (Haiku);
+        # intent routes keep the user-selected model. The downshifted model is
+        # what _stream_claude writes to routing.ndjson, so est_cost_usd tracks
+        # what actually ran.
+        target_model = decision.get("claude_model") or claude_model
+        route_reason = f"{decision['rule']}: {decision['reason']}"
+        label = "Claude"
+        if target_model != claude_model:
+            route_reason += " · downshift"
+            label = "Haiku" if "haiku" in target_model else target_model
         yield sse("status", {"stage": "checking",
-                             "message": f"auto → Claude ({decision['reason']})"})
+                             "message": f"auto → {label} ({decision['reason']})"})
         async for chunk in _stream_claude(
-            messages, claude_model, max_tokens,
+            messages, target_model, max_tokens,
             skip_preprocess=False, mode="auto",
-            route_reason=f"{decision['rule']}: {decision['reason']}",
+            route_reason=route_reason,
         ):
             yield chunk
         return

@@ -17,11 +17,15 @@ by construction:
 
 Pure logic, same injected-`ollama_chat` pattern as strategy.py/compact.py.
 Every decision carries a `rule` + `reason` that the caller writes into
-routing.ndjson.
+routing.ndjson, plus a `claude_model` cost-tier hint — size-only Claude routes
+(long-request / large-context with no intent signal anywhere in the
+conversation) suggest config.ROUTING_CHEAP_CLAUDE_MODEL; intent routes and
+classifier fail-opens keep the user-selected model (None).
 """
 import logging
 import re
 
+import config
 from config import SUMMARY_LOCAL_MODEL
 from strategy import block_text, estimate_tokens
 
@@ -96,8 +100,39 @@ def _tool_result_tokens(m: dict) -> int | None:
     return None
 
 
-def _decision(route: str, rule: str, reason: str) -> dict:
-    return {"route": route, "rule": rule, "reason": reason}
+def _decision(route: str, rule: str, reason: str,
+              claude_model: str | None = None) -> dict:
+    """`claude_model` is a cost-tier hint for claude-routed decisions: a
+    cheaper model to use instead of the user-selected one, or None to keep
+    the selection. Local-routed decisions always carry None."""
+    return {"route": route, "rule": rule, "reason": reason,
+            "claude_model": claude_model}
+
+
+def _has_intent_signal(text: str) -> bool:
+    return bool(
+        _CODE_FENCE_RE.search(text)
+        or _CODE_INTENT_RE.search(text)
+        or _PROSE_INTENT_RE.search(text)
+        or _MULTISTEP_RE.search(text)
+    )
+
+
+def _cheap_model_if_no_intent(messages: list) -> str | None:
+    """Cost tier for size-only Claude routes (long-request / large-context).
+
+    Those rules fire on volume, not difficulty — digesting a big tool result
+    or continuing a long plain conversation is easy Claude work. Downshift to
+    config.ROUTING_CHEAP_CLAUDE_MODEL unless *any* turn in the conversation
+    (not just the last) shows code/prose/multi-step intent — a mid-task "yes
+    do that" must not demote an ongoing coding conversation. Read at call time
+    so tests can monkeypatch config (same pattern as FS_ROOT/STAGING_DIR)."""
+    cheap = config.ROUTING_CHEAP_CLAUDE_MODEL
+    if not cheap:
+        return None
+    if any(_has_intent_signal(_text_of(m)) for m in messages):
+        return None
+    return cheap
 
 
 def decide_structural(messages: list) -> dict | None:
@@ -117,10 +152,12 @@ def decide_structural(messages: list) -> dict | None:
         return _decision("claude", "multi-step", "multi-step task shape")
     if estimate_tokens(last) > LONG_REQUEST_TOKENS:
         return _decision("claude", "long-request",
-                         f"last turn ~{estimate_tokens(last)} tokens")
+                         f"last turn ~{estimate_tokens(last)} tokens",
+                         claude_model=_cheap_model_if_no_intent(messages))
     if total > LARGE_CONTEXT_TOKENS:
         return _decision("claude", "large-context",
-                         f"conversation ~{total} tokens")
+                         f"conversation ~{total} tokens",
+                         claude_model=_cheap_model_if_no_intent(messages))
 
     # Local structural rules.
     tool_toks = _tool_result_tokens(messages[-1]) if messages else None

@@ -118,3 +118,59 @@ def test_pin_is_a_refcount_not_a_flag(env, monkeypatch):
         assert blobstore.get(r2["hash"]) is None
     finally:
         blobstore.unpin([r1["hash"]])  # second request finishes — fully released
+
+
+# ── Housekeeping (list / delete / purge) ──────────────────────────────────────
+
+def test_list_blobs_reports_metadata_and_pins(env):
+    r1 = blobstore.put("first blob content")
+    r2 = blobstore.put("second blob content")
+    blobstore.pin([r1["hash"]])
+    try:
+        blobs = {b["hash"]: b for b in blobstore.list_blobs()}
+        assert set(blobs) == {r1["hash"], r2["hash"]}
+        assert blobs[r1["hash"]]["pinned"] is True
+        assert blobs[r2["hash"]]["pinned"] is False
+        assert blobs[r1["hash"]]["bytes"] == r1["bytes"]
+        assert "first blob" in blobs[r1["hash"]]["preview"]
+    finally:
+        blobstore.unpin([r1["hash"]])
+
+
+def test_list_blobs_empty_store(env):
+    assert blobstore.list_blobs() == []
+
+
+def test_delete_removes_unpinned_blob(env):
+    r = blobstore.put("delete me")
+    assert blobstore.delete(r["hash"]) is True
+    assert blobstore.get(r["hash"]) is None
+
+
+def test_delete_refuses_pinned_blob(env):
+    r = blobstore.put("pinned content")
+    blobstore.pin([r["hash"]])
+    try:
+        assert blobstore.delete(r["hash"]) is False
+        assert blobstore.get(r["hash"]) == "pinned content"
+    finally:
+        blobstore.unpin([r["hash"]])
+
+
+def test_delete_unknown_hash_returns_false(env):
+    assert blobstore.delete("0" * 64) is False
+
+
+def test_purge_unpinned_spares_pinned(env):
+    keep = blobstore.put("keep me — pinned")
+    blobstore.put("purge me one")
+    blobstore.put("purge me two")
+    blobstore.pin([keep["hash"]])
+    try:
+        result = blobstore.purge_unpinned()
+        assert result["deleted"] == 2
+        assert result["freed_bytes"] > 0
+        assert blobstore.get(keep["hash"]) is not None
+        assert len(blobstore.list_blobs()) == 1
+    finally:
+        blobstore.unpin([keep["hash"]])

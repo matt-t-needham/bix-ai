@@ -652,6 +652,8 @@
       <div class="d-fixed">
         <a class="metrics-link" href="https://metrics.bix.computer" target="_blank">Internal Metrics →</a>
         <a class="metrics-link" id="staging-link" href="/staging" target="_blank">Staged writes →</a>
+        <a class="metrics-link" href="/routing" target="_blank">Routing dashboard →</a>
+        <a class="metrics-link" href="/blobs" target="_blank">Blob store →</a>
 
         <div class="d-section">
           <div class="d-title d-collapsible" onclick="toggleDSection('router')">
@@ -789,6 +791,7 @@ let memLoaded    = false;
 let forceApi     = false;   // set to true when Pro quota is exhausted
 let lastUserMsg  = '';      // stored for quota retry
 let toolOffload  = false;
+let proSessionId = null;    // claude-CLI session (pro mode) — keeps tool turns across requests
 
 const modeDefaults = { ai: 'claude-sonnet-4-6', auto: 'claude-sonnet-4-6', local: 'gemma4:26b' };
 
@@ -1363,6 +1366,9 @@ async function send() {
   addBubble('user', false).bubble.textContent = text;
 
   const resolvedMode = _resolvedMode();
+  // A non-pro turn adds history the CLI session doesn't have — drop the
+  // session so the next pro request replays the full text history instead.
+  if (resolvedMode !== 'pro') proSessionId = null;
   // local + auto are local-first; auto's responder is the local model unless it
   // escalates to Claude (handled on `fallback_triggered`).
   const isLocal = (resolvedMode === 'local' || resolvedMode === 'auto');
@@ -1419,7 +1425,10 @@ async function send() {
     const res = await fetch('/chat', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ messages: convHistory, model, mode: resolvedMode, tool_offload: toolOffload }),
+      body: JSON.stringify({
+        messages: convHistory, model, mode: resolvedMode, tool_offload: toolOffload,
+        session_id: resolvedMode === 'pro' ? (proSessionId || '') : '',
+      }),
       signal: abortCtrl.signal,
     });
 
@@ -1614,6 +1623,11 @@ async function send() {
           // the next request carries the full tool evidence, not just text.
           convHistory = data.messages;
           historyReceived = true;
+
+        } else if (evType === 'pro_session') {
+          // Always adopt the latest id the server reports (resume may keep or
+          // fork the id) so the next pro request resumes with tool turns.
+          if (data.session_id) proSessionId = data.session_id;
 
         } else if (evType === 'quota_exceeded') {
           const banner = document.createElement('div');

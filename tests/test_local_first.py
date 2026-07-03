@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import config  # noqa: E402
 from helpers import sse  # noqa: E402
 from streaming import local_first  # noqa: E402
 
@@ -182,3 +183,42 @@ def test_error_reason_appears_in_switching_status():
     switch = next((s for s in statuses if "Switching to Claude" in s["message"]), None)
     assert switch is not None
     assert "max_retries_per_step exceeded" in switch["message"]
+
+
+def _capture_claude(seen):
+    async def fake(messages, model, max_tokens, skip_preprocess, mode="api", **kwargs):
+        seen["model"] = model
+        seen["route_reason"] = kwargs.get("route_reason", "")
+        yield sse("delta", {"text": "ok"})
+        yield sse("done", {})
+    return fake
+
+
+def test_size_only_claude_route_downshifts_to_cheap_model():
+    # A long request with no code/prose/multi-step intent routes to Claude on
+    # size alone — that should run on the cheap tier, not the selected model.
+    seen = {}
+    with patch.object(local_first, "_stream_claude", _capture_claude(seen)):
+        chunks = run(_collect(local_first._stream_local_first(
+            [{"role": "user", "content": "summarise this " + "blah " * 2000}],
+            ollama_model="gemma4:26b", claude_model="claude-sonnet-4-6",
+            max_tokens=4096, mode="auto",
+        )))
+
+    assert seen["model"] == config.ROUTING_CHEAP_CLAUDE_MODEL
+    assert "downshift" in seen["route_reason"]
+    statuses = _data_for(chunks, "status")
+    assert any("auto → Haiku" in s["message"] for s in statuses)
+
+
+def test_intent_claude_route_keeps_selected_model():
+    seen = {}
+    with patch.object(local_first, "_stream_claude", _capture_claude(seen)):
+        run(_collect(local_first._stream_local_first(
+            [{"role": "user", "content": "write a function that parses nginx logs"}],
+            ollama_model="gemma4:26b", claude_model="claude-sonnet-4-6",
+            max_tokens=4096, mode="auto",
+        )))
+
+    assert seen["model"] == "claude-sonnet-4-6"
+    assert "downshift" not in seen["route_reason"]

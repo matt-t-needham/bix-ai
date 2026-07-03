@@ -87,6 +87,20 @@ FORGE_WORKFLOW = _build_forge_workflow()
 _logged_result_shape = False
 
 
+def _unstreamed_tail(result_text: str, respond_sent: int, streamed_text: str) -> str:
+    """Portion of the final runner result not already sent as `delta` events.
+
+    Respond-tool streaming advances `respond_sent`, but plain TEXT_DELTA
+    streaming does not — so a reply streamed as text would be re-emitted in
+    full by the end-of-run safety net (the "answer repeats itself" quirk).
+    Skip the tail when it's already contained in what was streamed.
+    """
+    remaining = result_text[respond_sent:]
+    if remaining and remaining in streamed_text:
+        return ""
+    return remaining
+
+
 def _convert_messages(messages: list[dict]) -> list[Message]:
     """Convert OpenAI-format prior messages to Forge Message objects.
 
@@ -156,15 +170,19 @@ async def _stream_forge_runner(
     # `message` arg from this and stream it as text deltas.
     _respond_json_acc  = ""
     _respond_text_sent = 0
+    # Everything already emitted as `delta` events (both TEXT_DELTA and respond
+    # deltas) — consulted by the end-of-run safety net via _unstreamed_tail.
+    _streamed_text     = ""
 
     # ── Callbacks ─────────────────────────────────────────────────────────────
 
     async def on_chunk(chunk):
-        nonlocal ttft_ms, output_chars, _respond_json_acc, _respond_text_sent
+        nonlocal ttft_ms, output_chars, _respond_json_acc, _respond_text_sent, _streamed_text
         if chunk.type == ChunkType.TEXT_DELTA and chunk.content:
             if ttft_ms is None:
                 ttft_ms = round((time.monotonic() - start) * 1000)
             output_chars += len(chunk.content)
+            _streamed_text += chunk.content
             await queue.put(sse("delta", {"text": chunk.content}))
         elif chunk.type == ChunkType.TOOL_CALL_DELTA and chunk.content:
             # Stream the respond tool's `message` arg as text. Other tools have
@@ -179,6 +197,7 @@ async def _stream_forge_runner(
                         ttft_ms = round((time.monotonic() - start) * 1000)
                     output_chars      += len(new_chars)
                     _respond_text_sent = len(current_text)
+                    _streamed_text    += new_chars
                     await queue.put(sse("delta", {"text": new_chars}))
         elif chunk.type == ChunkType.RETRY:
             _respond_json_acc  = ""
@@ -277,7 +296,8 @@ async def _stream_forge_runner(
             # Safety net: if respond `message` text wasn't fully streamed via
             # TOOL_CALL_DELTA (e.g. non-streaming path), emit what's left.
             if result is not None:
-                remaining = str(result)[_respond_text_sent:]
+                remaining = _unstreamed_tail(str(result), _respond_text_sent,
+                                             _streamed_text)
                 if remaining:
                     output_chars += len(remaining)
                     await queue.put(sse("delta", {"text": remaining}))
