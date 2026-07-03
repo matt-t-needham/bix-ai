@@ -318,6 +318,7 @@ async def _stream_forge_runner(
         "preprocess_ms": 0,
         "tps":           tps,
         "summarised":    0,
+        "spilled":       0,
         "skipped":       0,
         "failed":        0,
     })

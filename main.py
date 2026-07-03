@@ -29,6 +29,7 @@ try:
 except Exception:
     pass
 
+import blobstore  # noqa: E402 — after logging setup
 import staging  # noqa: E402 — after logging setup
 import strategy  # noqa: E402 — after logging setup
 
@@ -530,20 +531,29 @@ async def chat(request: Request):
     log.info("chat mode=%s model=%s msgs=%d", mode, model, len(messages))
 
     async def stream():
-        if mode == "local":
-            async for event in _stream_ollama(messages, model, mode=mode, tool_offload=tool_offload):
-                yield event
-        elif mode == "api":
-            async for event in _stream_claude(messages, model, max_tokens, skip_preprocess=False, mode=mode):
-                yield event
-        elif mode == "auto":
-            async for event in _stream_local_first(
-                messages, OLLAMA_DEFAULT_MODEL, model, max_tokens, mode=mode,
-            ):
-                yield event
-        else:
-            async for event in _stream_pro(messages, model, max_tokens, mode=mode):
-                yield event
+        # Blobs referenced by this request must survive LRU eviction until the
+        # stream finishes (a concurrent request's spill could otherwise evict
+        # them mid-loop). Blobs spilled *during* this request are mtime-newest,
+        # so LRU never reaches them within the request.
+        pinned = strategy.referenced_blob_hashes(messages)
+        blobstore.pin(pinned)
+        try:
+            if mode == "local":
+                async for event in _stream_ollama(messages, model, mode=mode, tool_offload=tool_offload):
+                    yield event
+            elif mode == "api":
+                async for event in _stream_claude(messages, model, max_tokens, skip_preprocess=False, mode=mode):
+                    yield event
+            elif mode == "auto":
+                async for event in _stream_local_first(
+                    messages, OLLAMA_DEFAULT_MODEL, model, max_tokens, mode=mode,
+                ):
+                    yield event
+            else:
+                async for event in _stream_pro(messages, model, max_tokens, mode=mode):
+                    yield event
+        finally:
+            blobstore.unpin(pinned)
 
     return StreamingResponse(with_keepalive(stream()), media_type="text/event-stream")
 

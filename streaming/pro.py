@@ -42,7 +42,7 @@ async def _stream_pro(messages: list, model: str, max_tokens: int, mode: str = "
     sys_prompt = _memory_system_prompt(recent)
     log.info("pro memory loaded count=%d injected=%s", len(recent), bool(sys_prompt))
 
-    stats         = {"summarised": 0, "skipped": 0, "failed": 0}
+    stats         = {"summarised": 0, "skipped": 0, "failed": 0, "spilled": 0}
     preprocess_ms = 0
 
     req_body = {"model": model, "max_tokens": max_tokens, "messages": messages}
@@ -50,21 +50,22 @@ async def _stream_pro(messages: list, model: str, max_tokens: int, mode: str = "
         req_body["system"] = sys_prompt
 
     if strategy.has_oversized_blocks(req_body):
-        yield sse("status", {"stage": "summarising", "message": "Summarising via Ollama…"})
+        yield sse("status", {"stage": "summarising", "message": "Preparing context…"})
     else:
         yield sse("status", {"stage": "checking", "message": "Checking…"})
 
     t0 = time.monotonic()
     try:
         req_body, stats = await strategy.preprocess(req_body, ollama_chat)
-        log.info("pro preprocess summarised=%d skipped=%d failed=%d",
-                 stats["summarised"], stats["skipped"], stats["failed"])
+        log.info("pro preprocess spilled=%d skipped=%d failed=%d",
+                 stats["spilled"], stats["skipped"], stats["failed"])
     except Exception as e:
         log.warning("pro preprocess error: %s", e)
     preprocess_ms = round((time.monotonic() - t0) * 1000)
 
     yield sse("preprocess", {
         "summarised":    stats["summarised"],
+        "spilled":       stats["spilled"],
         "skipped":       stats["skipped"],
         "failed":        stats["failed"],
         "preprocess_ms": preprocess_ms,
@@ -229,6 +230,7 @@ async def _stream_pro(messages: list, model: str, max_tokens: int, mode: str = "
         "preprocess_ms": preprocess_ms,
         "tps":           round(tps, 1),
         "summarised":    stats["summarised"],
+        "spilled":       stats["spilled"],
         "skipped":       stats["skipped"],
         "failed":        stats["failed"],
     })

@@ -106,7 +106,7 @@ on the next request. Rules:
 
 ---
 
-## Phase 0 — groundwork (small, safe, do first)
+## Phase 0 — groundwork (small, safe, do first) — ✅ SHIPPED (commit `4332ad0`)
 
 **Current:** CLAUDE.md describes a 3-file project with a 2000-token threshold and four
 tests; reality is 12 modules + `streaming/` package, threshold 6000, 8 test files.
@@ -126,7 +126,7 @@ tests; reality is 12 modules + `streaming/` package, threshold 6000, 8 test file
 **Done when:** `pytest -q` green; a chat via uvicorn with `OLLAMA_URL` pointed at
 `localhost:11434` works end-to-end without Docker.
 
-## Phase 1 — history sync + loop hardening (the unlock)
+## Phase 1 — history sync + loop hardening (the unlock) — ✅ SHIPPED (commit `64b332f`)
 
 **Current:** `streaming/claude.py` already builds the canonical transformed history in
 `current_messages` (preprocessed input + assistant tool_use turns + tool_result turns)
@@ -172,7 +172,7 @@ request containing the tool_use/tool_result turns (verify via server log
 `chat mode=… msgs=N` — message count grows); tests cover history emission, governor
 breach, and tool_result parity.
 
-## Phase 2 — blob store + retrieval tools
+## Phase 2 — blob store + retrieval tools — ✅ SHIPPED (commit `462bb17`)
 
 **Current:** nothing reaches back into pasted content; `read_file`/`read_log` reach
 real files under `FS_ROOT` but a pasted blob isn't a file. `DATA_DIR = /app/data`
@@ -199,7 +199,15 @@ retrievable by tools.
 same hash, one file); pinning test passes; tools callable by both Claude and Ollama
 paths end-to-end against a real model.
 
-## Phase 3 — pre-pass rework of `strategy.py` (replaces lossy summarisation of artifacts)
+## Phase 3 — pre-pass rework of `strategy.py` (replaces lossy summarisation of artifacts) — ✅ SHIPPED (2026-07-02)
+
+*Implementation notes:* delta shipped as written, plus: request-scoped blob pinning
+wired at `main.py`'s chat dispatcher via `strategy.referenced_blob_hashes` (the Phase 2
+pin primitives were unwired until blobs actually entered messages); `/app/data`
+verified as a compose bind mount of `bix-ai/data` (Phase 2 checklist item);
+`EXCERPT_MAX_CHARS=12000` so a head+tail fallback excerpt never self-truncates.
+E2E verified: 310 KB logfile paste → 2,676 input tokens, verbatim ERROR+traceback
+delivered, Claude grep_blob'd the hash for context unprompted.
 
 **Current:** `preprocess` paraphrases any >6000-token block into ≤300 words via
 `gemma4:e2b`. `SUMMARY_SYSTEM` already *tries* to preserve error codes/paths verbatim —

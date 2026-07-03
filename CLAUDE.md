@@ -5,8 +5,9 @@
 A FastAPI service that acts as an efficient cross-platform task runner: it proxies
 Anthropic API calls, routes between local Ollama models and Claude, gives models an
 agentic tool loop (filesystem reads, gated writes, logs, memory, Steam library, TODOs),
-pre-summarises oversized context blocks via a local Ollama model, and serves a
-single-file dark-theme chat UI at `ai.bix.computer`.
+spills oversized context blocks to a content-addressed blob store (replacing them
+in-band with a verbatim excerpt + retrieval pointer), and serves a single-file
+dark-theme chat UI at `ai.bix.computer`.
 
 This is not a 3-file project. Module map:
 
@@ -14,11 +15,11 @@ This is not a 3-file project. Module map:
 |---|---|
 | `main.py` | FastAPI app — all routes, SSE streaming dispatch, system metrics, staging review UI routes |
 | `config.py` | All tunables/env vars — `OLLAMA_HOST` is the single source for every Ollama host reference |
-| `strategy.py` | Pre-summarisation pipeline — pure logic, `preprocess(body, ollama_chat) -> (new_body, stats)`, no imports from `main.py` |
+| `strategy.py` | Pre-pass pipeline (Phase 3 shape): per oversized block (>6000 est. tokens) it losslessly reduces (ANSI strip + duplicate-line collapse), labels via heuristics (`logfile\|source\|json\|diff\|prose`, one Ollama call only when unsure), extracts salient lines **verbatim** by type (code does the slicing; the model never rewrites a byte), spills the original to `blobstore.py`, and replaces the block with `[router-blob v2 <hash>]` pointer + excerpt. Pure logic, `preprocess(body, ollama_chat) -> (new_body, stats)`, no imports from `main.py`. Ollama is used for *classification/ranking only* — never paraphrase. The v1 paraphrase pipeline is abolished; `[router-summary v1]` blocks are still recognised and skipped |
 | `tools.py` | Tool dispatcher (`_execute_tool`) plus three parallel tool-definition tables: `FS_TOOLS` (Anthropic shape), `OLLAMA_TOOLS` (OpenAI fn shape), `FORGE_TOOLS` (forge `ToolDef`) — deliberate duplication, not yet consolidated |
 | `fs_core.py` | Path security — `is_denied_path` (secrets), `is_write_denied_path` (scripts/CI/bix-ai's own source) |
 | `staging.py` | Gated writes: propose → human review → apply. Re-validates every guard at approve time. Review routes live in `main.py` under `/staging…` |
-| `blobstore.py` | Content-addressed store for oversized artifacts spilled out of context (`put`/`get`/`grep`/`stat`, sha256-keyed, write-once, dedup). LRU eviction over `config.BLOB_STORE_MAX_BYTES`, pin/unpin protects blobs referenced by the in-flight request. Backs the `read_blob`/`grep_blob` tools. Nothing spills to it automatically yet — that's Phase 3 (`strategy.py` rework); Phase 2 only built the store + tools |
+| `blobstore.py` | Content-addressed store for oversized artifacts spilled out of context (`put`/`get`/`grep`/`stat`, sha256-keyed, write-once, dedup). LRU eviction over `config.BLOB_STORE_MAX_BYTES`, pin/unpin protects blobs referenced by the in-flight request. Backs the `read_blob`/`grep_blob` tools. `strategy.py` spills oversized blocks into it automatically; `main.py`'s chat dispatcher pins every hash referenced by the in-flight request (`strategy.referenced_blob_hashes`) for the stream's lifetime. `/app/data` is a compose bind mount of `bix-ai/data`, so blobs persist across deploys |
 | `memory.py` | Memory persistence (`/memory` routes, `recall_memories` tool); conversations under `DATA_DIR/convos` |
 | `bix_mcp.py` | MCP server exposed to the `claude` CLI subprocess for mode="pro" |
 | `steam.py`, `logtools.py`, `todos.py` | Backing implementations for the `list_steam_games`, `list_log_sources`/`read_log`, and `read_todos` tools |
@@ -71,8 +72,8 @@ pytest itself never ships in the runtime image.
 
 | Event | Payload | Notes |
 |-------|---------|-------|
-| `status` | `{stage, message}` | checking / summarising / streaming |
-| `preprocess` | `{summarised, skipped, failed, preprocess_ms}` | fires after `strategy.preprocess`, before the model stream |
+| `status` | `{stage, message}` | checking / summarising / streaming (the `summarising` stage's message reads "Preparing context…" — it covers the whole pre-pass, not just model calls) |
+| `preprocess` | `{summarised, spilled, skipped, failed, preprocess_ms}` | fires after `strategy.preprocess`, before the model stream. `spilled` = blocks pointered to the blob store; `summarised` is always 0 now (kept for wire compatibility with v1) |
 | `input_tokens` | `{count}` | fires on `message_start` (turn 0 only across a tool loop) |
 | `delta` | `{text}` | streaming text chunk |
 | `tool_start` | `{index, name, id}` | tool call begins |
@@ -83,7 +84,7 @@ pytest itself never ships in the runtime image.
 | `model_swap` | — | mode="auto" escalation/model change |
 | `fallback_triggered` | — | mode="auto" forge→Claude escalation; clears partial local output in the UI |
 | `quota_exceeded` | — | upstream quota error |
-| `metrics` | `{input_tokens, output_tokens, elapsed_ms, ttft_ms, preprocess_ms, tps, summarised, skipped, failed}` | fires once per stream — either at loop exit (aggregated across all tool-loop turns) or on a governor budget breach (partial values, no `history`/`done` follow) |
+| `metrics` | `{input_tokens, output_tokens, elapsed_ms, ttft_ms, preprocess_ms, tps, summarised, spilled, skipped, failed}` | fires once per stream — either at loop exit (aggregated across all tool-loop turns) or on a governor budget breach (partial values, no `history`/`done` follow) |
 | `done` | `{}` | stream complete |
 | `error` | `{message}` | upstream or internal error, **or** a governor breach (`LOOP_MAX_TOKENS`/`LOOP_MAX_SECONDS` in `config.py`) |
 
@@ -175,7 +176,7 @@ Imported and adapted from the shared project standards:
 
     Symptom of regression: `curl localhost:11434/api/ps` shows `size_vram: 0` after loading a model, and `journalctl -u ollama` shows `failure during GPU discovery` or `inference compute id=cpu library=cpu` at startup. Expected healthy state: startup log line `inference compute id=gpu0 library=vulkan ...` and `size_vram > 0` after model load. Vulkan delivers ~70-90% of theoretical ROCm perf on RDNA2 for chat workloads — fine for this use case.
 - **Ollama unloads models** after ~5 minutes idle. The GPU section in the sidebar shows "idle" when this happens — that's expected.
-- **Tests:** `cd bix-ai && pytest -q` — 8 test files under `tests/`, 71 tests as of the last plan reconciliation. `config.FS_ROOT`/`STAGING_DIR` are read at call time specifically so tests can monkeypatch them — keep that property. `pytest` is not in `requirements.txt` (it's installed only in the Docker test stage); install it separately for local runs.
+- **Tests:** `cd bix-ai && pytest -q` — 14 test files under `tests/`, 120 tests as of Phase 3. A `.venv/` exists in `bix-ai/` (gitignored) with requirements + pytest installed — use `.venv/bin/python -m pytest -q` for local runs; the system Python has neither httpx nor fastapi. Strategy fixtures live under `tests/fixtures/` (regenerable — a ~4k-line logfile with one buried ERROR+traceback, a big source file, a huge JSON). `config.FS_ROOT`/`STAGING_DIR` are read at call time specifically so tests can monkeypatch them — keep that property. `pytest` is not in `requirements.txt` (it's installed only in the Docker test stage); install it separately for local runs.
 
 ## When Claude makes a repeat mistake
 

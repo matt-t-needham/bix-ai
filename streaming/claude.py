@@ -24,7 +24,7 @@ async def _stream_claude(
     if sys_prompt:
         req_body["system"] = sys_prompt
     log.info("memory loaded count=%d injected=%s", len(recent), bool(sys_prompt))
-    stats         = {"summarised": 0, "skipped": 0, "failed": 0}
+    stats         = {"summarised": 0, "skipped": 0, "failed": 0, "spilled": 0}
     preprocess_ms = 0
     log.debug("claude request model=%s msgs=%d skip_preprocess=%s", model, len(messages), skip_preprocess)
 
@@ -32,23 +32,25 @@ async def _stream_claude(
         yield sse("status", {"stage": "streaming", "message": "Streaming from Claude…"})
     else:
         if strategy.has_oversized_blocks(req_body):
-            yield sse("status", {"stage": "summarising", "message": "Summarising via Ollama…"})
+            yield sse("status", {"stage": "summarising", "message": "Preparing context…"})
         else:
             yield sse("status", {"stage": "checking", "message": "Checking…"})
         t0 = time.monotonic()
         try:
             req_body, stats = await strategy.preprocess(req_body, ollama_chat)
-            log.info("preprocess summarised=%d skipped=%d failed=%d",
-                     stats["summarised"], stats["skipped"], stats["failed"])
+            log.info("preprocess spilled=%d skipped=%d failed=%d",
+                     stats["spilled"], stats["skipped"], stats["failed"])
         except Exception as e:
             log.warning("preprocess error: %s", e)
         preprocess_ms = round((time.monotonic() - t0) * 1000)
         _agg["summarised"]    += stats["summarised"]
-        _agg["checked"]       += stats["summarised"] + stats["skipped"]
+        _agg["spilled"]       += stats["spilled"]
+        _agg["checked"]       += stats["summarised"] + stats["spilled"] + stats["skipped"]
         _agg["preprocess_ms"] += preprocess_ms
         _agg["failed"]        += stats["failed"]
         yield sse("preprocess", {
             "summarised":    stats["summarised"],
+            "spilled":       stats["spilled"],
             "skipped":       stats["skipped"],
             "failed":        stats["failed"],
             "preprocess_ms": preprocess_ms,
@@ -81,6 +83,7 @@ async def _stream_claude(
                 "preprocess_ms": preprocess_ms,
                 "tps":           0,
                 "summarised":    stats["summarised"],
+                "spilled":       stats["spilled"],
                 "skipped":       stats["skipped"],
                 "failed":        stats["failed"],
             })
@@ -181,6 +184,7 @@ async def _stream_claude(
                 "preprocess_ms": preprocess_ms,
                 "tps":           round(tps, 1),
                 "summarised":    stats["summarised"],
+                "spilled":       stats["spilled"],
                 "skipped":       stats["skipped"],
                 "failed":        stats["failed"],
             })

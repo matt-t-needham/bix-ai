@@ -77,6 +77,7 @@ async def _stream_ollama(messages: list, model: str, mode: str = "local", tool_o
                 "preprocess_ms": 0,
                 "tps":           0,
                 "summarised":    0,
+                "spilled":       0,
                 "skipped":       0,
                 "failed":        0,
             })
@@ -142,6 +143,7 @@ async def _stream_ollama(messages: list, model: str, mode: str = "local", tool_o
                 "preprocess_ms": 0,
                 "tps":           round(est_tokens / elapsed, 1),
                 "summarised":    0,
+                "spilled":       0,
                 "skipped":       0,
                 "failed":        0,
             })

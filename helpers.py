@@ -13,7 +13,7 @@ _ROUTING_LOG_MAX = 5_000_000  # 5 MB; rotate to .1 when exceeded
 log = logging.getLogger("router")
 
 # Shared request-aggregate stats, read by /stats route
-_agg: dict = {"requests": 0, "summarised": 0, "checked": 0, "preprocess_ms": 0, "failed": 0}
+_agg: dict = {"requests": 0, "summarised": 0, "spilled": 0, "checked": 0, "preprocess_ms": 0, "failed": 0}
 
 
 def sse(event: str, data: dict) -> str:
