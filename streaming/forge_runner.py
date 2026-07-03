@@ -138,7 +138,7 @@ async def _write_auto_log(event: str, **kwargs) -> None:
 
 async def _stream_forge_runner(
     messages: list[dict], ollama_model: str, max_tokens: int,
-    mode: str = "auto",
+    mode: str = "auto", route_reason: str = "",
 ):
     """Run Forge's WorkflowRunner against Ollama; yield SSE events.
 
@@ -323,6 +323,7 @@ async def _stream_forge_runner(
         "failed":        0,
     })
     await _write_routing_event(mode, ollama_model,
+                               reason=route_reason or f"forced:{mode}",
                                input_tokens=est_in, output_tokens=est_out,
                                ttft_ms=ttft_ms or 0,
                                elapsed_ms=round(elapsed * 1000))

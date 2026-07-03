@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import httpx
 
-from config import ANTHROPIC_API_KEY, CLAUDE_CREDS_PATH, OLLAMA_URL, ROUTING_LOG
+from config import ANTHROPIC_API_KEY, CLAUDE_CREDS_PATH, MODEL_COSTS, OLLAMA_URL, ROUTING_LOG
 
 _ROUTING_LOG_MAX = 5_000_000  # 5 MB; rotate to .1 when exceeded
 
@@ -70,8 +70,15 @@ async def ollama_chat(model: str, messages: list, timeout: float = 120.0) -> str
         return r.json()["choices"][0]["message"]["content"]
 
 
+def _est_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
+    """Advisory cost from config.MODEL_COSTS; 0.0 for local/unknown models."""
+    rate_in, rate_out = MODEL_COSTS.get(model, (0.0, 0.0))
+    return round((input_tokens * rate_in + output_tokens * rate_out) / 1e6, 6)
+
+
 async def _write_routing_event(
     mode: str, model: str, *,
+    reason: str = "",
     summarised: int = 0, preprocess_ms: int = 0,
     input_tokens: int = 0, output_tokens: int = 0,
     ttft_ms: int = 0, elapsed_ms: int = 0,
@@ -80,6 +87,8 @@ async def _write_routing_event(
         "ts":            datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "mode":          mode,
         "model":         model,
+        "reason":        reason,
+        "est_cost_usd":  _est_cost_usd(model, input_tokens, output_tokens),
         "summarised":    summarised,
         "preprocess_ms": preprocess_ms,
         "input_tokens":  input_tokens,

@@ -49,7 +49,8 @@ async def _stream_ollama(messages: list, model: str, mode: str = "local", tool_o
         current_messages.insert(0, {"role": "system", "content": OLLAMA_SYSTEM})
 
     async def _route(input_tokens, output_tokens, ttft_ms, elapsed_ms):
-        await _write_routing_event(mode, model, output_tokens=output_tokens,
+        await _write_routing_event(mode, model, reason=f"forced:{mode}",
+                                   output_tokens=output_tokens,
                                    ttft_ms=ttft_ms, elapsed_ms=elapsed_ms)
 
     provider = OllamaProvider(

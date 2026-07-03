@@ -236,7 +236,8 @@ async def _stream_pro(messages: list, model: str, max_tokens: int, mode: str = "
     })
     log.info("pro_done model=%s in=%d out=%d ttft_ms=%d elapsed_ms=%d",
              model, input_tokens, output_tokens, ttft_ms or 0, round(elapsed * 1000))
-    await _write_routing_event(mode, model, summarised=stats["summarised"],
+    await _write_routing_event(mode, model, reason=f"forced:{mode}",
+                               summarised=stats["summarised"],
                                preprocess_ms=preprocess_ms, input_tokens=input_tokens,
                                output_tokens=output_tokens, ttft_ms=ttft_ms or 0,
                                elapsed_ms=round(elapsed * 1000))

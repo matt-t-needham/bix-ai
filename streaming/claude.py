@@ -22,6 +22,7 @@ log = logging.getLogger("router")
 async def _stream_claude(
     messages: list, model: str, max_tokens: int,
     skip_preprocess: bool, mode: str = "api",
+    route_reason: str = "",
 ):
     _agg["requests"] += 1
     req_body   = {"model": model, "max_tokens": max_tokens, "messages": messages}
@@ -83,7 +84,8 @@ async def _stream_claude(
     }
 
     async def _route(input_tokens, output_tokens, ttft_ms, elapsed_ms):
-        await _write_routing_event(mode, model, summarised=stats["summarised"],
+        await _write_routing_event(mode, model, reason=route_reason or f"forced:{mode}",
+                                   summarised=stats["summarised"],
                                    preprocess_ms=preprocess_ms, input_tokens=input_tokens,
                                    output_tokens=output_tokens, ttft_ms=ttft_ms,
                                    elapsed_ms=elapsed_ms)

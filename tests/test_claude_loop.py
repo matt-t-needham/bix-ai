@@ -315,3 +315,74 @@ def test_governor_wall_clock_budget_stops_loop():
     events = _events(chunks)
     assert events[-1] == "error"
     assert "history" not in events
+
+
+class _FakeErrorClient:
+    """Returns a non-200 response with a JSON error body (no SSE lines)."""
+
+    def __init__(self, status_code, body: bytes):
+        self._status = status_code
+        self._body = body
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    def stream(self, method, url, **kwargs):
+        resp = _FakeResp([], status_code=self._status)
+        resp.aread = lambda: _abody(self._body)
+        return _FakeStreamCtx(resp)
+
+
+async def _abody(body):
+    return body
+
+
+def test_http_error_status_emits_error_not_done():
+    # A 401 (bad key) must surface as an `error` event — never a clean
+    # zero-token history+done (the pre-fix behaviour: the JSON error body
+    # isn't SSE-framed, so the parser skipped it entirely).
+    body = json.dumps({"type": "error", "error": {
+        "type": "authentication_error", "message": "invalid x-api-key"}}).encode()
+    patches = _apply(_patches(_FakeErrorClient(401, body)))
+    try:
+        chunks = run(_collect(claude_mod._stream_claude(
+            [{"role": "user", "content": "hi"}], "claude-sonnet-4-6", 4096,
+            skip_preprocess=True,
+        )))
+    finally:
+        _stop(patches)
+
+    events = _events(chunks)
+    assert events[-1] == "error"
+    assert "history" not in events
+    assert "done" not in events
+    err = _data_for(chunks, "error")[-1]
+    assert "invalid x-api-key" in err["message"]
+
+
+def test_midstream_error_event_emits_error_not_done():
+    # Anthropic can emit an SSE `error` frame mid-stream (e.g. overloaded).
+    turn0 = _turn_lines([
+        ("message_start", {"message": {"usage": {"input_tokens": 10}}}),
+        ("content_block_start", {"index": 0, "content_block": {"type": "text"}}),
+        ("content_block_delta", {"index": 0, "delta": {"type": "text_delta", "text": "hi"}}),
+        ("error", {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}}),
+    ])
+    patches = _apply(_patches(_FakeClient([turn0])))
+    try:
+        chunks = run(_collect(claude_mod._stream_claude(
+            [{"role": "user", "content": "hi"}], "claude-sonnet-4-6", 4096,
+            skip_preprocess=True,
+        )))
+    finally:
+        _stop(patches)
+
+    events = _events(chunks)
+    assert events[-1] == "error"
+    assert "history" not in events
+    assert "done" not in events
+    err = _data_for(chunks, "error")[-1]
+    assert "Overloaded" in err["message"]

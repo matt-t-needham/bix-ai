@@ -319,7 +319,32 @@ tokens of `convHistory` minus blob excerpts > threshold (env-tunable). Implement
 **Done when:** a long session compacts once, the next request arrives pre-compacted
 (verify via msgs count in server log), recent turns byte-identical.
 
-## Phase 6 — routing v2 + cost surfaces
+## Phase 6 — routing v2 + cost surfaces — ✅ SHIPPED (2026-07-03)
+
+*Implementation notes:* `routing.py` — pure logic, injected `ollama_chat` like
+strategy/compact. The misroute guarantee is by construction via decision order:
+Claude signals (code fences/intent, prose deliverable, multi-step shape, long
+request, large context) are checked before any local rule; local structural
+rules match only narrow cheap shapes (small tool-result digestion, short chat
+in small context); the ambiguous remainder gets one local classification where
+only an affirmative EASY routes local — HARD, garbage output, or classifier
+error all fail open to Claude (all tested, incl. "classifier always says EASY
+still can't pull code-gen local"). Wired into `_stream_local_first`:
+claude-routed requests skip the local attempt entirely; local-routed keep the
+forge-first flow with error escalation. Every `routing.ndjson` record now
+carries `reason` (`forced:<mode>` on non-auto paths) and `est_cost_usd`
+(advisory `MODEL_COSTS` in `config.py`, mirrored by the UI's `MODEL_RATES`);
+the UI stats line shows per-request Est. cost, and local/unknown models are
+never billed (removed the old sonnet-rate fallback). Golden SSE routing
+records updated for the `reason` field. Bonus fix found during E2E:
+`AnthropicProvider` swallowed non-200 responses — a 401 produced a clean
+zero-token `history`+`done` — it now yields `provider_error` on bad status and
+on mid-stream `event: error` frames (2 new tests). E2E on this machine:
+short chat → gemma4:26b (`short-chat`); "write a function…" → Haiku
+(`code-gen`, $0.0031 logged); ambiguous strategy question → classifier HARD →
+Claude (fail-open). Note for dev runs: the API key lives in
+`bix-infra/.env` as `BIX_AI_API_KEY` (compose maps it to `ANTHROPIC_API_KEY`),
+not `/home/matt/apps/.env` as the root CLAUDE.md used to claim.
 
 **Current:** mode="auto" = forge-first, escalate on error. No cost/task awareness.
 

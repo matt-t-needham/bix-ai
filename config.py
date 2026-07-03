@@ -46,6 +46,18 @@ _ALLOWED_OLLAMA_MODELS = {
 _ALLOWED_ANTHROPIC_BETAS = frozenset(
     s.strip() for s in os.environ.get("BIX_ALLOWED_ANTHROPIC_BETAS", "").split(",") if s.strip()
 )
+# Advisory per-token costs, USD per 1M tokens (input, output) — used for the
+# est_cost_usd field in routing.ndjson and the UI cost surfaces. Source:
+# platform.claude.com pricing as of 2026-07 (Sonnet tier $3/$15, Opus tier
+# $5/$25, Haiku 4.5 $1/$5). Local Ollama models cost 0 and aren't listed.
+MODEL_COSTS = {
+    "claude-haiku-4-5-20251001": (1.00, 5.00),
+    "claude-sonnet-4-5":         (3.00, 15.00),
+    "claude-sonnet-4-6":         (3.00, 15.00),
+    "claude-opus-4-5":           (5.00, 25.00),
+    "claude-opus-4-7":           (5.00, 25.00),
+}
+
 ENTRIES_PER_FILE  = 200
 CLAUDE_CREDS_PATH = Path("/home/matt/.claude/.credentials.json")
 ROUTING_LOG       = Path("logs") / "routing.ndjson"

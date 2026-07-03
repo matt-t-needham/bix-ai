@@ -40,14 +40,14 @@ def _data_for(chunks: list[str], event_name: str) -> list[dict]:
 
 
 def _make_forge(*events):
-    async def fake(messages, model, max_tokens, mode="auto"):
+    async def fake(messages, model, max_tokens, mode="auto", **kwargs):
         for ev, payload in events:
             yield sse(ev, payload)
     return fake
 
 
 def _make_claude(*events):
-    async def fake(messages, model, max_tokens, skip_preprocess, mode="api"):
+    async def fake(messages, model, max_tokens, skip_preprocess, mode="api", **kwargs):
         for ev, payload in events:
             yield sse(ev, payload)
     return fake

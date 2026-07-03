@@ -167,6 +167,7 @@
     {
       "mode": "local",
       "model": "gemma4:26b",
+      "reason": "forced:local",
       "output_tokens": 3,
       "ttft_ms": 0,
       "elapsed_ms": 0

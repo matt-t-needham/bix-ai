@@ -30,7 +30,8 @@ This is not a 3-file project. Module map:
 | `streaming/claude.py` | Anthropic adapter: memory injection + pre-pass, then delegates to `run_tool_loop` with an `AnthropicProvider` |
 | `streaming/ollama.py` | Ollama adapter: tool-offload model swap + `OLLAMA_SYSTEM` injection, then delegates to `run_tool_loop` with an `OllamaProvider` |
 | `streaming/forge_runner.py` | Wraps forge-guardrails' `WorkflowRunner` for mode="auto" (local-first, its own loop/compaction) |
-| `streaming/local_first.py` | mode="auto" orchestration — tries forge first, escalates to `_stream_claude` on error, emits `fallback_triggered` |
+| `routing.py` | Routing v2 (Phase 6) for mode="auto" — decides local vs Claude *before* any model runs. Claude signals (code fences/intent, prose deliverables, multi-step shape, long request, large context) are checked before any local rule, so misrouting hard work local is impossible by construction; local rules match only small tool-result digestion and short chat; the ambiguous remainder gets one local classification where only an affirmative EASY routes local (HARD/garbage/error fail open to Claude). Pure logic, injected `ollama_chat`, same pattern as strategy/compact |
+| `streaming/local_first.py` | mode="auto" orchestration — calls `routing.decide` first; claude-routed requests skip the local attempt, local-routed keep forge-first with escalation to `_stream_claude` on error (`fallback_triggered` clears partial UI output). Every decision lands in `routing.ndjson` with a `reason` field (non-auto paths log `forced:<mode>`) plus `est_cost_usd` from `config.MODEL_COSTS` (advisory; keep in sync with the UI's `MODEL_RATES`) |
 | `streaming/pro.py` | mode="pro" — drives the `claude` CLI subprocess over MCP |
 | `static/index.html` | Single-file chat UI. No build step. Vanilla JS + CSS. Keeps `textSegments` (render) separate from `convHistory` (request payload) |
 
@@ -60,8 +61,10 @@ docker compose build ai-router && docker compose up -d ai-router
 docker logs apps-ai-router-1 -f
 ```
 
-`ANTHROPIC_API_KEY` is read from `/home/matt/apps/.env` (Docker Compose picks it up
-automatically). Ollama must be running with `OLLAMA_HOST=0.0.0.0` (systemd override) so
+The API key lives in `/home/matt/apps/bix-infra/.env` as `BIX_AI_API_KEY`; the compose
+file maps it to `ANTHROPIC_API_KEY` inside the container. For dev runs outside Docker,
+export it yourself: `export ANTHROPIC_API_KEY=$(grep BIX_AI_API_KEY /home/matt/apps/bix-infra/.env | cut -d= -f2)`.
+(There is no `/home/matt/apps/.env` — older docs claiming that are stale.) Ollama must be running with `OLLAMA_HOST=0.0.0.0` (systemd override) so
 the container can reach it — in Docker this resolves via `host.docker.internal`, which
 is `config.OLLAMA_HOST`'s default. Override `OLLAMA_HOST` when running outside Docker.
 
@@ -170,7 +173,7 @@ Imported and adapted from the shared project standards:
 ## Gotchas
 
 - **Container rebuild required for any change.** `static/index.html` is `COPY`-ed at build time — there is no volume mount for it. Always rebuild after editing frontend or backend files.
-- **`ANTHROPIC_API_KEY` comes from `/home/matt/apps/.env`**, not from `.env` inside `bix-ai/`. If Claude requests fail, check the key is present in the running container: `docker exec apps-ai-router-1 env | grep ANTHROPIC`.
+- **`ANTHROPIC_API_KEY` comes from `bix-infra/.env` (as `BIX_AI_API_KEY`)**, not from a `.env` inside `bix-ai/`. If Claude requests fail, check the key is present in the running container: `docker exec apps-ai-router-1 env | grep ANTHROPIC`. Symptom of a missing/bad key used to be a silent zero-token "done" — since Phase 6 a 401 surfaces as an `error` SSE event.
 - **Ollama unreachable from container** unless `OLLAMA_HOST=0.0.0.0` is set in the Ollama systemd override (yes, this is a different `OLLAMA_HOST` — Ollama's own bind-address env var, not this repo's `config.OLLAMA_HOST` client-side knob; same name, opposite side of the connection). The container reaches Ollama via `host.docker.internal:11434` by default; running outside Docker, set this repo's `OLLAMA_HOST=http://localhost:11434`.
 - **AMD GPU (RX 6600M / gfx1032) uses the Vulkan backend, not ROCm.** Ollama's bundled rocBLAS has never shipped gfx1032 kernels (checked through v0.24.0 — preset includes gfx1030 but not gfx1032). The old `HSA_OVERRIDE_GFX_VERSION=10.3.0` spoof made the GPU pretend to be gfx1030 so it could borrow those kernels — it worked silently until Ollama 0.21 tightened GPU discovery, after which the spoofed device hangs the ROCm probe for 30s every cold start and Ollama falls back to CPU. Required env vars in the systemd override (`/etc/systemd/system/ollama.service.d/override.conf`):
     - `OLLAMA_VULKAN=1` — enable the Vulkan backend
@@ -181,7 +184,7 @@ Imported and adapted from the shared project standards:
 - **`gemma4:e2b` fails to load on this host** (llama runner exit status 2, any prompt size, even with nothing else resident — broken since the Vulkan backend switch). It is still the *code default* for `SUMMARY_LOCAL_MODEL`, so anything using the local summariser (pre-pass classify/salience fallback, conversation compaction, log review) silently fails open unless `SUMMARY_LOCAL_MODEL` is overridden. The compose file sets `SUMMARY_LOCAL_MODEL=gemma4:26b` for the container; export it yourself for dev runs. Fix or re-pull e2b to get the fast summariser back.
 - **Ollama unloads models** after ~5 minutes idle. The GPU section in the sidebar shows "idle" when this happens — that's expected.
 - **SSE golden fixtures:** `tests/fixtures/sse/*.json` pin the exact event sequences the claude/ollama loops emit (recorded pre-Phase-4-refactor). If `tests/test_sse_fixtures.py` fails, the SSE contract drifted — that's usually a bug, not a fixture-refresh situation. Only regenerate (`RECORD_SSE=1 pytest tests/test_sse_fixtures.py`) when the change is intended, and update the UI to match.
-- **Tests:** `cd bix-ai && pytest -q` — 16 test files under `tests/`, 139 tests as of Phase 5. A `.venv/` exists in `bix-ai/` (gitignored) with requirements + pytest installed — use `.venv/bin/python -m pytest -q` for local runs; the system Python has neither httpx nor fastapi. Strategy fixtures live under `tests/fixtures/` (regenerable — a ~4k-line logfile with one buried ERROR+traceback, a big source file, a huge JSON). `config.FS_ROOT`/`STAGING_DIR` are read at call time specifically so tests can monkeypatch them — keep that property. `pytest` is not in `requirements.txt` (it's installed only in the Docker test stage); install it separately for local runs.
+- **Tests:** `cd bix-ai && pytest -q` — 18 test files under `tests/`, 161 tests as of Phase 6. Fully offline: all httpx clients and `ollama_chat` callables are faked, so the suite never hits Anthropic or Ollama (no token cost; ~0.5s runtime). A `.venv/` exists in `bix-ai/` (gitignored) with requirements + pytest installed — use `.venv/bin/python -m pytest -q` for local runs; the system Python has neither httpx nor fastapi. Strategy fixtures live under `tests/fixtures/` (regenerable — a ~4k-line logfile with one buried ERROR+traceback, a big source file, a huge JSON). `config.FS_ROOT`/`STAGING_DIR` are read at call time specifically so tests can monkeypatch them — keep that property. `pytest` is not in `requirements.txt` (it's installed only in the Docker test stage); install it separately for local runs.
 
 ## When Claude makes a repeat mistake
 

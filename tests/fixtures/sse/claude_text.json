@@ -54,6 +54,7 @@
     {
       "mode": "api",
       "model": "claude-sonnet-4-6",
+      "reason": "forced:api",
       "summarised": 0,
       "preprocess_ms": 0,
       "input_tokens": 10,

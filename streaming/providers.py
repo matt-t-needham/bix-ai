@@ -68,6 +68,17 @@ class AnthropicProvider:
 
         async with self.client_factory() as client:
             async with client.stream("POST", ANTHROPIC_URL, json=api_body, headers=self.headers) as r:
+                if r.status_code != 200:
+                    body = await r.aread()
+                    try:
+                        err_obj = json.loads(body).get("error", {})
+                        err = err_obj.get("message") if isinstance(err_obj, dict) else str(err_obj)
+                        err = err or f"HTTP {r.status_code}"
+                    except Exception:
+                        err = f"HTTP {r.status_code}"
+                    log.error("anthropic error status=%d err=%s", r.status_code, err)
+                    yield {"kind": "provider_error", "message": f"Anthropic: {err}"}
+                    return
                 event_type = None
                 async for line in r.aiter_lines():
                     line = line.strip()
@@ -125,6 +136,12 @@ class AnthropicProvider:
                             stop_reason   = data.get("delta", {}).get("stop_reason")
                             log.info("output_tokens turn=%d count=%d stop_reason=%s",
                                      self._turn, output_tokens, stop_reason)
+
+                        elif event_type == "error":
+                            msg = data.get("error", {}).get("message", "unknown upstream error")
+                            log.error("anthropic stream error err=%s", msg)
+                            yield {"kind": "provider_error", "message": f"Anthropic: {msg}"}
+                            return
 
         self.total_output_tokens += output_tokens
         self.last_output_tokens = output_tokens

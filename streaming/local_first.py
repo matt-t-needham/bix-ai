@@ -1,7 +1,8 @@
 import json
 import logging
 
-from helpers import sse
+import routing
+from helpers import ollama_chat, sse
 from streaming.claude import _stream_claude
 from streaming.forge_runner import _stream_forge_runner
 
@@ -29,18 +30,38 @@ async def _stream_local_first(
     messages: list, ollama_model: str, claude_model: str,
     max_tokens: int, mode: str = "auto",
 ):
-    """Stream from Forge (Ollama-backed) first; on error, fall back to Claude.
+    """Routing v2 (Phase 6): decide local vs Claude up front, then stream.
 
-    If at least one `delta` has been emitted before the error, emit a
-    `fallback_triggered` event so the UI can clear the partial response.
-    Always emit a `status` event with the error reason before the Claude
-    stream starts so the user can see why the model switched.
+    `routing.decide` applies structural rules first (code-gen / multi-step /
+    prose / long requests → Claude; small tool digestion / short chat →
+    local) and one local classification for the ambiguous remainder, failing
+    open to Claude. Local-routed requests keep the forge-first flow with
+    error escalation to Claude; Claude-routed requests skip the local attempt
+    entirely. Every decision lands in routing.ndjson via the `reason` field.
     """
+    decision = await routing.decide(messages, ollama_chat)
+    log.info("auto route=%s rule=%s reason=%s",
+             decision["route"], decision["rule"], decision["reason"])
+
+    if decision["route"] == "claude":
+        yield sse("status", {"stage": "checking",
+                             "message": f"auto → Claude ({decision['reason']})"})
+        async for chunk in _stream_claude(
+            messages, claude_model, max_tokens,
+            skip_preprocess=False, mode="auto",
+            route_reason=f"{decision['rule']}: {decision['reason']}",
+        ):
+            yield chunk
+        return
+
     has_delta    = False
     escalate     = False
     error_reason = "local model error"
 
-    async for chunk in _stream_forge_runner(messages, ollama_model, max_tokens, mode=mode):
+    async for chunk in _stream_forge_runner(
+        messages, ollama_model, max_tokens, mode=mode,
+        route_reason=f"{decision['rule']}: {decision['reason']}",
+    ):
         event = _parse_sse_event(chunk)
         if event == "error":
             escalate     = True
@@ -60,5 +81,6 @@ async def _stream_local_first(
         async for chunk in _stream_claude(
             messages, claude_model, max_tokens,
             skip_preprocess=True, mode="auto_fallback",
+            route_reason=f"escalated: {error_reason}",
         ):
             yield chunk

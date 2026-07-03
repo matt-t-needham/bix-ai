@@ -866,14 +866,20 @@ function toolFriendlyName(name) {
 }
 
 // Cost per 1M tokens in USD (input, output)
+// Advisory USD per 1M tokens [input, output] — keep in sync with
+// config.py MODEL_COSTS (source: platform.claude.com pricing, 2026-07).
 const MODEL_RATES = {
-  'claude-opus-4-7':           [15,   75  ],
-  'claude-sonnet-4-6':         [3,    15  ],
-  'claude-haiku-4-5-20251001': [0.80, 4   ],
+  'claude-opus-4-7':           [5, 25],
+  'claude-opus-4-5':           [5, 25],
+  'claude-sonnet-4-6':         [3, 15],
+  'claude-sonnet-4-5':         [3, 15],
+  'claude-haiku-4-5-20251001': [1, 5 ],
 };
 function estimateCost(model, inTok, outTok) {
   if (!inTok && !outTok) return null;
-  const [rIn, rOut] = MODEL_RATES[model] || MODEL_RATES['claude-sonnet-4-6'];
+  const rates = MODEL_RATES[model];
+  if (!rates) return null; // local/unknown model — no advisory cost
+  const [rIn, rOut] = rates;
   const usd = ((inTok || 0) * rIn + (outTok || 0) * rOut) / 1e6;
   if (usd < 0.0001) return '<$0.0001';
   return '$' + usd.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
@@ -1080,6 +1086,7 @@ function renderCurrentStats() {
       ${cell('Tok/s', r.tps      || '—',              running)}
       ${cell('Total', r.elapsed_ms ? r.elapsed_ms + 'ms' : '—')}
       ${cell('Prep',  r.preprocess_ms > 50 ? r.preprocess_ms + 'ms' : '—')}
+      ${r.mode !== 'local' ? cell('Est. cost', estimateCost(r.model, r.input_tokens, r.output_tokens) || '—', running) : ''}
       ${extras}
     </div>`;
 }
@@ -1096,7 +1103,7 @@ function renderHistory() {
   const sessionCost = reqHistory
     .filter(r => r.mode !== 'local' && r.status === 'done')
     .reduce((sum, r) => {
-      const [rIn, rOut] = MODEL_RATES[r.model] || MODEL_RATES['claude-sonnet-4-6'];
+      const [rIn, rOut] = MODEL_RATES[r.model] || [0, 0]; // auto may finish on a local model — never bill those
       return sum + ((r.input_tokens || 0) * rIn + (r.output_tokens || 0) * rOut) / 1e6;
     }, 0);
   if (costTotalEl) {
