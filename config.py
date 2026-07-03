@@ -24,6 +24,11 @@ _MAX_TOKENS_CAP      = int(os.environ.get("MAX_TOKENS_CAP", "8192"))
 # the remaining budgets — generous defaults so they only bite runaway loops.
 LOOP_MAX_TOKENS      = int(os.environ.get("LOOP_MAX_TOKENS", "500000"))
 LOOP_MAX_SECONDS     = float(os.environ.get("LOOP_MAX_SECONDS", "300"))
+# Conversation-tail compaction (compact.py, api path). Triggers when the
+# narrative token estimate (blob-pointer excerpts excluded) exceeds the
+# threshold; the most recent COMPACT_KEEP_TURNS user turns stay verbatim.
+COMPACT_THRESHOLD_TOKENS = int(os.environ.get("COMPACT_THRESHOLD_TOKENS", "20000"))
+COMPACT_KEEP_TURNS       = int(os.environ.get("COMPACT_KEEP_TURNS", "3"))
 _ALLOWED_CLAUDE_MODELS = {
     "claude-haiku-4-5-20251001",
     "claude-sonnet-4-5", "claude-sonnet-4-6",

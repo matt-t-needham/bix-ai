@@ -292,7 +292,22 @@ normalised event/message shape; a single tool table generating all three formats
 **Done when:** both refactored paths pass the SSE-sequence fixtures; `tools.py` defines
 each tool exactly once; line count of `streaming/` drops meaningfully.
 
-## Phase 5 — conversation-tail compaction (needs Phase 1 live)
+## Phase 5 — conversation-tail compaction (needs Phase 1 live) — ✅ SHIPPED (2026-07-02)
+
+*Implementation notes:* `compact.py`, wired after the spill pass in
+`streaming/claude.py` (api path only, as scoped by gap 6). Cut points are plain
+user turn-starts (tool_result continuations excluded) so alternation stays valid;
+the fold produces a `[router-compact v1]` user msg + assistant ack pair. On
+re-growth the old compact body accretes verbatim — the model never re-sees it.
+Blob hashes folded out of the tail are re-listed in the compact body so pinning
+and retrieval keep working. `compacted` rides the `preprocess` SSE event (not
+`metrics`, which is pinned by the Phase 4 golden fixtures). E2E on this machine:
+23 msgs / 31,077 input tokens → compacted to 7 msgs / 7,764 tokens, tail
+byte-identical; resent adopted history logged `msgs=9` and did not re-compact.
+**Environment gotcha found during E2E:** `gemma4:e2b` (the SUMMARY_LOCAL_MODEL
+default) no longer loads on this host — compose now overrides to `gemma4:26b`,
+and `TRANSCRIPT_MAX_CHARS=12000` keeps the summarise call inside the 120s
+ollama_chat timeout (~50-90s observed).
 
 Old turns (narrative, not artifacts) summarised once the *conversation* exceeds a
 threshold; recent K turns kept verbatim; result rides the `history` event so the

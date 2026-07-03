@@ -12,7 +12,9 @@ from streaming import local_first  # noqa: E402
 
 
 def run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    # asyncio.run: get_event_loop() breaks under Python 3.12 once any earlier
+    # test has used asyncio.run (no current loop is left on the policy).
+    return asyncio.run(coro)
 
 
 async def _collect(agen):

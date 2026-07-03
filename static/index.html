@@ -1064,6 +1064,7 @@ function renderCurrentStats() {
   const extras = [
     r.summarised ? cell('Compressed', r.summarised) : '',
     r.spilled    ? cell('Spilled',    r.spilled)    : '',
+    r.compacted  ? cell('Compacted',  'yes')        : '',
     r.skipped    ? cell('Passed',     r.skipped)    : '',
     r.failed     ? cell('Failed',     r.failed)     : '',
   ].filter(Boolean).join('');
@@ -1137,6 +1138,7 @@ function renderHistory() {
         <div class="hi-stat"><span class="sk">Total</span><span class="sv">${r.elapsed_ms}ms</span></div>
         ${r.summarised > 0 ? `<div class="hi-stat"><span class="sk">Compressed</span><span class="sv ollama-tag">${r.summarised} block${r.summarised > 1 ? 's' : ''}</span></div>` : ''}
         ${r.spilled > 0 ? `<div class="hi-stat"><span class="sk">Spilled</span><span class="sv ollama-tag">${r.spilled} block${r.spilled > 1 ? 's' : ''}</span></div>` : ''}
+        ${r.compacted > 0 ? `<div class="hi-stat"><span class="sk">Compacted</span><span class="sv ollama-tag">history</span></div>` : ''}
       </div>`;
     }
 
@@ -1399,7 +1401,7 @@ async function send() {
     model, mode: resolvedMode, models: modelsUsed, status: 'running',
     input_tokens: 0, output_tokens: 0,
     ttft_ms: 0, elapsed_ms: 0, tps: 0,
-    preprocess_ms: 0, summarised: 0, spilled: 0, skipped: 0, failed: 0,
+    preprocess_ms: 0, summarised: 0, spilled: 0, compacted: 0, skipped: 0, failed: 0,
   };
   renderCurrentStats();
   setStatus('checking', 'Checking…');
@@ -1463,7 +1465,8 @@ async function send() {
           Object.assign(currentReq, {
             preprocess_ms: data.preprocess_ms,
             summarised:    data.summarised,
-            spilled:       data.spilled || 0,
+            spilled:       data.spilled   || 0,
+            compacted:     data.compacted || 0,
             skipped:       data.skipped,
             failed:        data.failed,
           });

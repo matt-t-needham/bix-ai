@@ -35,8 +35,13 @@ SUMMARY_END_MARKER = "[end-router-summary]"
 # "[router-blob v2 <sha256>]".
 BLOB_MARKER     = "[router-blob v2"
 BLOB_END_MARKER = "[end-router-blob]"
+# Conversation-tail compaction markers (compact.py). Registered here so all
+# router markers live in one place and skip-checks can't miss one.
+COMPACT_MARKER     = "[router-compact v1]"
+COMPACT_END_MARKER = "[end-router-compact]"
 
-_ALL_MARKERS = (SUMMARY_MARKER, SUMMARY_END_MARKER, BLOB_MARKER, BLOB_END_MARKER)
+_ALL_MARKERS = (SUMMARY_MARKER, SUMMARY_END_MARKER, BLOB_MARKER, BLOB_END_MARKER,
+                COMPACT_MARKER, COMPACT_END_MARKER)
 
 _BLOB_POINTER_RE = re.compile(re.escape(BLOB_MARKER) + r"\s+([0-9a-f]{64})\]")
 
@@ -63,9 +68,11 @@ def estimate_tokens(text: str) -> int:
 
 
 def is_already_summarised(text: str) -> bool:
-    """True for blocks already carrying a v1 summary or v2 blob-pointer marker."""
+    """True for blocks already carrying a router marker (v1 summary, v2
+    blob pointer, or compact summary) — never re-process our own output."""
     head = text.lstrip()
-    return head.startswith(SUMMARY_MARKER) or head.startswith(BLOB_MARKER)
+    return (head.startswith(SUMMARY_MARKER) or head.startswith(BLOB_MARKER)
+            or head.startswith(COMPACT_MARKER))
 
 
 def referenced_blob_hashes(messages: list) -> set[str]:
