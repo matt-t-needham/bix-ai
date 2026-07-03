@@ -5,10 +5,12 @@
 import asyncio
 import logging
 
+from config import SUMMARY_LOCAL_MODEL
+
 log = logging.getLogger("strategy")
 
 # --- Tunables ---
-LOCAL_MODEL = "gemma4:e2b"          # summariser; gemma4:e2b is the faster fallback
+LOCAL_MODEL = SUMMARY_LOCAL_MODEL   # summariser; env-overridable via SUMMARY_LOCAL_MODEL
 SUMMARY_THRESHOLD_TOKENS = 6000     # blocks above this get summarised
 SUMMARY_TARGET_WORDS = 300          # rough budget for the summary
 SUMMARY_MARKER = "[router-summary v1]"        # opening sentinel; also used by is_already_summarised

@@ -34,7 +34,7 @@ import strategy  # noqa: E402 — after logging setup
 
 from config import (  # noqa: E402
     ANTHROPIC_API_KEY, ANTHROPIC_URL, BIX_PROXY_SECRET,
-    DEFAULT_MODEL, OLLAMA_DEFAULT_MODEL,
+    DEFAULT_MODEL, OLLAMA_DEFAULT_MODEL, OLLAMA_HOST,
     _ALLOWED_ANTHROPIC_BETAS, _ALLOWED_CLAUDE_MODELS, _ALLOWED_OLLAMA_MODELS,
     _MAX_BODY_BYTES, _MAX_TOKENS_CAP,
 )
@@ -114,7 +114,7 @@ async def system_metrics():
     else:
         try:
             async with httpx.AsyncClient(timeout=2.0) as client:
-                r = await client.get("http://host.docker.internal:11434/api/ps")
+                r = await client.get(f"{OLLAMA_HOST}/api/ps")
                 if r.status_code == 200:
                     models = r.json().get("models") or []
                     if models:

@@ -2,41 +2,87 @@
 
 ## Project overview
 
-A FastAPI service that proxies Anthropic API calls, pre-summarises large context blocks via a local Ollama model to reduce token costs, and serves a single-file dark-theme chat UI at `ai.bix.computer`.
+A FastAPI service that acts as an efficient cross-platform task runner: it proxies
+Anthropic API calls, routes between local Ollama models and Claude, gives models an
+agentic tool loop (filesystem reads, gated writes, logs, memory, Steam library, TODOs),
+pre-summarises oversized context blocks via a local Ollama model, and serves a
+single-file dark-theme chat UI at `ai.bix.computer`.
 
-Three concerns live here:
-- **`main.py`** — FastAPI app. All routes, SSE streaming helpers, system metrics, summarisation endpoint.
-- **`strategy.py`** — Pre-summarisation pipeline. Walks messages, compresses blocks >2000 estimated tokens via Ollama in parallel with `asyncio.gather`. Tags summaries with `[router-summary v1]` to prevent re-summarisation.
-- **`static/index.html`** — Single-file chat UI. No build step. Vanilla JS + CSS.
+This is not a 3-file project. Module map:
+
+| Module | Role |
+|---|---|
+| `main.py` | FastAPI app — all routes, SSE streaming dispatch, system metrics, staging review UI routes |
+| `config.py` | All tunables/env vars — `OLLAMA_HOST` is the single source for every Ollama host reference |
+| `strategy.py` | Pre-summarisation pipeline — pure logic, `preprocess(body, ollama_chat) -> (new_body, stats)`, no imports from `main.py` |
+| `tools.py` | Tool dispatcher (`_execute_tool`) plus three parallel tool-definition tables: `FS_TOOLS` (Anthropic shape), `OLLAMA_TOOLS` (OpenAI fn shape), `FORGE_TOOLS` (forge `ToolDef`) — deliberate duplication, not yet consolidated |
+| `fs_core.py` | Path security — `is_denied_path` (secrets), `is_write_denied_path` (scripts/CI/bix-ai's own source) |
+| `staging.py` | Gated writes: propose → human review → apply. Re-validates every guard at approve time. Review routes live in `main.py` under `/staging…` |
+| `memory.py` | Memory persistence (`/memory` routes, `recall_memories` tool); conversations under `DATA_DIR/convos` |
+| `bix_mcp.py` | MCP server exposed to the `claude` CLI subprocess for mode="pro" |
+| `steam.py`, `logtools.py`, `todos.py` | Backing implementations for the `list_steam_games`, `list_log_sources`/`read_log`, and `read_todos` tools |
+| `helpers.py` | SSE helpers (`sse()`, `with_keepalive`), routing-log writer, Ollama chat helper |
+| `streaming/claude.py` | Agentic loop against Anthropic — `for _turn in range(10)`, exits on `stop_reason != "tool_use"` |
+| `streaming/ollama.py` | Same loop shape against Ollama's OpenAI-compatible endpoint, exits on `finish_reason != "tool_calls"` |
+| `streaming/forge_runner.py` | Wraps forge-guardrails' `WorkflowRunner` for mode="auto" (local-first, its own loop/compaction) |
+| `streaming/local_first.py` | mode="auto" orchestration — tries forge first, escalates to `_stream_claude` on error, emits `fallback_triggered` |
+| `streaming/pro.py` | mode="pro" — drives the `claude` CLI subprocess over MCP |
+| `static/index.html` | Single-file chat UI. No build step. Vanilla JS + CSS. Keeps `textSegments` (render) separate from `convHistory` (request payload) |
+
+Four `mode` values on `POST /chat`: `local` (direct to Ollama), `api` (direct to
+Claude), `auto` (forge-first local, escalates to Claude on error), and everything else
+falls through to `pro` (subprocess `claude` CLI with MCP tools).
+
+See `PLAN-pi-tools.md` for the active roadmap and the gaps it's closing (tool-turn
+history currently doesn't survive across requests; artifact compression is lossy;
+no blob store yet). Trust that plan over this file if they ever disagree — re-derive
+this file from the code, the plan says so explicitly.
 
 ## How to run
 
 ```bash
-# Dev (outside Docker)
+# Dev (outside Docker) — point OLLAMA_HOST at your local Ollama, not the Docker DNS name
+export OLLAMA_HOST=http://localhost:11434
 pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
+
+# Tests
+pip install pytest==8.3.4   # not in requirements.txt — only installed in the Docker test stage
+pytest -q
 
 # Production rebuild (from repo root)
 docker compose build ai-router && docker compose up -d ai-router
 docker logs apps-ai-router-1 -f
 ```
 
-`ANTHROPIC_API_KEY` is read from `/home/matt/apps/.env` (Docker Compose picks it up automatically). Ollama must be running on the host with `OLLAMA_HOST=0.0.0.0`.
+`ANTHROPIC_API_KEY` is read from `/home/matt/apps/.env` (Docker Compose picks it up
+automatically). Ollama must be running with `OLLAMA_HOST=0.0.0.0` (systemd override) so
+the container can reach it — in Docker this resolves via `host.docker.internal`, which
+is `config.OLLAMA_HOST`'s default. Override `OLLAMA_HOST` when running outside Docker.
+
+The Docker build has a **hard test gate**: the `test` stage runs `pytest -q` and the
+`runtime` stage only exists via `COPY --from=test`, so a failing suite fails the build.
+pytest itself never ships in the runtime image.
 
 ## SSE event protocol
 
-`POST /chat` streams these events in order:
+`POST /chat` streams these events (not all paths emit all events — `pro.py` is the only
+path currently emitting `tool_result`; see `PLAN-pi-tools.md` Phase 1):
 
 | Event | Payload | Notes |
 |-------|---------|-------|
 | `status` | `{stage, message}` | checking / summarising / streaming |
-| `preprocess` | `{summarised, skipped, failed, preprocess_ms}` | fires after pipeline, before Claude stream |
-| `input_tokens` | `{count}` | fires on Anthropic `message_start` |
+| `preprocess` | `{summarised, skipped, failed, preprocess_ms}` | fires after `strategy.preprocess`, before the model stream |
+| `input_tokens` | `{count}` | fires on `message_start` (turn 0 only across a tool loop) |
 | `delta` | `{text}` | streaming text chunk |
 | `tool_start` | `{index, name, id}` | tool call begins |
 | `tool_input` | `{index, partial_json}` | streaming tool input |
 | `tool_end` | `{index}` | tool call complete |
-| `metrics` | `{input_tokens, output_tokens, elapsed_ms, ttft_ms, preprocess_ms, tps, summarised, skipped, failed}` | fires on `message_stop` |
+| `tool_result` | `{tool_use_id, content, is_error}` | **pro path only today**; UI already handles it |
+| `model_swap` | — | mode="auto" escalation/model change |
+| `fallback_triggered` | — | mode="auto" forge→Claude escalation; clears partial local output in the UI |
+| `quota_exceeded` | — | upstream quota error |
+| `metrics` | `{input_tokens, output_tokens, elapsed_ms, ttft_ms, preprocess_ms, tps, summarised, skipped, failed}` | fires once at loop exit, aggregated across all tool-loop turns |
 | `done` | `{}` | stream complete |
 | `error` | `{message}` | upstream or internal error |
 
@@ -112,13 +158,15 @@ Imported and adapted from the shared project standards:
 - **Prefer `async` throughout.** All route handlers and helpers are async. Don't introduce sync blocking calls (file I/O, `requests`, `time.sleep`) on the event loop.
 - **httpx only.** All outbound HTTP (Anthropic, Ollama) uses `httpx.AsyncClient`. Don't add `requests` or `aiohttp`.
 - **Don't catch exceptions broadly then continue as if nothing happened.** The `except Exception: pass` pattern in `system_metrics()` is intentional (GPU stats are best-effort). Elsewhere, handle or re-raise with context.
-- **Strategy is pure logic.** `strategy.py` takes a body dict and an `ollama_chat` callable — it has no imports from `main.py`. Keep it that way so it can be unit-tested in isolation.
+- **Strategy is pure logic.** `strategy.py` takes a body dict and an `ollama_chat` callable — it has no imports from `main.py`. Importing leaf modules like `config.py` is fine; keep it decoupled from `main.py` and the FastAPI app so it stays unit-testable in isolation.
+- **All disk writes go through `staging.py`.** Never bypass the propose → review → apply flow, never auto-apply. `is_write_denied_path` protections (including bix-ai's own source) must never be weakened.
+- **One knob per external host.** Ollama's host is `config.OLLAMA_HOST` everywhere — don't reintroduce a hardcoded `host.docker.internal` at a new call site; derive from `OLLAMA_HOST`/`OLLAMA_URL`.
 
 ## Gotchas
 
 - **Container rebuild required for any change.** `static/index.html` is `COPY`-ed at build time — there is no volume mount for it. Always rebuild after editing frontend or backend files.
 - **`ANTHROPIC_API_KEY` comes from `/home/matt/apps/.env`**, not from `.env` inside `bix-ai/`. If Claude requests fail, check the key is present in the running container: `docker exec apps-ai-router-1 env | grep ANTHROPIC`.
-- **Ollama unreachable from container** unless `OLLAMA_HOST=0.0.0.0` is set in the Ollama systemd override. The container reaches Ollama via `host.docker.internal:11434`.
+- **Ollama unreachable from container** unless `OLLAMA_HOST=0.0.0.0` is set in the Ollama systemd override (yes, this is a different `OLLAMA_HOST` — Ollama's own bind-address env var, not this repo's `config.OLLAMA_HOST` client-side knob; same name, opposite side of the connection). The container reaches Ollama via `host.docker.internal:11434` by default; running outside Docker, set this repo's `OLLAMA_HOST=http://localhost:11434`.
 - **AMD GPU (RX 6600M / gfx1032) uses the Vulkan backend, not ROCm.** Ollama's bundled rocBLAS has never shipped gfx1032 kernels (checked through v0.24.0 — preset includes gfx1030 but not gfx1032). The old `HSA_OVERRIDE_GFX_VERSION=10.3.0` spoof made the GPU pretend to be gfx1030 so it could borrow those kernels — it worked silently until Ollama 0.21 tightened GPU discovery, after which the spoofed device hangs the ROCm probe for 30s every cold start and Ollama falls back to CPU. Required env vars in the systemd override (`/etc/systemd/system/ollama.service.d/override.conf`):
     - `OLLAMA_VULKAN=1` — enable the Vulkan backend
     - `OLLAMA_LLM_LIBRARY=vulkan` — skip the ROCm probe entirely (saves the 30s timeout)
@@ -126,7 +174,7 @@ Imported and adapted from the shared project standards:
 
     Symptom of regression: `curl localhost:11434/api/ps` shows `size_vram: 0` after loading a model, and `journalctl -u ollama` shows `failure during GPU discovery` or `inference compute id=cpu library=cpu` at startup. Expected healthy state: startup log line `inference compute id=gpu0 library=vulkan ...` and `size_vram > 0` after model load. Vulkan delivers ~70-90% of theoretical ROCm perf on RDNA2 for chat workloads — fine for this use case.
 - **Ollama unloads models** after ~5 minutes idle. The GPU section in the sidebar shows "idle" when this happens — that's expected.
-- **`strategy.py` tests:** `cd bix-ai && pytest tests/` — four tests covering below-threshold, above-threshold, already-summarised, and tool_result blocks.
+- **Tests:** `cd bix-ai && pytest -q` — 8 test files under `tests/`, 71 tests as of the last plan reconciliation. `config.FS_ROOT`/`STAGING_DIR` are read at call time specifically so tests can monkeypatch them — keep that property. `pytest` is not in `requirements.txt` (it's installed only in the Docker test stage); install it separately for local runs.
 
 ## When Claude makes a repeat mistake
 

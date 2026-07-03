@@ -31,7 +31,7 @@ from forge import (
     respond_tool,
 )
 
-from config import AUTO_LOG
+from config import AUTO_LOG, OLLAMA_HOST
 from helpers import _write_routing_event, sse
 from memory import _load_recent_memories, _memory_system_prompt
 from tools import FORGE_TOOLS
@@ -248,7 +248,7 @@ async def _stream_forge_runner(
     # apply instead.
     client = OllamaClient(
         model    = ollama_model,
-        base_url = "http://host.docker.internal:11434",
+        base_url = OLLAMA_HOST,
     )
     ctx    = ContextManager(strategy=TieredCompact(keep_recent=2),
                             budget_tokens=max_tokens)

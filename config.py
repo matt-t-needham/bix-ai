@@ -2,7 +2,10 @@ import os
 from pathlib import Path
 
 ANTHROPIC_URL        = "https://api.anthropic.com/v1/messages"
-OLLAMA_URL           = "http://host.docker.internal:11434/v1/chat/completions"
+# Bare Ollama host (no path). All Ollama call sites derive their URL from this
+# single knob so dev-outside-Docker only needs to override one env var.
+OLLAMA_HOST          = os.environ.get("OLLAMA_HOST", "http://host.docker.internal:11434")
+OLLAMA_URL           = f"{OLLAMA_HOST}/v1/chat/completions"
 ANTHROPIC_API_KEY    = os.environ.get("ANTHROPIC_API_KEY", "")
 # Defence-in-depth for the /v1/messages proxy. Clients must send this value as
 # `x-api-key`; the server then substitutes ANTHROPIC_API_KEY before forwarding.
@@ -11,6 +14,7 @@ BIX_PROXY_SECRET     = os.environ.get("BIX_PROXY_SECRET", "")
 DEFAULT_MODEL        = os.environ.get("DEFAULT_MODEL", "claude-sonnet-4-5")
 OLLAMA_DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "gemma4:26b")
 OLLAMA_TOOL_MODEL    = os.environ.get("OLLAMA_TOOL_MODEL", "qwen3.5:9b")
+SUMMARY_LOCAL_MODEL  = os.environ.get("SUMMARY_LOCAL_MODEL", "gemma4:e2b")
 FS_ROOT              = Path(os.environ.get("FS_ROOT", "/home/matt")).resolve()
 DATA_DIR             = Path(os.environ.get("DATA_DIR", "/app/data"))
 _MAX_BODY_BYTES      = int(os.environ.get("MAX_BODY_BYTES", "1000000"))
@@ -23,7 +27,7 @@ _ALLOWED_CLAUDE_MODELS = {
 _ALLOWED_OLLAMA_MODELS = {
     OLLAMA_DEFAULT_MODEL,
     OLLAMA_TOOL_MODEL,
-    "gemma4:e2b",   # summariser used by strategy.py
+    SUMMARY_LOCAL_MODEL,   # summariser used by strategy.py
     "gemma4:26b",
     "qwen3.5:9b",
 }
