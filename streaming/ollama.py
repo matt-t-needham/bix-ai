@@ -9,30 +9,16 @@ import httpx
 
 from config import LOOP_MAX_SECONDS, LOOP_MAX_TOKENS, OLLAMA_TOOL_MODEL
 from helpers import _write_routing_event, sse
+from identity import identity_system_prompt
 from streaming.loop import run_tool_loop
 from streaming.providers import OllamaProvider
 from tools import OLLAMA_TOOLS, _execute_tool
 
 log = logging.getLogger("router")
 
-OLLAMA_SYSTEM = (
-    "You are a helpful local assistant. Answer the user's question directly. "
-    "Only use tools when the question genuinely requires reading files or recalling past conversations — "
-    "for general questions, conversation, or tasks you can answer from your own knowledge, just respond.\n\n"
-    "Available tools:\n"
-    "- list_directory(path): list files and folders within /home/matt\n"
-    "- read_file(path): read a text file's contents\n"
-    "- recall_memories(query): search past conversation summaries\n\n"
-    "If the user explicitly asks about pending work, TODOs, logs, or past conversations, "
-    "these locations may be useful (do not read them otherwise):\n"
-    "- /home/matt/apps/bix-infra/todos/ALL.md — compiled pending TODOs across all projects\n"
-    "- /home/matt/apps/bix-infra/todos/ — per-project TODO source files\n"
-    "- /home/matt/apps/bix-infra/logs/tickets/ — daily log-review tickets (YYYY-MM-DD.md)\n"
-    "- /home/matt/apps/bix-infra/logs/ — service logs\n"
-    "- /home/matt/apps/bix-ai/data/ — memory and conversation data\n\n"
-    "Use list_directory to explore before reading files. "
-    "Use recall_memories when the user asks about previous conversations. "
-    "Be concise."
+OLLAMA_SYSTEM = identity_system_prompt(
+    tool_names=[t["function"]["name"] for t in OLLAMA_TOOLS],
+    doc_topics=["staging", "memory", "logs", "blobs", "modes", "todos"],
 )
 
 

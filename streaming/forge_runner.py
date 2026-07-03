@@ -33,6 +33,7 @@ from forge import (
 
 from config import AUTO_LOG, OLLAMA_HOST
 from helpers import _write_routing_event, sse
+from identity import identity_system_prompt
 from memory import _load_recent_memories, _memory_system_prompt
 from tools import FORGE_TOOLS
 
@@ -40,29 +41,21 @@ log = logging.getLogger("router")
 
 _AUTO_LOG_MAX = 5_000_000  # 5 MB; rotate to .1 when exceeded
 
-FORGE_SYSTEM = (
-    "You are a helpful local assistant with filesystem access. "
-    "Answer the user's question directly. Only use tools when the question "
-    "genuinely requires reading files or recalling past conversations.\n\n"
-    "Available tools:\n"
-    "- list_directory(path): list files and folders within /home/matt\n"
-    "- read_file(path): read a text file's contents\n"
-    "- recall_memories(query): search past conversation summaries\n"
-    "- list_log_sources(): list available logs (internal app/service logs and "
-    "Steam client logs)\n"
-    "- read_log(path, lines, contains): read the tail of a log, optionally filtered "
-    "to a substring. Call list_log_sources first.\n"
-    "- stage_write(target_path, content): propose creating/editing a file. This "
-    "never writes live — it stages the change for a human to review and approve. "
-    "Use it when asked to write, draft, or create a file. Tell the user the change "
-    "was staged for review, not written.\n"
-    "- respond(message): send your final answer to the user\n\n"
+# Forge-specific mechanics only — tool capability text comes from identity.py.
+_FORGE_MECHANICS = (
+    "You must finish every turn by calling respond(message='...') with your "
+    "final answer — this is the only way your reply reaches the user. Use "
+    "other tools first if needed, then respond.\n\n"
     "Prefer the dedicated tool over browsing directories. Match the request:\n"
     "- service or Steam logs, errors, crashes → list_log_sources() then read_log(path)\n"
     "- earlier conversations / 'do you remember' → recall_memories(query)\n"
-    "Only fall back to list_directory / read_file when no dedicated tool fits.\n\n"
-    "When your response is ready, call respond(message='...') with your final "
-    "answer. Use other tools first if needed, then respond. Be concise."
+    "Only fall back to list_directory / read_file when no dedicated tool fits."
+)
+
+FORGE_SYSTEM = identity_system_prompt(
+    tool_names=list(FORGE_TOOLS.keys()),
+    doc_topics=["staging", "memory", "logs", "blobs", "modes", "todos"],
+    extra=_FORGE_MECHANICS,
 )
 
 

@@ -243,6 +243,7 @@ TOOL_TABLE: list[dict] = [
             "required": ["target_path", "content"],
         },
         "handler": _tool_stage_write,
+        "brief": "Propose a file write — staged for human review, never applied directly",
     },
     {
         "name": "list_directory",
@@ -262,6 +263,7 @@ TOOL_TABLE: list[dict] = [
             "required": ["path"],
         },
         "handler": _tool_list_directory,
+        "brief": "List files and directories at a path",
     },
     {
         "name": "read_file",
@@ -277,6 +279,7 @@ TOOL_TABLE: list[dict] = [
             "required": ["path"],
         },
         "handler": _tool_read_file,
+        "brief": "Read the text contents of a file",
     },
     {
         "name": "list_steam_games",
@@ -304,6 +307,7 @@ TOOL_TABLE: list[dict] = [
             "required": [],
         },
         "handler": _tool_list_steam_games,
+        "brief": "List installed Steam games (name, appid, size, library)",
     },
     {
         "name": "list_log_sources",
@@ -316,6 +320,7 @@ TOOL_TABLE: list[dict] = [
         ),
         "input_schema": {"type": "object", "properties": {}, "required": []},
         "handler": _tool_list_log_sources,
+        "brief": "List available log files (app/service logs + Steam logs) — call before read_log",
     },
     {
         "name": "read_log",
@@ -344,6 +349,7 @@ TOOL_TABLE: list[dict] = [
             "required": ["path"],
         },
         "handler": _tool_read_log,
+        "brief": "Read the tail of a log file, optionally filtered by substring",
     },
     {
         "name": "recall_memories",
@@ -363,6 +369,7 @@ TOOL_TABLE: list[dict] = [
             "required": ["query"],
         },
         "handler": _tool_recall_memories,
+        "brief": "Search past conversation summaries stored in memory",
     },
     {
         "name": "read_blob",
@@ -393,6 +400,7 @@ TOOL_TABLE: list[dict] = [
             "required": ["hash"],
         },
         "handler": _tool_read_blob,
+        "brief": "Read back the full content of a spilled '[router-blob v2 <hash>]' artifact",
     },
     {
         "name": "grep_blob",
@@ -421,6 +429,7 @@ TOOL_TABLE: list[dict] = [
             "required": ["hash", "pattern"],
         },
         "handler": _tool_grep_blob,
+        "brief": "Search a spilled blob for a regex pattern with surrounding context",
     },
 ]
 

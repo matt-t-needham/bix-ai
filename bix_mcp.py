@@ -7,6 +7,11 @@ import sys
 
 import staging
 from fs_core import is_denied_path, list_directory, read_file
+from tools import TOOL_TABLE
+
+_STAGE_WRITE_DESCRIPTION = next(
+    t["description"] for t in TOOL_TABLE if t["name"] == "stage_write"
+)
 
 READ_ROOTS  = [pathlib.Path(p).resolve() for p in os.environ.get("MCP_READ_PATHS",  "/home/matt/apps").split(":") if p]
 DATA_DIR    = pathlib.Path(os.environ.get("DATA_DIR", "/app/data"))
@@ -68,12 +73,7 @@ TOOL_DEFS = [
     },
     {
         "name": "write_file",
-        "description": (
-            "Stage a file write for human review. The file is NOT written "
-            "immediately — it is recorded as a proposal and only applied after a "
-            "person approves it at /staging. Secrets, shell scripts, container/CI "
-            "config, and bix-ai source are refused."
-        ),
+        "description": _STAGE_WRITE_DESCRIPTION,
         "inputSchema": {
             "type": "object",
             "properties": {

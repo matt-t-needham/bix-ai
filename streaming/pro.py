@@ -8,6 +8,7 @@ import time
 import strategy
 
 from helpers import _write_routing_event, ollama_chat, sse
+from identity import identity_system_prompt
 from memory import _load_recent_memories, _memory_system_prompt
 
 log = logging.getLogger("router")
@@ -18,6 +19,12 @@ _TODO_SYSTEM = (
     "Read /home/matt/apps/bix-infra/todos/GUIDE.md for the file structure. "
     "When asked to plan something, read the existing project file first, then write the updated version. "
     "When asked about pending work, read the relevant file and summarise it."
+)
+
+_PRO_IDENTITY_PROMPT = identity_system_prompt(
+    tool_names=["list_directory", "read_file", "recall_memories", "write_file"],
+    aliases={"write_file": "stage_write"},
+    doc_topics=["staging", "memory", "modes"],
 )
 
 
@@ -264,7 +271,7 @@ async def _stream_pro(
     })
     yield sse("status", {"stage": "streaming", "message": "Streaming via Claude Pro…"})
 
-    sys_parts = []
+    sys_parts = [_PRO_IDENTITY_PROMPT]
     if req_body.get("system"):
         sys_parts.append(req_body["system"])
     sys_parts.append(_TODO_SYSTEM)
