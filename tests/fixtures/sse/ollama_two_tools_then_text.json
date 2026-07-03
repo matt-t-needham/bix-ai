@@ -1,0 +1,175 @@
+{
+  "events": [
+    {
+      "event": "status",
+      "data": {
+        "stage": "streaming",
+        "message": "Streaming from Ollama (gemma4:26b)\u2026"
+      }
+    },
+    {
+      "event": "delta",
+      "data": {
+        "text": "checking"
+      }
+    },
+    {
+      "event": "tool_start",
+      "data": {
+        "index": 0,
+        "name": "read_file",
+        "id": "call_1"
+      }
+    },
+    {
+      "event": "tool_input",
+      "data": {
+        "index": 0,
+        "partial_json": "{\"path\": \"a.txt\"}"
+      }
+    },
+    {
+      "event": "tool_end",
+      "data": {
+        "index": 0
+      }
+    },
+    {
+      "event": "tool_start",
+      "data": {
+        "index": 1,
+        "name": "list_directory",
+        "id": "call_2"
+      }
+    },
+    {
+      "event": "tool_input",
+      "data": {
+        "index": 1,
+        "partial_json": "{\"path\": \"/tmp\"}"
+      }
+    },
+    {
+      "event": "tool_end",
+      "data": {
+        "index": 1
+      }
+    },
+    {
+      "event": "status",
+      "data": {
+        "stage": "checking",
+        "message": "Running read_file\u2026"
+      }
+    },
+    {
+      "event": "tool_result",
+      "data": {
+        "tool_use_id": "call_1",
+        "content": "RESULT[read_file:{\"path\": \"a.txt\"}]",
+        "is_error": false
+      }
+    },
+    {
+      "event": "status",
+      "data": {
+        "stage": "checking",
+        "message": "Running list_directory\u2026"
+      }
+    },
+    {
+      "event": "tool_result",
+      "data": {
+        "tool_use_id": "call_2",
+        "content": "RESULT[list_directory:{\"path\": \"/tmp\"}]",
+        "is_error": false
+      }
+    },
+    {
+      "event": "status",
+      "data": {
+        "stage": "streaming",
+        "message": "Streaming from Ollama (gemma4:26b)\u2026"
+      }
+    },
+    {
+      "event": "delta",
+      "data": {
+        "text": "done"
+      }
+    },
+    {
+      "event": "metrics",
+      "data": {
+        "input_tokens": 0,
+        "output_tokens": 3,
+        "elapsed_ms": 0,
+        "ttft_ms": 0,
+        "preprocess_ms": 0,
+        "tps": 0,
+        "summarised": 0,
+        "spilled": 0,
+        "skipped": 0,
+        "failed": 0
+      }
+    },
+    {
+      "event": "history",
+      "data": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "read stuff"
+          },
+          {
+            "role": "assistant",
+            "content": "checking",
+            "tool_calls": [
+              {
+                "index": 0,
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                  "name": "read_file",
+                  "arguments": "{\"path\": \"a.txt\"}"
+                }
+              },
+              {
+                "index": 1,
+                "id": "call_2",
+                "type": "function",
+                "function": {
+                  "name": "list_directory",
+                  "arguments": "{\"path\": \"/tmp\"}"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "tool_call_id": "call_1",
+            "content": "RESULT[read_file:{\"path\": \"a.txt\"}]"
+          },
+          {
+            "role": "tool",
+            "tool_call_id": "call_2",
+            "content": "RESULT[list_directory:{\"path\": \"/tmp\"}]"
+          }
+        ]
+      }
+    },
+    {
+      "event": "done",
+      "data": {}
+    }
+  ],
+  "routing": [
+    {
+      "mode": "local",
+      "model": "gemma4:26b",
+      "output_tokens": 3,
+      "ttft_ms": 0,
+      "elapsed_ms": 0
+    }
+  ]
+}

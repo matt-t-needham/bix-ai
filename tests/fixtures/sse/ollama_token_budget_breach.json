@@ -1,0 +1,33 @@
+{
+  "events": [
+    {
+      "event": "status",
+      "data": {
+        "stage": "streaming",
+        "message": "Streaming from Ollama (gemma4:26b)\u2026"
+      }
+    },
+    {
+      "event": "metrics",
+      "data": {
+        "input_tokens": 0,
+        "output_tokens": 325,
+        "elapsed_ms": 0,
+        "ttft_ms": 0,
+        "preprocess_ms": 0,
+        "tps": 0,
+        "summarised": 0,
+        "spilled": 0,
+        "skipped": 0,
+        "failed": 0
+      }
+    },
+    {
+      "event": "error",
+      "data": {
+        "message": "Loop budget exceeded (token or wall-clock limit) \u2014 stopping."
+      }
+    }
+  ],
+  "routing": []
+}

@@ -1,0 +1,18 @@
+{
+  "events": [
+    {
+      "event": "status",
+      "data": {
+        "stage": "streaming",
+        "message": "Streaming from Ollama (gemma4:26b)\u2026"
+      }
+    },
+    {
+      "event": "error",
+      "data": {
+        "message": "Ollama: model not found"
+      }
+    }
+  ],
+  "routing": []
+}

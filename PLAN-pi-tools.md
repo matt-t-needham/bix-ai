@@ -253,7 +253,18 @@ the old tests).
 verbatim error + pointer, and Claude can `grep_blob` the rest — demonstrated end-to-end
 on the machine.
 
-## Phase 4 — provider seam consolidation (refactor, after value has shipped)
+## Phase 4 — provider seam consolidation (refactor, after value has shipped) — ✅ SHIPPED (2026-07-02)
+
+*Implementation notes:* delta shipped as written — `streaming/loop.py` (one governed
+loop), `streaming/providers.py` (Anthropic/Ollama adapters yielding normalised
+events), tools defined once in `tools.py:TOOL_TABLE` with all three formats
+generated (forge via pydantic `create_model`, still lazy). 10 golden SSE-sequence
+fixtures (`tests/fixtures/sse/`) recorded pre-refactor replay identically post-
+refactor; routing records pinned too. One honest deviation: total line count of
+`streaming/` + `tools.py` is roughly flat (-394 in rewritten files, +428 in the two
+new seam modules) — the duplication became interface, it didn't vanish. Adapters
+inject `execute_tool`/`clock`/budgets resolved from their module globals at call
+time so every pre-existing test patch target still works unchanged.
 
 **Current:** `streaming/claude.py` and `streaming/ollama.py` are structurally parallel
 ~200-line loops (stream-parse → accumulate blocks/tool-calls → execute → append →

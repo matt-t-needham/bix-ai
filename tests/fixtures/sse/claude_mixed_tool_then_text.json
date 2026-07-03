@@ -1,0 +1,148 @@
+{
+  "events": [
+    {
+      "event": "status",
+      "data": {
+        "stage": "streaming",
+        "message": "Streaming from Claude\u2026"
+      }
+    },
+    {
+      "event": "input_tokens",
+      "data": {
+        "count": 12
+      }
+    },
+    {
+      "event": "delta",
+      "data": {
+        "text": "Let me check. "
+      }
+    },
+    {
+      "event": "tool_start",
+      "data": {
+        "index": 1,
+        "name": "read_file",
+        "id": "toolu_1"
+      }
+    },
+    {
+      "event": "tool_input",
+      "data": {
+        "index": 1,
+        "partial_json": "{\"path\": "
+      }
+    },
+    {
+      "event": "tool_input",
+      "data": {
+        "index": 1,
+        "partial_json": "\"a.txt\"}"
+      }
+    },
+    {
+      "event": "tool_end",
+      "data": {
+        "index": 1
+      }
+    },
+    {
+      "event": "status",
+      "data": {
+        "stage": "checking",
+        "message": "Running read_file\u2026"
+      }
+    },
+    {
+      "event": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_1",
+        "content": "RESULT[read_file:{\"path\": \"a.txt\"}]",
+        "is_error": false
+      }
+    },
+    {
+      "event": "status",
+      "data": {
+        "stage": "streaming",
+        "message": "Streaming from Claude\u2026"
+      }
+    },
+    {
+      "event": "delta",
+      "data": {
+        "text": "done"
+      }
+    },
+    {
+      "event": "metrics",
+      "data": {
+        "input_tokens": 42,
+        "output_tokens": 2,
+        "elapsed_ms": 0,
+        "ttft_ms": 0,
+        "preprocess_ms": 0,
+        "tps": 0,
+        "summarised": 0,
+        "spilled": 0,
+        "skipped": 0,
+        "failed": 0
+      }
+    },
+    {
+      "event": "history",
+      "data": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "read a.txt"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "Let me check. "
+              },
+              {
+                "type": "tool_use",
+                "id": "toolu_1",
+                "name": "read_file",
+                "input": {
+                  "path": "a.txt"
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "toolu_1",
+                "content": "RESULT[read_file:{\"path\": \"a.txt\"}]"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "event": "done",
+      "data": {}
+    }
+  ],
+  "routing": [
+    {
+      "mode": "api",
+      "model": "claude-sonnet-4-6",
+      "summarised": 0,
+      "preprocess_ms": 0,
+      "input_tokens": 42,
+      "output_tokens": 2,
+      "ttft_ms": 0,
+      "elapsed_ms": 0
+    }
+  ]
+}

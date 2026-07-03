@@ -1,0 +1,18 @@
+{
+  "events": [
+    {
+      "event": "status",
+      "data": {
+        "stage": "streaming",
+        "message": "Streaming from Claude\u2026"
+      }
+    },
+    {
+      "event": "error",
+      "data": {
+        "message": "connection refused"
+      }
+    }
+  ],
+  "routing": []
+}

@@ -1,0 +1,65 @@
+{
+  "events": [
+    {
+      "event": "status",
+      "data": {
+        "stage": "streaming",
+        "message": "Streaming from Claude\u2026"
+      }
+    },
+    {
+      "event": "input_tokens",
+      "data": {
+        "count": 10
+      }
+    },
+    {
+      "event": "delta",
+      "data": {
+        "text": "hello there"
+      }
+    },
+    {
+      "event": "metrics",
+      "data": {
+        "input_tokens": 10,
+        "output_tokens": 4,
+        "elapsed_ms": 0,
+        "ttft_ms": 0,
+        "preprocess_ms": 0,
+        "tps": 0,
+        "summarised": 0,
+        "spilled": 0,
+        "skipped": 0,
+        "failed": 0
+      }
+    },
+    {
+      "event": "history",
+      "data": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ]
+      }
+    },
+    {
+      "event": "done",
+      "data": {}
+    }
+  ],
+  "routing": [
+    {
+      "mode": "api",
+      "model": "claude-sonnet-4-6",
+      "summarised": 0,
+      "preprocess_ms": 0,
+      "input_tokens": 10,
+      "output_tokens": 4,
+      "ttft_ms": 0,
+      "elapsed_ms": 0
+    }
+  ]
+}

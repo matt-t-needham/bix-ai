@@ -1,0 +1,454 @@
+{
+  "events": [
+    {
+      "event": "status",
+      "data": {
+        "stage": "streaming",
+        "message": "Streaming from Claude\u2026"
+      }
+    },
+    {
+      "event": "input_tokens",
+      "data": {
+        "count": 12
+      }
+    },
+    {
+      "event": "tool_start",
+      "data": {
+        "index": 0,
+        "name": "read_file",
+        "id": "toolu_0"
+      }
+    },
+    {
+      "event": "tool_input",
+      "data": {
+        "index": 0,
+        "partial_json": "{\"path\": \"a.txt\"}"
+      }
+    },
+    {
+      "event": "tool_end",
+      "data": {
+        "index": 0
+      }
+    },
+    {
+      "event": "status",
+      "data": {
+        "stage": "checking",
+        "message": "Running read_file\u2026"
+      }
+    },
+    {
+      "event": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_0",
+        "content": "RESULT[read_file:{\"path\": \"a.txt\"}]",
+        "is_error": false
+      }
+    },
+    {
+      "event": "status",
+      "data": {
+        "stage": "streaming",
+        "message": "Streaming from Claude\u2026"
+      }
+    },
+    {
+      "event": "tool_start",
+      "data": {
+        "index": 0,
+        "name": "read_file",
+        "id": "toolu_1"
+      }
+    },
+    {
+      "event": "tool_input",
+      "data": {
+        "index": 0,
+        "partial_json": "{\"path\": \"a.txt\"}"
+      }
+    },
+    {
+      "event": "tool_end",
+      "data": {
+        "index": 0
+      }
+    },
+    {
+      "event": "status",
+      "data": {
+        "stage": "checking",
+        "message": "Running read_file\u2026"
+      }
+    },
+    {
+      "event": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_1",
+        "content": "RESULT[read_file:{\"path\": \"a.txt\"}]",
+        "is_error": false
+      }
+    },
+    {
+      "event": "status",
+      "data": {
+        "stage": "streaming",
+        "message": "Streaming from Claude\u2026"
+      }
+    },
+    {
+      "event": "tool_start",
+      "data": {
+        "index": 0,
+        "name": "read_file",
+        "id": "toolu_2"
+      }
+    },
+    {
+      "event": "tool_input",
+      "data": {
+        "index": 0,
+        "partial_json": "{\"path\": \"a.txt\"}"
+      }
+    },
+    {
+      "event": "tool_end",
+      "data": {
+        "index": 0
+      }
+    },
+    {
+      "event": "status",
+      "data": {
+        "stage": "checking",
+        "message": "Running read_file\u2026"
+      }
+    },
+    {
+      "event": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_2",
+        "content": "RESULT[read_file:{\"path\": \"a.txt\"}]",
+        "is_error": false
+      }
+    },
+    {
+      "event": "status",
+      "data": {
+        "stage": "streaming",
+        "message": "Streaming from Claude\u2026"
+      }
+    },
+    {
+      "event": "tool_start",
+      "data": {
+        "index": 0,
+        "name": "read_file",
+        "id": "toolu_3"
+      }
+    },
+    {
+      "event": "tool_input",
+      "data": {
+        "index": 0,
+        "partial_json": "{\"path\": \"a.txt\"}"
+      }
+    },
+    {
+      "event": "tool_end",
+      "data": {
+        "index": 0
+      }
+    },
+    {
+      "event": "status",
+      "data": {
+        "stage": "checking",
+        "message": "Running read_file\u2026"
+      }
+    },
+    {
+      "event": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_3",
+        "content": "RESULT[read_file:{\"path\": \"a.txt\"}]",
+        "is_error": false
+      }
+    },
+    {
+      "event": "status",
+      "data": {
+        "stage": "streaming",
+        "message": "Streaming from Claude\u2026"
+      }
+    },
+    {
+      "event": "tool_start",
+      "data": {
+        "index": 0,
+        "name": "read_file",
+        "id": "toolu_4"
+      }
+    },
+    {
+      "event": "tool_input",
+      "data": {
+        "index": 0,
+        "partial_json": "{\"path\": \"a.txt\"}"
+      }
+    },
+    {
+      "event": "tool_end",
+      "data": {
+        "index": 0
+      }
+    },
+    {
+      "event": "status",
+      "data": {
+        "stage": "checking",
+        "message": "Running read_file\u2026"
+      }
+    },
+    {
+      "event": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_4",
+        "content": "RESULT[read_file:{\"path\": \"a.txt\"}]",
+        "is_error": false
+      }
+    },
+    {
+      "event": "status",
+      "data": {
+        "stage": "streaming",
+        "message": "Streaming from Claude\u2026"
+      }
+    },
+    {
+      "event": "tool_start",
+      "data": {
+        "index": 0,
+        "name": "read_file",
+        "id": "toolu_5"
+      }
+    },
+    {
+      "event": "tool_input",
+      "data": {
+        "index": 0,
+        "partial_json": "{\"path\": \"a.txt\"}"
+      }
+    },
+    {
+      "event": "tool_end",
+      "data": {
+        "index": 0
+      }
+    },
+    {
+      "event": "status",
+      "data": {
+        "stage": "checking",
+        "message": "Running read_file\u2026"
+      }
+    },
+    {
+      "event": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_5",
+        "content": "RESULT[read_file:{\"path\": \"a.txt\"}]",
+        "is_error": false
+      }
+    },
+    {
+      "event": "status",
+      "data": {
+        "stage": "streaming",
+        "message": "Streaming from Claude\u2026"
+      }
+    },
+    {
+      "event": "tool_start",
+      "data": {
+        "index": 0,
+        "name": "read_file",
+        "id": "toolu_6"
+      }
+    },
+    {
+      "event": "tool_input",
+      "data": {
+        "index": 0,
+        "partial_json": "{\"path\": \"a.txt\"}"
+      }
+    },
+    {
+      "event": "tool_end",
+      "data": {
+        "index": 0
+      }
+    },
+    {
+      "event": "status",
+      "data": {
+        "stage": "checking",
+        "message": "Running read_file\u2026"
+      }
+    },
+    {
+      "event": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_6",
+        "content": "RESULT[read_file:{\"path\": \"a.txt\"}]",
+        "is_error": false
+      }
+    },
+    {
+      "event": "status",
+      "data": {
+        "stage": "streaming",
+        "message": "Streaming from Claude\u2026"
+      }
+    },
+    {
+      "event": "tool_start",
+      "data": {
+        "index": 0,
+        "name": "read_file",
+        "id": "toolu_7"
+      }
+    },
+    {
+      "event": "tool_input",
+      "data": {
+        "index": 0,
+        "partial_json": "{\"path\": \"a.txt\"}"
+      }
+    },
+    {
+      "event": "tool_end",
+      "data": {
+        "index": 0
+      }
+    },
+    {
+      "event": "status",
+      "data": {
+        "stage": "checking",
+        "message": "Running read_file\u2026"
+      }
+    },
+    {
+      "event": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_7",
+        "content": "RESULT[read_file:{\"path\": \"a.txt\"}]",
+        "is_error": false
+      }
+    },
+    {
+      "event": "status",
+      "data": {
+        "stage": "streaming",
+        "message": "Streaming from Claude\u2026"
+      }
+    },
+    {
+      "event": "tool_start",
+      "data": {
+        "index": 0,
+        "name": "read_file",
+        "id": "toolu_8"
+      }
+    },
+    {
+      "event": "tool_input",
+      "data": {
+        "index": 0,
+        "partial_json": "{\"path\": \"a.txt\"}"
+      }
+    },
+    {
+      "event": "tool_end",
+      "data": {
+        "index": 0
+      }
+    },
+    {
+      "event": "status",
+      "data": {
+        "stage": "checking",
+        "message": "Running read_file\u2026"
+      }
+    },
+    {
+      "event": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_8",
+        "content": "RESULT[read_file:{\"path\": \"a.txt\"}]",
+        "is_error": false
+      }
+    },
+    {
+      "event": "status",
+      "data": {
+        "stage": "streaming",
+        "message": "Streaming from Claude\u2026"
+      }
+    },
+    {
+      "event": "tool_start",
+      "data": {
+        "index": 0,
+        "name": "read_file",
+        "id": "toolu_9"
+      }
+    },
+    {
+      "event": "tool_input",
+      "data": {
+        "index": 0,
+        "partial_json": "{\"path\": \"a.txt\"}"
+      }
+    },
+    {
+      "event": "tool_end",
+      "data": {
+        "index": 0
+      }
+    },
+    {
+      "event": "status",
+      "data": {
+        "stage": "checking",
+        "message": "Running read_file\u2026"
+      }
+    },
+    {
+      "event": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_9",
+        "content": "RESULT[read_file:{\"path\": \"a.txt\"}]",
+        "is_error": false
+      }
+    },
+    {
+      "event": "status",
+      "data": {
+        "stage": "streaming",
+        "message": "Streaming from Claude\u2026"
+      }
+    },
+    {
+      "event": "error",
+      "data": {
+        "message": "Maximum tool call depth reached"
+      }
+    }
+  ],
+  "routing": []
+}

@@ -1,0 +1,56 @@
+{
+  "events": [
+    {
+      "event": "status",
+      "data": {
+        "stage": "streaming",
+        "message": "Streaming from Ollama (gemma4:26b)\u2026"
+      }
+    },
+    {
+      "event": "delta",
+      "data": {
+        "text": "hi from local"
+      }
+    },
+    {
+      "event": "metrics",
+      "data": {
+        "input_tokens": 0,
+        "output_tokens": 3,
+        "elapsed_ms": 0,
+        "ttft_ms": 0,
+        "preprocess_ms": 0,
+        "tps": 0,
+        "summarised": 0,
+        "spilled": 0,
+        "skipped": 0,
+        "failed": 0
+      }
+    },
+    {
+      "event": "history",
+      "data": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ]
+      }
+    },
+    {
+      "event": "done",
+      "data": {}
+    }
+  ],
+  "routing": [
+    {
+      "mode": "local",
+      "model": "gemma4:26b",
+      "output_tokens": 3,
+      "ttft_ms": 0,
+      "elapsed_ms": 0
+    }
+  ]
+}
