@@ -18,6 +18,7 @@ This is not a 3-file project. Module map:
 | `tools.py` | Tool dispatcher (`_execute_tool`) plus three parallel tool-definition tables: `FS_TOOLS` (Anthropic shape), `OLLAMA_TOOLS` (OpenAI fn shape), `FORGE_TOOLS` (forge `ToolDef`) — deliberate duplication, not yet consolidated |
 | `fs_core.py` | Path security — `is_denied_path` (secrets), `is_write_denied_path` (scripts/CI/bix-ai's own source) |
 | `staging.py` | Gated writes: propose → human review → apply. Re-validates every guard at approve time. Review routes live in `main.py` under `/staging…` |
+| `blobstore.py` | Content-addressed store for oversized artifacts spilled out of context (`put`/`get`/`grep`/`stat`, sha256-keyed, write-once, dedup). LRU eviction over `config.BLOB_STORE_MAX_BYTES`, pin/unpin protects blobs referenced by the in-flight request. Backs the `read_blob`/`grep_blob` tools. Nothing spills to it automatically yet — that's Phase 3 (`strategy.py` rework); Phase 2 only built the store + tools |
 | `memory.py` | Memory persistence (`/memory` routes, `recall_memories` tool); conversations under `DATA_DIR/convos` |
 | `bix_mcp.py` | MCP server exposed to the `claude` CLI subprocess for mode="pro" |
 | `steam.py`, `logtools.py`, `todos.py` | Backing implementations for the `list_steam_games`, `list_log_sources`/`read_log`, and `read_todos` tools |

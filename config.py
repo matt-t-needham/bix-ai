@@ -49,6 +49,11 @@ AUTO_LOG          = Path("logs") / "auto.ndjson"
 MEM_DIR     = DATA_DIR / "memories"
 CONV_DIR    = DATA_DIR / "convos"
 STAGING_DIR = DATA_DIR / "staging"
+# Size cap for the content-addressed blob store (blobstore.py). Generous default —
+# blobs are spilled artifacts (pasted logs/source/etc.), not primary storage.
+# Not derived into a BLOB_DIR constant here — blobstore.py reads config.DATA_DIR
+# at call time (mirrors FS_ROOT/STAGING_DIR) so tests can monkeypatch it.
+BLOB_STORE_MAX_BYTES = int(os.environ.get("BLOB_STORE_MAX_BYTES", str(500_000_000)))
 
 # Log-review roots (read-only). Internal logs sit under the bix-infra mount;
 # Steam's logs dir is mounted read-only into the container separately.

@@ -1,8 +1,10 @@
 import asyncio
 import json
 import logging
+import re
 from pathlib import Path
 
+import blobstore
 import logtools
 import staging
 import steam
@@ -13,6 +15,9 @@ from helpers import ollama_chat
 from memory import _load_all_memories
 
 log = logging.getLogger("router")
+
+_BLOB_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+_BLOB_INLINE_MAX_BYTES = 200_000  # mirrors fs_core.read_file's cap
 
 
 def _safe_path(path: str) -> Path | None:
@@ -161,6 +166,45 @@ async def _execute_tool(name: str, tool_input: dict) -> str:
             summary = m.get("summary", "")
             results.append(f"[{date}] {title}\n{summary}" if summary else f"[{date}] {title}")
         return "\n\n".join(results)
+
+    elif name == "read_blob":
+        h = (tool_input.get("hash") or "").strip()
+        if not _BLOB_HASH_RE.match(h):
+            return "Invalid or missing hash — pass the 64-char hex hash from a blob pointer."
+        text = await asyncio.to_thread(blobstore.get, h)
+        if text is None:
+            return f"No blob found for hash {h}"
+        lines = text.splitlines()
+        start_raw = tool_input.get("start_line")
+        end_raw   = tool_input.get("end_line")
+        if start_raw is None and end_raw is None:
+            if len(text.encode("utf-8", errors="replace")) > _BLOB_INLINE_MAX_BYTES:
+                return (
+                    f"Blob has {len(lines)} lines / {len(text):,} chars — too large to "
+                    "return whole. Pass start_line/end_line, or use grep_blob to search it."
+                )
+            return text
+        try:
+            start = max(1, int(start_raw) if start_raw is not None else 1)
+            end   = min(len(lines), int(end_raw) if end_raw is not None else len(lines))
+        except (TypeError, ValueError):
+            return "start_line/end_line must be integers."
+        if start > end:
+            return f"start_line ({start}) is after end_line ({end})."
+        return "\n".join(f"{i:>6}: {lines[i - 1]}" for i in range(start, end + 1))
+
+    elif name == "grep_blob":
+        h = (tool_input.get("hash") or "").strip()
+        if not _BLOB_HASH_RE.match(h):
+            return "Invalid or missing hash — pass the 64-char hex hash from a blob pointer."
+        pattern = tool_input.get("pattern", "")
+        if not pattern:
+            return "No pattern provided."
+        try:
+            context_lines = int(tool_input.get("context_lines", 2))
+        except (TypeError, ValueError):
+            context_lines = 2
+        return await asyncio.to_thread(blobstore.grep, h, pattern, context_lines)
 
     return f"Unknown tool: {name}"
 
@@ -328,6 +372,62 @@ FS_TOOLS = [
             "required": ["query"],
         },
     },
+    {
+        "name": "read_blob",
+        "description": (
+            "Read back an oversized artifact (pasted log, source file, JSON, etc.) that "
+            "was spilled out of the conversation and replaced with a pointer — you'll see "
+            "these as '[router-blob v2 <hash>]' markers with a short excerpt. Pass that "
+            "hash here to read more of the original, verbatim. Omit start_line/end_line to "
+            "get the whole thing (refused if too large — page through it or use grep_blob "
+            "instead). Line numbers are 1-indexed and inclusive."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "hash": {
+                    "type": "string",
+                    "description": "The 64-char hex hash from a '[router-blob v2 <hash>]' pointer.",
+                },
+                "start_line": {
+                    "type": "integer",
+                    "description": "First line to return (1-indexed). Omit for the start of the file.",
+                },
+                "end_line": {
+                    "type": "integer",
+                    "description": "Last line to return (inclusive). Omit for the end of the file.",
+                },
+            },
+            "required": ["hash"],
+        },
+    },
+    {
+        "name": "grep_blob",
+        "description": (
+            "Search a spilled artifact for a regex pattern, returning matching lines with "
+            "surrounding context — the fastest way to find something specific (an error, a "
+            "function name, a key) in a large blob without reading it whole. Use the hash "
+            "from a '[router-blob v2 <hash>]' pointer."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "hash": {
+                    "type": "string",
+                    "description": "The 64-char hex hash from a '[router-blob v2 <hash>]' pointer.",
+                },
+                "pattern": {
+                    "type": "string",
+                    "description": "Regex pattern to search for (Python re syntax).",
+                },
+                "context_lines": {
+                    "type": "integer",
+                    "description": "Lines of context to include around each match (default 2).",
+                },
+            },
+            "required": ["hash", "pattern"],
+        },
+    },
 ]
 
 OLLAMA_TOOLS = [
@@ -383,6 +483,16 @@ try:
         lines: int = Field(default=200, description="Trailing lines to return (default 200, max 2000).")
         contains: str | None = Field(default=None, description="Optional case-insensitive substring filter.")
 
+    class _ReadBlobParams(BaseModel):
+        hash: str = Field(description="The 64-char hex hash from a '[router-blob v2 <hash>]' pointer.")
+        start_line: int | None = Field(default=None, description="First line to return (1-indexed). Omit for the start.")
+        end_line: int | None = Field(default=None, description="Last line to return (inclusive). Omit for the end.")
+
+    class _GrepBlobParams(BaseModel):
+        hash: str = Field(description="The 64-char hex hash from a '[router-blob v2 <hash>]' pointer.")
+        pattern: str = Field(description="Regex pattern to search for (Python re syntax).")
+        context_lines: int = Field(default=2, description="Lines of context to include around each match.")
+
     async def _forge_list_directory(path: str) -> str:
         return await _execute_tool("list_directory", {"path": path})
 
@@ -408,6 +518,12 @@ try:
 
     async def _forge_read_log(path: str, lines: int = 200, contains: str | None = None) -> str:
         return await _execute_tool("read_log", {"path": path, "lines": lines, "contains": contains})
+
+    async def _forge_read_blob(hash: str, start_line: int | None = None, end_line: int | None = None) -> str:
+        return await _execute_tool("read_blob", {"hash": hash, "start_line": start_line, "end_line": end_line})
+
+    async def _forge_grep_blob(hash: str, pattern: str, context_lines: int = 2) -> str:
+        return await _execute_tool("grep_blob", {"hash": hash, "pattern": pattern, "context_lines": context_lines})
 
     FORGE_TOOLS: dict = {
         "list_directory": ToolDef(
@@ -501,6 +617,30 @@ try:
                 parameters=_ReadLogParams,
             ),
             callable=_forge_read_log,
+        ),
+        "read_blob": ToolDef(
+            spec=ToolSpec(
+                name="read_blob",
+                description=(
+                    "Read back an oversized artifact spilled out of the conversation and "
+                    "replaced with a '[router-blob v2 <hash>]' pointer. Pass that hash to "
+                    "read more, verbatim. Omit start_line/end_line for the whole thing "
+                    "(refused if too large — page through it or use grep_blob instead)."
+                ),
+                parameters=_ReadBlobParams,
+            ),
+            callable=_forge_read_blob,
+        ),
+        "grep_blob": ToolDef(
+            spec=ToolSpec(
+                name="grep_blob",
+                description=(
+                    "Search a spilled artifact (by its '[router-blob v2 <hash>]' pointer "
+                    "hash) for a regex pattern, returning matching lines with context."
+                ),
+                parameters=_GrepBlobParams,
+            ),
+            callable=_forge_grep_blob,
         ),
     }
 except ImportError:
