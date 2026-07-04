@@ -118,8 +118,6 @@ class _FakeTime:
 def _patches(fake_client, fake_execute_tool=None, fake_time=None):
     patches = [
         patch.object(claude_mod.httpx, "AsyncClient", lambda **kw: fake_client),
-        patch.object(claude_mod, "_load_recent_memories", lambda n: []),
-        patch.object(claude_mod, "_memory_system_prompt", lambda recent: None),
     ]
     if fake_execute_tool is not None:
         patches.append(patch.object(claude_mod, "_execute_tool", fake_execute_tool))

@@ -11,7 +11,7 @@
       "event": "metrics",
       "data": {
         "input_tokens": 0,
-        "output_tokens": 482,
+        "output_tokens": 661,
         "elapsed_ms": 0,
         "ttft_ms": 0,
         "preprocess_ms": 0,

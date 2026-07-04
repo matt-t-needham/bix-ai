@@ -9,7 +9,6 @@ import strategy
 
 from helpers import _write_routing_event, ollama_chat, sse
 from identity import identity_system_prompt
-from memory import _load_recent_memories, _memory_system_prompt
 
 log = logging.getLogger("router")
 
@@ -237,16 +236,10 @@ async def _stream_pro(
     messages: list, model: str, max_tokens: int,
     mode: str = "pro", session_id: str = "",
 ):
-    recent     = _load_recent_memories(3)
-    sys_prompt = _memory_system_prompt(recent)
-    log.info("pro memory loaded count=%d injected=%s", len(recent), bool(sys_prompt))
-
     stats         = {"summarised": 0, "skipped": 0, "failed": 0, "spilled": 0}
     preprocess_ms = 0
 
     req_body = {"model": model, "max_tokens": max_tokens, "messages": messages}
-    if sys_prompt:
-        req_body["system"] = sys_prompt
 
     if strategy.has_oversized_blocks(req_body):
         yield sse("status", {"stage": "summarising", "message": "Preparing context…"})
@@ -271,11 +264,7 @@ async def _stream_pro(
     })
     yield sse("status", {"stage": "streaming", "message": "Streaming via Claude Pro…"})
 
-    sys_parts = [_PRO_IDENTITY_PROMPT]
-    if req_body.get("system"):
-        sys_parts.append(req_body["system"])
-    sys_parts.append(_TODO_SYSTEM)
-    system_prompt = "\n\n".join(sys_parts)
+    system_prompt = "\n\n".join([_PRO_IDENTITY_PROMPT, _TODO_SYSTEM])
 
     # Resuming a CLI session: the session already holds the full history
     # (including tool turns the text-only prompt replay would lose), so only

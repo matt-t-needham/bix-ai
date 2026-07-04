@@ -136,24 +136,6 @@ def _extract_tags(text: str) -> list[str]:
     return [w for w, _ in sorted(freq.items(), key=lambda x: -x[1])[:5]]
 
 
-def _memory_system_prompt(memories: list[dict]) -> str | None:
-    if not memories:
-        return None
-    lines = []
-    for m in memories:
-        date    = m.get("date", "")[:10]
-        summary = m.get("summary") or m.get("title", "")
-        if summary:
-            lines.append(f"[{date}] {summary}")
-    if not lines:
-        return None
-    return (
-        "# Past session context\n"
-        + "\n".join(lines)
-        + "\n\nUse the recall_memories tool when asked about earlier conversations."
-    )
-
-
 # ── Summarization ─────────────────────────────────────────────────────────────
 
 async def _summarize(user_msg: str, assistant_msg: str, local_model: str) -> tuple[str, str]:

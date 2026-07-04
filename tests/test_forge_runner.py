@@ -6,7 +6,7 @@ respond-tool deltas (`_respond_text_sent`), so a reply streamed via plain
 TEXT_DELTA chunks was re-emitted in full at the end — the "answer repeats
 itself" quirk. These tests pin the corrected behaviour.
 """
-from streaming.forge_runner import _unstreamed_tail
+from streaming.forge_runner import _NudgeAttemptCounter, _sampling_for, _unstreamed_tail
 
 
 def test_reply_streamed_as_text_deltas_is_not_repeated():
@@ -36,3 +36,28 @@ def test_result_embedded_in_longer_streamed_text_is_skipped():
     # the result is the respond message alone.
     streamed = "Let me check that for you. The answer is 42."
     assert _unstreamed_tail("The answer is 42.", 0, streamed) == ""
+
+
+def test_sampling_for_gemma4_returns_recommended_profile():
+    assert _sampling_for("gemma4:26b") == {
+        "temperature": 1.0, "top_p": 0.95, "top_k": 64,
+    }
+
+
+def test_sampling_for_non_gemma_model_returns_empty():
+    assert _sampling_for("qwen3.5:9b") == {}
+
+
+def test_nudge_counter_increments_on_each_nudge():
+    c = _NudgeAttemptCounter()
+    assert c.on_nudge() == 1
+    assert c.on_nudge() == 2
+    assert c.on_nudge() == 3
+
+
+def test_nudge_counter_resets_on_tool_call():
+    c = _NudgeAttemptCounter()
+    c.on_nudge()
+    c.on_nudge()
+    c.on_tool_call()
+    assert c.on_nudge() == 1

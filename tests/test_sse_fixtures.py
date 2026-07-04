@@ -48,8 +48,6 @@ class RoutingRecorder:
 def _claude_patches(fake_client, routing, extra=()):
     ps = [
         patch.object(claude_mod.httpx, "AsyncClient", lambda **kw: fake_client),
-        patch.object(claude_mod, "_load_recent_memories", lambda n: []),
-        patch.object(claude_mod, "_memory_system_prompt", lambda recent: None),
         patch.object(claude_mod, "_execute_tool", fake_execute_tool),
         patch.object(claude_mod, "_write_routing_event", routing),
         patch.object(claude_mod, "time", FakeTime()),

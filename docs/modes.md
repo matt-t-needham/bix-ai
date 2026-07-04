@@ -5,10 +5,9 @@ by mode. If asked why a capability is missing, answer from the real
 difference below rather than guessing.
 
 - **local** — a local Ollama model, talking to bix-ai's tool loop directly.
-  Gets the full tool set. Does not currently get auto-injected past-session
-  memory context (only `recall_memories` on request).
+  Gets the full tool set.
 - **api** — Claude, talking to bix-ai's tool loop directly. Gets the full
-  tool set plus auto-injected memory context.
+  tool set.
 - **auto** — a local Ollama model wrapped by a stricter runner (forge) that
   forces a terminal `respond` step and adds retry/nudge handling, escalating
   to Claude only if the run raises an error (not merely a low-quality

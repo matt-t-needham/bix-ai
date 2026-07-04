@@ -12,7 +12,6 @@ import strategy
 from config import ANTHROPIC_API_KEY, LOOP_MAX_SECONDS, LOOP_MAX_TOKENS
 from helpers import _agg, _write_routing_event, ollama_chat, sse
 from identity import identity_system_prompt
-from memory import _load_recent_memories, _memory_system_prompt
 from streaming.loop import run_tool_loop
 from streaming.providers import AnthropicProvider
 from tools import FS_TOOLS, _execute_tool
@@ -34,10 +33,7 @@ async def _stream_claude(
 ):
     _agg["requests"] += 1
     req_body   = {"model": model, "max_tokens": max_tokens, "messages": messages}
-    recent      = _load_recent_memories(3)
-    mem_prompt  = _memory_system_prompt(recent)
-    req_body["system"] = "\n\n".join(p for p in [_IDENTITY_PROMPT, mem_prompt] if p)
-    log.info("memory loaded count=%d injected=%s", len(recent), bool(mem_prompt))
+    req_body["system"] = _IDENTITY_PROMPT
     stats         = {"summarised": 0, "skipped": 0, "failed": 0, "spilled": 0}
     compact_stats = {"compacted": 0, "folded": 0, "failed": 0}
     preprocess_ms = 0

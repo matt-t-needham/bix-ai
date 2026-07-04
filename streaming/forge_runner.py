@@ -34,7 +34,6 @@ from forge import (
 from config import AUTO_LOG, OLLAMA_HOST
 from helpers import _write_routing_event, sse
 from identity import identity_system_prompt
-from memory import _load_recent_memories, _memory_system_prompt
 from tools import FORGE_TOOLS
 
 log = logging.getLogger("router")
@@ -43,13 +42,18 @@ _AUTO_LOG_MAX = 5_000_000  # 5 MB; rotate to .1 when exceeded
 
 # Forge-specific mechanics only — tool capability text comes from identity.py.
 _FORGE_MECHANICS = (
-    "You must finish every turn by calling respond(message='...') with your "
-    "final answer — this is the only way your reply reaches the user. Use "
-    "other tools first if needed, then respond.\n\n"
-    "Prefer the dedicated tool over browsing directories. Match the request:\n"
+    "respond(message='...') is how your reply reaches the user — every turn "
+    "must end by calling it, even when you used no other tool at all.\n\n"
+    "First, decide: does answering this actually require checking something on "
+    "this machine? If not — general knowledge, math, casual conversation, "
+    "questions about yourself — call respond(message='...') immediately with "
+    "your answer. Do not call list_directory or read_file 'just in case' first.\n\n"
+    "Only when the answer genuinely depends on this machine's files, logs, "
+    "memory, or Steam library, use the dedicated tool for it, then respond:\n"
     "- service or Steam logs, errors, crashes → list_log_sources() then read_log(path)\n"
     "- earlier conversations / 'do you remember' → recall_memories(query)\n"
-    "Only fall back to list_directory / read_file when no dedicated tool fits."
+    "Only fall back to list_directory / read_file when no dedicated tool fits, "
+    "and only for requests that actually require it."
 )
 
 FORGE_SYSTEM = identity_system_prompt(
@@ -89,6 +93,39 @@ def _unstreamed_tail(result_text: str, respond_sent: int, streamed_text: str) ->
     if remaining and remaining in streamed_text:
         return ""
     return remaining
+
+
+class _NudgeAttemptCounter:
+    """Tracks consecutive nudge attempts within one runner.run() call.
+
+    forge's ErrorTracker.consecutive_retries isn't exposed to on_message —
+    this mirrors it locally so _write_auto_log can record how many nudges
+    fired in a row before a valid tool call landed (or the run gave up).
+    """
+    def __init__(self) -> None:
+        self.count = 0
+
+    def on_tool_call(self) -> None:
+        self.count = 0
+
+    def on_nudge(self) -> int:
+        self.count += 1
+        return self.count
+
+
+# Gemma 4's recommended sampling profile (HF model card). forge's own table
+# only keys this under HF-card-style strings (e.g. "gemma4:26b-a4b-it-q4_K_M"),
+# never our bare Ollama tag ("gemma4:26b") — recommended_sampling=True would
+# silently no-op. Hardcoded here so this survives forge renaming/removing
+# that table row later instead of reverting to untuned defaults with no error.
+# Source: https://huggingface.co/google/gemma-4-26b-a4b-it
+_GEMMA4_SAMPLING = {"temperature": 1.0, "top_p": 0.95, "top_k": 64}
+
+
+def _sampling_for(model: str) -> dict:
+    if model.startswith("gemma4"):
+        return _GEMMA4_SAMPLING
+    return {}
 
 
 def _convert_messages(messages: list[dict]) -> list[Message]:
@@ -163,17 +200,27 @@ async def _stream_forge_runner(
     # Everything already emitted as `delta` events (both TEXT_DELTA and respond
     # deltas) — consulted by the end-of-run safety net via _unstreamed_tail.
     _streamed_text     = ""
+    _nudge_attempts    = _NudgeAttemptCounter()
 
     # ── Callbacks ─────────────────────────────────────────────────────────────
 
     async def on_chunk(chunk):
         nonlocal ttft_ms, output_chars, _respond_json_acc, _respond_text_sent, _streamed_text
         if chunk.type == ChunkType.TEXT_DELTA and chunk.content:
+            # This workflow's only valid way to finish a turn is the respond
+            # tool call (terminal_tool="respond") — a plain-text response is
+            # never accepted as-is (ResponseValidator.validate always retries
+            # a bare TextResponse unless rescue_tool_call manages to parse an
+            # actual tool call out of it, which ordinary prose never does).
+            # So every TEXT_DELTA chunk belongs to an attempt forge is about
+            # to discard and retry. Count it for latency/cost accounting
+            # (it's real inference time), but don't stream it to the user —
+            # forwarding it live is what produced the "multiple garbled
+            # partial answers" bug: each discarded attempt's full text was
+            # shown before being silently superseded by the next attempt.
             if ttft_ms is None:
                 ttft_ms = round((time.monotonic() - start) * 1000)
             output_chars += len(chunk.content)
-            _streamed_text += chunk.content
-            await queue.put(sse("delta", {"text": chunk.content}))
         elif chunk.type == ChunkType.TOOL_CALL_DELTA and chunk.content:
             # Stream the respond tool's `message` arg as text. Other tools have
             # `path` / `query` keys — only `respond` uses `message`.
@@ -199,6 +246,7 @@ async def _stream_forge_runner(
 
     def on_message(msg):
         if msg.metadata.type == MessageType.TOOL_CALL and msg.tool_calls:
+            _nudge_attempts.on_tool_call()
             for i, tc in enumerate(msg.tool_calls):
                 if tc.name == "respond":
                     continue  # suppress respond from the SSE tool stream
@@ -224,22 +272,25 @@ async def _stream_forge_runner(
             MessageType.STEP_NUDGE,
             MessageType.PREREQUISITE_NUDGE,
         ):
+            attempt = _nudge_attempts.on_nudge()
             loop.call_soon(
-                lambda r=msg.content: asyncio.create_task(
+                lambda r=msg.content, k=msg.metadata.type.value, n=attempt: asyncio.create_task(
                     _write_auto_log("forge_nudge", forge_reason=r[:200],
-                                    model=ollama_model)
+                                    model=ollama_model, nudge_kind=k,
+                                    attempt_count=n)
                 )
             )
 
     # ── Runner setup ──────────────────────────────────────────────────────────
 
-    recent     = _load_recent_memories(3)
-    sys_prompt = _memory_system_prompt(recent)
-    prior_msgs: list[Message] = []
-    if sys_prompt:
-        prior_msgs.append(Message(MessageRole.SYSTEM, sys_prompt,
-                                  MessageMeta(MessageType.SYSTEM_PROMPT)))
-    prior_msgs.extend(_convert_messages(messages[:-1]))
+    # No ambient "past session context" injection here (unlike claude.py/pro.py)
+    # — this local model treats injected memory as the current task rather than
+    # optional background, regardless of how the block is worded (confirmed
+    # live: a pure math question with no connection to bix-ai still triggered
+    # exploring bix-ai/TODO.txt because a past-session summary said so). Memory
+    # stays available on-demand via the recall_memories tool, which requires an
+    # active decision to use rather than ambient context to anchor on.
+    prior_msgs: list[Message] = _convert_messages(messages[:-1])
 
     user_message = ""
     if messages and messages[-1].get("role") == "user":
@@ -251,13 +302,25 @@ async def _stream_forge_runner(
                 p.get("text", "") for p in content if isinstance(p, dict)
             )
 
-    # NOTE: recommended_sampling=True requires the model to be in Forge's
-    # MODEL_SAMPLING_DEFAULTS table. Ollama tag names (e.g. "gemma4:26b") don't
-    # match the HF-card style keys Forge uses, so we let Ollama's own defaults
-    # apply instead.
+    # WorkflowRunner.run()'s two branches silently diverge: when
+    # initial_messages is None it builds the system prompt and appends
+    # user_message itself; when initial_messages is given (any prior turns
+    # exist), it uses the seed *verbatim* and never injects a system prompt or
+    # user_message on its own (that's on the caller, per its own docstring).
+    # Building the full seed here every time — instead of only passing
+    # prior_msgs and relying on that other branch for turn 1 — means every
+    # turn actually sees the system prompt and the current question, not just
+    # the first one.
+    system_msg = Message(MessageRole.SYSTEM, FORGE_WORKFLOW.build_system_prompt(),
+                         MessageMeta(MessageType.SYSTEM_PROMPT))
+    user_msg   = Message(MessageRole.USER, user_message,
+                         MessageMeta(MessageType.USER_INPUT))
+    seed: list[Message] = [system_msg, *prior_msgs, user_msg]
+
     client = OllamaClient(
         model    = ollama_model,
         base_url = OLLAMA_HOST,
+        **_sampling_for(ollama_model),
     )
     ctx    = ContextManager(strategy=TieredCompact(keep_recent=2),
                             budget_tokens=max_tokens)
@@ -276,8 +339,8 @@ async def _stream_forge_runner(
         global _logged_result_shape
         try:
             result = await runner.run(
-                FORGE_WORKFLOW, user_message,
-                initial_messages=prior_msgs or None,
+                FORGE_WORKFLOW, "",
+                initial_messages=seed,
             )
             if not _logged_result_shape:
                 log.info("forge runner.run() result type=%s",
