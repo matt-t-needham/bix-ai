@@ -155,3 +155,88 @@ def test_approve_read_only_target_stays_pending(env):
     result = staging.approve(rec["id"])
     assert result["ok"] is False
     assert staging.get(rec["id"])["status"] == "pending"
+
+
+# ── Comments ──────────────────────────────────────────────────────────────────
+
+def test_add_comment_and_resolve(env):
+    rec = staging.create(str(env / "c.md"), "alpha beta gamma")
+    rec = staging.add_comment(rec["id"], "beta", "unclear phrasing")
+    assert len(rec["comments"]) == 1
+    c = rec["comments"][0]
+    assert c["quote"] == "beta" and c["text"] == "unclear phrasing"
+    assert c["resolved"] is False and c["resolved_at"] is None
+
+    rec = staging.set_comment_resolved(rec["id"], c["id"], True)
+    assert rec["comments"][0]["resolved"] is True
+    assert rec["comments"][0]["resolved_at"] is not None
+
+    rec = staging.set_comment_resolved(rec["id"], c["id"], False)
+    assert rec["comments"][0]["resolved"] is False
+    assert rec["comments"][0]["resolved_at"] is None
+
+
+def test_add_comment_validation(env):
+    rec = staging.create(str(env / "c.md"), "body")
+    with pytest.raises(ValueError):
+        staging.add_comment(rec["id"], "q", "   ")
+    with pytest.raises(ValueError):
+        staging.add_comment(rec["id"], "q" * 2_001, "text")
+    with pytest.raises(ValueError):
+        staging.add_comment(rec["id"], "q", "t" * 4_001)
+    assert staging.get(rec["id"])["comments"] == []
+
+
+def test_comment_missing_record_or_comment(env):
+    assert staging.add_comment("nope", "q", "t") is None
+    rec = staging.create(str(env / "c.md"), "body")
+    assert staging.set_comment_resolved(rec["id"], "nocomment", True) is None
+
+
+def test_add_comment_on_legacy_record(env):
+    # Records written before the comments feature lack the new keys.
+    rec = staging.create(str(env / "c.md"), "body")
+    for key in ("comments", "revisions", "review_model"):
+        rec.pop(key, None)
+    staging._write_record(rec)
+    rec = staging.add_comment(rec["id"], "", "works anyway")
+    assert len(rec["comments"]) == 1
+
+
+# ── Revisions ─────────────────────────────────────────────────────────────────
+
+def test_update_content_revises_pending(env):
+    target = env / "r.md"
+    rec = staging.create(str(target), "v1")
+    result = staging.update_content(rec["id"], "v2", "claude:test-model")
+    assert result["ok"] is True
+    stored = staging.get(rec["id"])
+    assert stored["content"] == "v2"
+    assert stored["status"] == "pending"
+    assert [rv["content"] for rv in stored["revisions"]] == ["v1"]
+    assert stored["revisions"][0]["by"] == "claude:test-model"
+    assert not target.exists()                       # live file never touched
+
+
+def test_update_content_only_pending(env):
+    rec = staging.create(str(env / "r.md"), "v1")
+    staging.reject(rec["id"])
+    result = staging.update_content(rec["id"], "v2", "x")
+    assert result["ok"] is False
+    assert staging.get(rec["id"])["content"] == "v1"
+
+
+def test_update_content_size_guard(env):
+    rec = staging.create(str(env / "r.md"), "v1")
+    result = staging.update_content(rec["id"], "x" * 200_001, "x")
+    assert result["ok"] is False
+    assert staging.get(rec["id"])["content"] == "v1"
+
+
+def test_update_content_caps_revision_history(env):
+    rec = staging.create(str(env / "r.md"), "v0")
+    for i in range(1, 8):
+        assert staging.update_content(rec["id"], f"v{i}", "x")["ok"] is True
+    revs = staging.get(rec["id"])["revisions"]
+    assert len(revs) == 5                            # capped
+    assert [rv["content"] for rv in revs] == ["v2", "v3", "v4", "v5", "v6"]

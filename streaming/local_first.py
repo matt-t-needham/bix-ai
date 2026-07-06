@@ -4,7 +4,7 @@ import logging
 import routing
 from helpers import ollama_chat, sse
 from streaming.claude import _stream_claude
-from streaming.forge_runner import _stream_forge_runner
+from streaming.ollama import _stream_ollama
 
 log = logging.getLogger("router")
 
@@ -35,9 +35,12 @@ async def _stream_local_first(
     `routing.decide` applies structural rules first (code-gen / multi-step /
     prose / long requests → Claude; small tool digestion / short chat →
     local) and one local classification for the ambiguous remainder, failing
-    open to Claude. Local-routed requests keep the forge-first flow with
-    error escalation to Claude; Claude-routed requests skip the local attempt
-    entirely. Every decision lands in routing.ndjson via the `reason` field.
+    open to Claude. Local-routed requests run through the same
+    `_stream_ollama` pipeline mode=local uses (pre-pass, system prompt, tool
+    loop, guardrail rescue/retry) with `on_exhausted="escalate"` so an
+    unrecoverable local failure fails over to Claude; Claude-routed requests
+    skip the local attempt entirely. Every decision lands in routing.ndjson
+    via the `reason` field.
     """
     decision = await routing.decide(messages, ollama_chat)
     log.info("auto route=%s rule=%s reason=%s claude_model=%s",
@@ -69,18 +72,19 @@ async def _stream_local_first(
     escalate     = False
     error_reason = "local model error"
 
-    async for chunk in _stream_forge_runner(
-        messages, ollama_model, max_tokens, mode=mode,
+    async for chunk in _stream_ollama(
+        messages, ollama_model, mode=mode, tool_offload=False,
         route_reason=f"{decision['rule']}: {decision['reason']}",
+        on_exhausted="escalate",
     ):
         event = _parse_sse_event(chunk)
         if event == "error":
             escalate     = True
             error_reason = _parse_sse_data(chunk).get("message", error_reason)
-            log.info("auto mode: forge errored, escalating has_delta=%s reason=%s",
+            log.info("auto mode: ollama errored, escalating has_delta=%s reason=%s",
                      has_delta, error_reason)
             if has_delta:
-                yield sse("fallback_triggered", {"reason": "forge_error"})
+                yield sse("fallback_triggered", {"reason": "ollama_error"})
             break
         if event == "delta":
             has_delta = True

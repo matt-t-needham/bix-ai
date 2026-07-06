@@ -1,9 +1,8 @@
 """Tool registry (Phase 4 shape): every tool is defined exactly once in
-TOOL_TABLE as {name, description, input_schema, handler}. The three wire
-formats — FS_TOOLS (Anthropic), OLLAMA_TOOLS (OpenAI function shape), and
-FORGE_TOOLS (forge ToolDef, only if forge is importable) — are generated
-from that table. Add a tool by adding one table entry; never hand-write a
-per-provider definition again.
+TOOL_TABLE as {name, description, input_schema, handler}. The two wire
+formats — FS_TOOLS (Anthropic) and OLLAMA_TOOLS (OpenAI function shape) —
+are generated from that table. Add a tool by adding one table entry; never
+hand-write a per-provider definition again.
 """
 import asyncio
 import json
@@ -463,52 +462,3 @@ OLLAMA_TOOLS = [
     }
     for t in TOOL_TABLE
 ]
-
-
-def _build_forge_tools() -> dict:
-    """Generate forge ToolDefs from TOOL_TABLE. Kept lazy: forge is not
-    importable in test environments that haven't pip-installed it — anything
-    importing tools.py must still work without it (mirrors the pre-Phase-4
-    try/except guard)."""
-    try:
-        from pydantic import Field, create_model
-        from forge import ToolDef, ToolSpec
-    except ImportError:
-        return {}  # forge not installed — auto mode will fail loudly on import
-
-    py_types = {"string": str, "integer": int, "boolean": bool, "number": float}
-    out: dict = {}
-    for t in TOOL_TABLE:
-        schema   = t["input_schema"]
-        required = set(schema.get("required", []))
-        fields: dict = {}
-        for fname, spec in schema.get("properties", {}).items():
-            py = py_types.get(spec.get("type"), str)
-            desc = spec.get("description", "")
-            if fname in required:
-                fields[fname] = (py, Field(description=desc))
-            else:
-                # Optional params default to None and are dropped before dispatch
-                # so _execute_tool's own defaults apply (e.g. read_log lines=200).
-                fields[fname] = (py | None, Field(default=None, description=desc))
-        params_model = create_model(
-            f"_{t['name'].title().replace('_', '')}Params", **fields
-        )
-
-        async def _call(_name=t["name"], **kwargs):
-            return await _execute_tool(
-                _name, {k: v for k, v in kwargs.items() if v is not None}
-            )
-
-        out[t["name"]] = ToolDef(
-            spec=ToolSpec(
-                name=t["name"],
-                description=t["description"],
-                parameters=params_model,
-            ),
-            callable=_call,
-        )
-    return out
-
-
-FORGE_TOOLS: dict = _build_forge_tools()

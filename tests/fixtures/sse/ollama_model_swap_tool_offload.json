@@ -56,9 +56,14 @@
       "mode": "local",
       "model": "qwen3.5:9b",
       "reason": "forced:local",
+      "summarised": 0,
+      "preprocess_ms": 0,
       "output_tokens": 3,
       "ttft_ms": 0,
-      "elapsed_ms": 0
+      "elapsed_ms": 0,
+      "guardrail_rescues": 0,
+      "guardrail_retries": 0,
+      "guardrail_exhausted": false
     }
   ]
 }

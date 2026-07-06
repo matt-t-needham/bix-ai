@@ -153,6 +153,7 @@ def _run_ollama(turns, messages, extra_patches=(), client_kwargs=None, **call_kw
     fake_client = FakeClient(turns, **(client_kwargs or {}))
     routing = RoutingRecorder()
     ps = _ollama_patches(fake_client, routing, extra_patches)
+    call_kwargs.setdefault("skip_preprocess", True)
     try:
         chunks = run(collect(ollama_mod._stream_ollama(
             messages, "gemma4:26b", **call_kwargs,

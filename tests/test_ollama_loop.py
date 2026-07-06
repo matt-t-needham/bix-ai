@@ -119,7 +119,11 @@ def _stop(patches):
         p.stop()
 
 
-def test_history_strips_injected_system_message():
+def test_preprocess_runs_by_default_and_emits_event():
+    # Unlike claude.py's tests (all skip_preprocess=True), this confirms the
+    # pre-pass wiring itself fires for mode=local/mode=auto — strategy.py and
+    # compact.py's own logic is covered exhaustively in their own test files;
+    # this only checks the integration point.
     turn0 = _turn_lines([
         {"choices": [{"delta": {"content": "hi"}}]},
         {"choices": [{"delta": {}, "finish_reason": "stop"}]},
@@ -130,6 +134,28 @@ def test_history_strips_injected_system_message():
     patches = _apply([patch.object(ollama_mod.httpx, "AsyncClient", lambda **kw: fake_client)])
     try:
         chunks = run(_collect(ollama_mod._stream_ollama(messages, "gemma4:26b")))
+    finally:
+        _stop(patches)
+
+    events = _events(chunks)
+    assert "preprocess" in events
+    assert events.index("preprocess") < events.index("delta")
+    pre = _data_for(chunks, "preprocess")[0]
+    assert pre == {"summarised": 0, "spilled": 0, "compacted": 0, "skipped": 0,
+                   "failed": 0, "preprocess_ms": pre["preprocess_ms"]}
+
+
+def test_history_strips_injected_system_message():
+    turn0 = _turn_lines([
+        {"choices": [{"delta": {"content": "hi"}}]},
+        {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+    ])
+    fake_client = _FakeClient([turn0])
+    messages = [{"role": "user", "content": "hello"}]
+
+    patches = _apply([patch.object(ollama_mod.httpx, "AsyncClient", lambda **kw: fake_client)])
+    try:
+        chunks = run(_collect(ollama_mod._stream_ollama(messages, "gemma4:26b", skip_preprocess=True)))
     finally:
         _stop(patches)
 
@@ -152,7 +178,7 @@ def test_history_keeps_preexisting_non_injected_system_message():
 
     patches = _apply([patch.object(ollama_mod.httpx, "AsyncClient", lambda **kw: fake_client)])
     try:
-        chunks = run(_collect(ollama_mod._stream_ollama(messages, "gemma4:26b")))
+        chunks = run(_collect(ollama_mod._stream_ollama(messages, "gemma4:26b", skip_preprocess=True)))
     finally:
         _stop(patches)
 
@@ -185,7 +211,7 @@ def test_tool_turn_emits_tool_result_and_survives_in_history():
         patch.object(ollama_mod, "_execute_tool", fake_execute_tool),
     ])
     try:
-        chunks = run(_collect(ollama_mod._stream_ollama(messages, "gemma4:26b")))
+        chunks = run(_collect(ollama_mod._stream_ollama(messages, "gemma4:26b", skip_preprocess=True)))
     finally:
         _stop(patches)
 
@@ -196,9 +222,14 @@ def test_tool_turn_emits_tool_result_and_survives_in_history():
 
     history = _data_for(chunks, "history")[0]["messages"]
     assert history[0] == messages[0]  # injected system message stripped
-    assert history[1]["role"] == "assistant"
-    assert history[1]["tool_calls"][0]["id"] == "call_1"
-    assert history[2] == {"role": "tool", "tool_call_id": "call_1", "content": "FILE CONTENTS"}
+    # Canonical (Anthropic) shape — not Ollama-native role="tool" — so this
+    # history is safe to replay against Claude on a later auto-mode turn.
+    assert history[1] == {"role": "assistant", "content": [
+        {"type": "tool_use", "id": "call_1", "name": "read_file", "input": {"path": "a.txt"}},
+    ]}
+    assert history[2] == {"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": "call_1", "content": "FILE CONTENTS"},
+    ]}
     assert events.index("history") < events.index("done")
 
 
@@ -211,7 +242,7 @@ def test_governor_token_budget_stops_before_first_request():
         patch.object(ollama_mod, "LOOP_MAX_TOKENS", 1),
     ])
     try:
-        chunks = run(_collect(ollama_mod._stream_ollama(big_messages, "gemma4:26b")))
+        chunks = run(_collect(ollama_mod._stream_ollama(big_messages, "gemma4:26b", skip_preprocess=True)))
     finally:
         _stop(patches)
 
@@ -246,7 +277,7 @@ def test_governor_wall_clock_budget_stops_loop():
     ])
     try:
         chunks = run(_collect(ollama_mod._stream_ollama(
-            [{"role": "user", "content": "go"}], "gemma4:26b",
+            [{"role": "user", "content": "go"}], "gemma4:26b", skip_preprocess=True,
         )))
     finally:
         _stop(patches)

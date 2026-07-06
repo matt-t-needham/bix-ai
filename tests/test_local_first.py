@@ -1,4 +1,4 @@
-"""Tests for streaming.local_first — Forge-first with Claude fallback."""
+"""Tests for streaming.local_first — Ollama-first with Claude fallback."""
 import asyncio
 import json
 import sys
@@ -40,8 +40,9 @@ def _data_for(chunks: list[str], event_name: str) -> list[dict]:
     return out
 
 
-def _make_forge(*events):
-    async def fake(messages, model, max_tokens, mode="auto", **kwargs):
+def _make_ollama(*events):
+    async def fake(messages, model, mode="local", tool_offload=False,
+                   route_reason="", on_exhausted="best_effort", **kwargs):
         for ev, payload in events:
             yield sse(ev, payload)
     return fake
@@ -55,7 +56,7 @@ def _make_claude(*events):
 
 
 def test_clean_forge_success_no_escalation():
-    fake_forge = _make_forge(
+    fake_ollama = _make_ollama(
         ("status", {"stage": "streaming", "message": "Streaming from gemma4:26b…"}),
         ("delta", {"text": "hello "}),
         ("delta", {"text": "world"}),
@@ -64,7 +65,7 @@ def test_clean_forge_success_no_escalation():
     )
     fake_claude = _make_claude(("delta", {"text": "SHOULD_NOT_APPEAR"}))
 
-    with patch.object(local_first, "_stream_forge_runner", fake_forge), \
+    with patch.object(local_first, "_stream_ollama", fake_ollama), \
          patch.object(local_first, "_stream_claude", fake_claude):
         chunks = run(_collect(local_first._stream_local_first(
             [{"role": "user", "content": "hi"}],
@@ -80,7 +81,7 @@ def test_clean_forge_success_no_escalation():
 
 
 def test_silent_escalation_before_first_delta():
-    fake_forge = _make_forge(
+    fake_ollama = _make_ollama(
         ("status", {"stage": "streaming", "message": "Streaming from gemma4:26b…"}),
         ("error", {"message": "Forge: ToolCallError"}),
     )
@@ -89,7 +90,7 @@ def test_silent_escalation_before_first_delta():
         ("done", {}),
     )
 
-    with patch.object(local_first, "_stream_forge_runner", fake_forge), \
+    with patch.object(local_first, "_stream_ollama", fake_ollama), \
          patch.object(local_first, "_stream_claude", fake_claude):
         chunks = run(_collect(local_first._stream_local_first(
             [{"role": "user", "content": "hi"}],
@@ -105,7 +106,7 @@ def test_silent_escalation_before_first_delta():
 
 
 def test_visible_escalation_after_delta():
-    fake_forge = _make_forge(
+    fake_ollama = _make_ollama(
         ("status", {"stage": "streaming", "message": "Streaming from gemma4:26b…"}),
         ("delta", {"text": "partial..."}),
         ("error", {"message": "Forge: connection reset"}),
@@ -115,7 +116,7 @@ def test_visible_escalation_after_delta():
         ("done", {}),
     )
 
-    with patch.object(local_first, "_stream_forge_runner", fake_forge), \
+    with patch.object(local_first, "_stream_ollama", fake_ollama), \
          patch.object(local_first, "_stream_claude", fake_claude):
         chunks = run(_collect(local_first._stream_local_first(
             [{"role": "user", "content": "hi"}],
@@ -126,18 +127,18 @@ def test_visible_escalation_after_delta():
     events = _events(chunks)
     assert "fallback_triggered" in events
     fb = _data_for(chunks, "fallback_triggered")
-    assert fb[0]["reason"] == "forge_error"
+    assert fb[0]["reason"] == "ollama_error"
     fb_idx = events.index("fallback_triggered")
     after  = events[fb_idx + 1:]
     assert "status" in after
     assert "delta" in after
-    # The Forge `error` event must not leak past the escalation boundary —
+    # The Ollama `error` event must not leak past the escalation boundary —
     # the consumer would render an error and stop.
     assert "error" not in events
 
 
 def test_claude_also_fails():
-    fake_forge = _make_forge(
+    fake_ollama = _make_ollama(
         ("status", {"stage": "streaming", "message": "Streaming from gemma4:26b…"}),
         ("error", {"message": "Forge: ToolExecutionError"}),
     )
@@ -145,7 +146,7 @@ def test_claude_also_fails():
         ("error", {"message": "Claude: upstream error"}),
     )
 
-    with patch.object(local_first, "_stream_forge_runner", fake_forge), \
+    with patch.object(local_first, "_stream_ollama", fake_ollama), \
          patch.object(local_first, "_stream_claude", fake_claude):
         chunks = run(_collect(local_first._stream_local_first(
             [{"role": "user", "content": "hi"}],
@@ -160,8 +161,8 @@ def test_claude_also_fails():
 
 
 def test_error_reason_appears_in_switching_status():
-    """The error message from Forge must surface in the Claude-switch status."""
-    fake_forge = _make_forge(
+    """The error message from Ollama must surface in the Claude-switch status."""
+    fake_ollama = _make_ollama(
         ("status", {"stage": "streaming", "message": "Streaming from gemma4:26b…"}),
         ("error", {"message": "Forge: max_retries_per_step exceeded"}),
     )
@@ -170,7 +171,7 @@ def test_error_reason_appears_in_switching_status():
         ("done", {}),
     )
 
-    with patch.object(local_first, "_stream_forge_runner", fake_forge), \
+    with patch.object(local_first, "_stream_ollama", fake_ollama), \
          patch.object(local_first, "_stream_claude", fake_claude):
         chunks = run(_collect(local_first._stream_local_first(
             [{"role": "user", "content": "hi"}],

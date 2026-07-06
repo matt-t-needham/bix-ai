@@ -78,24 +78,151 @@ def test_review_route_persists_advisory(client, monkeypatch):
     c, root = client
     rec = staging.create(str(root / "x.md"), "content")
 
-    async def _fake_review(record):
+    captured = {}
+
+    async def _fake_anthropic(model, prompt, max_tokens):
+        captured["model"], captured["prompt"] = model, prompt
         return "ADVISORY: looks fine"
 
     import main
-    monkeypatch.setattr(main, "_claude_review_text", _fake_review)
-    r = c.post(f"/staging/{rec['id']}/review", follow_redirects=False)
-    assert r.status_code == 303
-    assert staging.get(rec["id"])["claude_review"] == "ADVISORY: looks fine"
+    monkeypatch.setattr(main, "_anthropic_text", _fake_anthropic)
+    r = c.post(f"/staging/{rec['id']}/review")   # bare POST = default-model review
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+    stored = staging.get(rec["id"])
+    assert stored["claude_review"] == "ADVISORY: looks fine"
+    assert stored["review_model"] == captured["model"]
     assert "ADVISORY: looks fine" in c.get(f"/staging/{rec['id']}").text
 
 
-# ── Tool registration (all three surfaces) ────────────────────────────────────
+def test_review_route_model_selection_and_comments_in_prompt(client, monkeypatch):
+    c, root = client
+    rec = staging.create(str(root / "x.md"), "content line one")
+    staging.add_comment(rec["id"], "content line one", "tighten this up")
+
+    captured = {}
+
+    async def _fake_anthropic(model, prompt, max_tokens):
+        captured["model"], captured["prompt"] = model, prompt
+        return "ok"
+
+    import main
+    monkeypatch.setattr(main, "_anthropic_text", _fake_anthropic)
+    model = sorted(config._ALLOWED_CLAUDE_MODELS)[0]
+    r = c.post(f"/staging/{rec['id']}/review", json={"model": model, "action": "review"})
+    assert r.status_code == 200
+    assert captured["model"] == model
+    assert "reviewer_comments" in captured["prompt"]
+    assert "tighten this up" in captured["prompt"]
+
+
+def test_review_route_rejects_unknown_model(client, monkeypatch):
+    c, root = client
+    rec = staging.create(str(root / "x.md"), "content")
+    r = c.post(f"/staging/{rec['id']}/review", json={"model": "gpt-99"})
+    assert r.status_code == 400
+    assert staging.get(rec["id"])["claude_review"] is None
+
+
+def test_revise_updates_content_and_keeps_revision(client, monkeypatch):
+    c, root = client
+    rec = staging.create(str(root / "x.md"), "old body")
+    staging.add_comment(rec["id"], "old body", "please improve")
+
+    async def _fake_anthropic(model, prompt, max_tokens):
+        return "- improved it\n<updated_file>\nnew body\n</updated_file>"
+
+    import main
+    monkeypatch.setattr(main, "_anthropic_text", _fake_anthropic)
+    r = c.post(f"/staging/{rec['id']}/review", json={"action": "revise"})
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+    stored = staging.get(rec["id"])
+    assert stored["content"] == "new body"
+    assert stored["claude_review"] == "- improved it"
+    assert [rv["content"] for rv in stored["revisions"]] == ["old body"]
+    assert stored["status"] == "pending"          # still gated by human approve
+    assert not (root / "x.md").exists()           # live file untouched
+
+
+def test_revise_without_open_comments_400(client, monkeypatch):
+    c, root = client
+    rec = staging.create(str(root / "x.md"), "body")
+    r = c.post(f"/staging/{rec['id']}/review", json={"action": "revise"})
+    assert r.status_code == 400
+    assert staging.get(rec["id"])["content"] == "body"
+
+
+def test_revise_unparseable_response_leaves_record(client, monkeypatch):
+    c, root = client
+    rec = staging.create(str(root / "x.md"), "body")
+    staging.add_comment(rec["id"], "", "a comment")
+
+    async def _fake_anthropic(model, prompt, max_tokens):
+        return "no tags here"
+
+    import main
+    monkeypatch.setattr(main, "_anthropic_text", _fake_anthropic)
+    r = c.post(f"/staging/{rec['id']}/review", json={"action": "revise"})
+    assert r.status_code == 502
+    stored = staging.get(rec["id"])
+    assert stored["content"] == "body"
+    assert stored["revisions"] == []
+
+
+# ── Comment routes ────────────────────────────────────────────────────────────
+
+def test_comment_add_and_resolve_routes(client):
+    c, root = client
+    rec = staging.create(str(root / "x.md"), "some body text")
+    r = c.post(f"/staging/{rec['id']}/comments",
+               json={"quote": "body text", "text": "needs work"})
+    assert r.status_code == 200
+    comments = r.json()["comments"]
+    assert len(comments) == 1 and comments[0]["resolved"] is False
+    cid = comments[0]["id"]
+
+    r = c.post(f"/staging/{rec['id']}/comments/{cid}/resolve", json={"resolved": True})
+    assert r.status_code == 200
+    assert staging.get(rec["id"])["comments"][0]["resolved"] is True
+
+    r = c.post(f"/staging/{rec['id']}/comments/{cid}/resolve", json={"resolved": False})
+    assert staging.get(rec["id"])["comments"][0]["resolved"] is False
+
+
+def test_comment_routes_404_and_400(client):
+    c, root = client
+    assert c.post("/staging/nope/comments",
+                  json={"quote": "", "text": "x"}).status_code == 404
+    rec = staging.create(str(root / "x.md"), "body")
+    assert c.post(f"/staging/{rec['id']}/comments",
+                  json={"quote": "q", "text": "   "}).status_code == 400
+    assert c.post(f"/staging/{rec['id']}/comments/nocomment/resolve",
+                  json={"resolved": True}).status_code == 404
+
+
+# ── Chat context endpoint ─────────────────────────────────────────────────────
+
+def test_context_endpoint(client):
+    c, root = client
+    rec = staging.create(str(root / "bix-blog" / "post.md"), "# Title\n\nbody")
+    staging.add_comment(rec["id"], "body", "flesh this out")
+    r = c.get(f"/staging/{rec['id']}/context")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["ok"] is True and d["target_path"].endswith("post.md")
+    assert "# Title" in d["context"]
+    assert "flesh this out" in d["context"]
+
+    assert c.get("/staging/nope/context").status_code == 404
+
+
+# ── Tool registration (both wire surfaces) ────────────────────────────────────
 
 def test_stage_write_registered_everywhere():
     import tools
     assert "stage_write" in [t["name"] for t in tools.FS_TOOLS]
     assert "stage_write" in [t["function"]["name"] for t in tools.OLLAMA_TOOLS]
-    assert "stage_write" in tools.FORGE_TOOLS
 
 
 def test_execute_tool_stage_write(tmp_path, monkeypatch):

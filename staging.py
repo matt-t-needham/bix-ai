@@ -79,8 +79,11 @@ def create(target_path: str, content: str, proposed_by: str = "assistant") -> di
         "content":       content,
         "status":        "pending",   # pending | approved | rejected
         "claude_review": None,
+        "review_model":  None,
         "reviewed_at":   None,
         "applied_at":    None,
+        "comments":      [],   # [{id, quote, text, resolved, created_at, resolved_at}]
+        "revisions":     [],   # superseded contents, oldest first: [{content, at, by}]
     }
     _write_record(record)
     return record
@@ -111,14 +114,85 @@ def list_records() -> list[dict]:
     return out
 
 
-def set_review(rec_id: str, review_text: str) -> dict | None:
+def set_review(rec_id: str, review_text: str, model: str | None = None) -> dict | None:
     rec = get(rec_id)
     if not rec:
         return None
     rec["claude_review"] = review_text
+    rec["review_model"]  = model
     rec["reviewed_at"]   = _now()
     _write_record(rec)
     return rec
+
+
+_MAX_COMMENT_QUOTE_CHARS = 2_000
+_MAX_COMMENT_TEXT_CHARS  = 4_000
+_MAX_REVISIONS_KEPT      = 5
+
+
+def add_comment(rec_id: str, quote: str, text: str) -> dict | None:
+    """Attach a reviewer comment anchored to a verbatim quote of the content.
+
+    Returns the updated record, or None if the record doesn't exist.
+    Raises ValueError on empty comment text or oversized quote/text.
+    """
+    rec = get(rec_id)
+    if not rec:
+        return None
+    quote = (quote or "").strip("\n")
+    text  = (text or "").strip()
+    if not text:
+        raise ValueError("comment text is empty")
+    if len(quote) > _MAX_COMMENT_QUOTE_CHARS:
+        raise ValueError(f"quote too long (max {_MAX_COMMENT_QUOTE_CHARS} chars)")
+    if len(text) > _MAX_COMMENT_TEXT_CHARS:
+        raise ValueError(f"comment too long (max {_MAX_COMMENT_TEXT_CHARS} chars)")
+    comment = {
+        "id":          uuid.uuid4().hex[:8],
+        "quote":       quote,
+        "text":        text,
+        "resolved":    False,
+        "created_at":  _now(),
+        "resolved_at": None,
+    }
+    rec.setdefault("comments", []).append(comment)
+    _write_record(rec)
+    return rec
+
+
+def set_comment_resolved(rec_id: str, comment_id: str, resolved: bool) -> dict | None:
+    """Mark one comment resolved/reopened. Returns the record, or None if
+    either the record or the comment doesn't exist."""
+    rec = get(rec_id)
+    if not rec:
+        return None
+    for c in rec.get("comments", []):
+        if c.get("id") == comment_id:
+            c["resolved"]    = bool(resolved)
+            c["resolved_at"] = _now() if resolved else None
+            _write_record(rec)
+            return rec
+    return None
+
+
+def update_content(rec_id: str, new_content: str, revised_by: str) -> dict:
+    """Replace a pending record's proposed content, keeping the old version in
+    the revision history. Never touches the live target — approve() remains
+    the only privileged step. Returns {ok, message, record?} like approve().
+    """
+    rec = get(rec_id)
+    if not rec:
+        return {"ok": False, "message": "No such staged change."}
+    if rec["status"] != "pending":
+        return {"ok": False, "message": f"Cannot revise a {rec['status']} change.", "record": rec}
+    if len(new_content.encode("utf-8", errors="replace")) > _MAX_CONTENT_BYTES:
+        return {"ok": False, "message": f"Revised content too large (max {_MAX_CONTENT_BYTES // 1000} KB).", "record": rec}
+    revisions = rec.setdefault("revisions", [])
+    revisions.append({"content": rec["content"], "at": _now(), "by": revised_by})
+    del revisions[:-_MAX_REVISIONS_KEPT]
+    rec["content"] = new_content
+    _write_record(rec)
+    return {"ok": True, "message": "Content revised.", "record": rec}
 
 
 def approve(rec_id: str) -> dict:

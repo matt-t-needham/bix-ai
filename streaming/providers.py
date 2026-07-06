@@ -21,9 +21,20 @@ usage; Ollama's OpenAI endpoint doesn't, so it estimates chars/4).
 Providers receive a `client_factory` and `route` callable from their adapter
 module instead of importing httpx/routing themselves — that keeps the
 adapter module the single patch point for tests.
+
+OllamaProvider additionally carries a guardrail layer (rescue-parsing +
+bounded retry-with-nudge for genuinely garbled tool-call attempts, using
+forge-guardrails' standalone `rescue_tool_call`/`ErrorTracker`/`retry_nudge`
+— NOT `WorkflowRunner`, which owns its own competing loop/prompting). An
+ordinary clean text answer with no tool-call attempt at all is always
+accepted immediately; only a structurally-attempted-but-malformed tool call
+goes through rescue-then-retry. This is what lets mode=local and mode=auto's
+local leg share one implementation with no forced terminal tool.
 """
 import json
 import logging
+
+from forge import ErrorTracker, rescue_tool_call, retry_nudge
 
 from config import ANTHROPIC_URL, OLLAMA_URL
 from strategy import estimate_tokens
@@ -36,6 +47,70 @@ def _parse_input(raw: str) -> dict:
         return json.loads(raw) if raw else {}
     except json.JSONDecodeError:
         return {}
+
+
+def _try_parse_strict(raw: str):
+    """Like _parse_input, but distinguishes 'no args' ({}) from malformed
+    JSON (None) — the guardrail layer needs to know which one happened."""
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+
+def _ollama_assistant_message(text: str, tool_map: dict) -> dict:
+    return {
+        "role":    "assistant",
+        "content": text or None,
+        "tool_calls": [
+            {
+                "index": idx, "id": tc["id"], "type": "function",
+                "function": {"name": tc["name"], "arguments": tc["arguments_str"]},
+            }
+            for idx, tc in sorted(tool_map.items())
+        ],
+    }
+
+
+def _to_ollama_wire(messages: list) -> list:
+    """Messages threaded through the loop are canonical (Anthropic) shape —
+    assistant tool_use / user tool_result content blocks — same as what the
+    client stores and what strategy.py/compact.py assume. Ollama's chat
+    endpoint speaks OpenAI's wire shape (role="tool", assistant.tool_calls),
+    so translate right at the HTTP boundary rather than letting native shape
+    leak into current_messages (that used to escape via the `history` SSE
+    event and break a later Claude-routed turn — "Unexpected role tool").
+    Native messages (e.g. this module's own retry-nudge scratch turns) pass
+    through untouched, so this is safe to apply to a mixed list."""
+    wire = []
+    for m in messages:
+        role, content = m.get("role"), m.get("content")
+        if role == "assistant" and isinstance(content, list):
+            text = "\n".join(b["text"] for b in content if b.get("type") == "text")
+            tool_calls = [
+                {"index": i, "id": b["id"], "type": "function",
+                 "function": {"name": b["name"], "arguments": json.dumps(b.get("input", {}))}}
+                for i, b in enumerate(b for b in content if b.get("type") == "tool_use")
+            ]
+            wire_msg = {"role": "assistant", "content": text or None}
+            if tool_calls:
+                wire_msg["tool_calls"] = tool_calls
+            wire.append(wire_msg)
+        elif role == "user" and isinstance(content, list) and any(
+                isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
+            text = "\n".join(b["text"] for b in content
+                             if isinstance(b, dict) and b.get("type") == "text")
+            if text:
+                wire.append({"role": "user", "content": text})
+            for b in content:
+                if isinstance(b, dict) and b.get("type") == "tool_result":
+                    wire.append({"role": "tool", "tool_call_id": b["tool_use_id"],
+                                "content": b.get("content", "")})
+        else:
+            wire.append(m)
+    return wire
 
 
 class AnthropicProvider:
@@ -195,15 +270,22 @@ class OllamaProvider:
     emits_input_tokens_sse = False  # OpenAI-compat stream chunks carry no usage
 
     def __init__(self, model: str, tools: list, client_factory, route,
-                 system_sentinel: str):
+                 system_sentinel: str, *, on_exhausted: str = "best_effort",
+                 max_retries: int = 2):
         self.model = model
         self.tools = tools
         self.client_factory = client_factory
         self._route = route
         self.system_sentinel = system_sentinel  # injected system msg to strip from history
+        self.on_exhausted = on_exhausted  # "best_effort" | "escalate"
+        self.max_retries = max_retries
+        self._tool_names = [t["function"]["name"] for t in tools]
         self.output_chars = 0
         self._tool_map: dict = {}
         self._response_text = ""
+        self.guardrail_rescues = 0    # rescued a malformed/embedded tool call, no retry needed
+        self.guardrail_retries = 0    # nudged and re-called the model
+        self.guardrail_exhausted = False
 
     def stream_status(self) -> str:
         return f"Streaming from Ollama ({self.model})…"
@@ -213,11 +295,11 @@ class OllamaProvider:
         # (mirrors strategy.estimate_tokens' chars/4 heuristic).
         return estimate_tokens(json.dumps(messages))
 
-    def _accumulate_tool_call(self, tc: dict) -> None:
+    def _accumulate_tool_call(self, tc: dict, tool_map: dict) -> None:
         idx = tc.get("index", 0)
-        if idx not in self._tool_map:
-            self._tool_map[idx] = {"id": "", "name": "", "arguments_str": ""}
-        entry = self._tool_map[idx]
+        if idx not in tool_map:
+            tool_map[idx] = {"id": "", "name": "", "arguments_str": ""}
+        entry = tool_map[idx]
         if tc.get("id"):
             entry["id"] = tc["id"]
         fn = tc.get("function") or {}
@@ -226,14 +308,18 @@ class OllamaProvider:
         if fn.get("arguments"):
             entry["arguments_str"] += fn["arguments"]
 
-    async def stream_turn(self, messages: list):
-        self._tool_map = {}
-        self._response_text = ""
+    async def _consume_stream(self, messages: list, *, live: bool):
+        """One raw HTTP round-trip. Yields text_delta only when live=True —
+        a discarded retry attempt still burns real inference time (tracked
+        via output_chars regardless), it just isn't shown to the user until
+        it's accepted. Always ends with one attempt_end."""
+        text = ""
+        tool_map: dict = {}
         finish_reason = None
 
         async with self.client_factory() as client:
             async with client.stream("POST", OLLAMA_URL, json={
-                "model": self.model, "messages": messages,
+                "model": self.model, "messages": _to_ollama_wire(messages),
                 "tools": self.tools, "stream": True,
             }) as r:
                 if r.status_code != 200:
@@ -262,14 +348,122 @@ class OllamaProvider:
 
                     content = delta.get("content") or ""
                     if content:
-                        self._response_text += content
-                        self.output_chars   += len(content)
-                        yield {"kind": "text_delta", "text": content}
+                        text               += content
+                        self.output_chars += len(content)
+                        if live:
+                            yield {"kind": "text_delta", "text": content}
 
                     for tc in delta.get("tool_calls") or []:
-                        self._accumulate_tool_call(tc)
+                        self._accumulate_tool_call(tc, tool_map)
 
-        tool_use = finish_reason == "tool_calls"
+        yield {"kind": "attempt_end", "text": text, "tool_map": tool_map,
+               "finish_reason": finish_reason}
+
+    def _classify(self, text: str, tool_map: dict, finish_reason: str | None):
+        """('accept_text',) | ('accept_tools', resolved_map, rescued: bool) | ('retry', reason).
+
+        `rescued` is explicit (not inferred from attempt number or
+        finish_reason) so the caller can tell "rescue_tool_call actually
+        recovered something" apart from "this was simply a clean parse on a
+        retry attempt" — those are different events for telemetry purposes.
+
+        Only a structurally-attempted-but-garbled tool call is ever retried.
+        An ordinary clean text answer (no tool_calls at all, and nothing
+        rescuable embedded in the prose) is always accepted immediately —
+        no forcing, regardless of whether the question needed a tool.
+        """
+        if finish_reason == "tool_calls" and tool_map:
+            resolved = {}
+            any_rescued = False
+            for idx, tc in tool_map.items():
+                parsed = _try_parse_strict(tc["arguments_str"])
+                if parsed is not None:
+                    resolved[idx] = tc
+                    continue
+                names = [tc["name"]] if tc["name"] else self._tool_names
+                rescued = rescue_tool_call(tc["arguments_str"], names)
+                if rescued:
+                    resolved[idx] = {**tc, "arguments_str": json.dumps(rescued[0].args)}
+                    any_rescued = True
+                else:
+                    return ("retry", f"malformed tool-call JSON for '{tc['name'] or '?'}'")
+            return ("accept_tools", resolved, any_rescued)
+
+        if finish_reason == "tool_calls" and not tool_map:
+            return ("retry", "empty tool_calls with no fragments")
+
+        rescued = rescue_tool_call(text, self._tool_names) if text.strip() else []
+        if rescued:
+            synth = {
+                i: {"id": f"rescued-{i}", "name": r.tool, "arguments_str": json.dumps(r.args)}
+                for i, r in enumerate(rescued)
+            }
+            return ("accept_tools", synth, True)
+        return ("accept_text",)
+
+    async def stream_turn(self, messages: list):
+        self._tool_map = {}
+        self._response_text = ""
+        tracker = ErrorTracker(max_retries=self.max_retries)
+        attempt_messages = list(messages)  # scratch copy — nudges never touch the caller's list
+        attempt_no = 0
+        live = True
+
+        while True:
+            text = tool_map = finish_reason = None
+            async for ev in self._consume_stream(attempt_messages, live=live):
+                if ev["kind"] == "provider_error":
+                    yield ev
+                    return
+                if ev["kind"] == "text_delta":
+                    yield ev
+                elif ev["kind"] == "attempt_end":
+                    text, tool_map, finish_reason = ev["text"], ev["tool_map"], ev["finish_reason"]
+
+            outcome = self._classify(text, tool_map, finish_reason)
+
+            if outcome[0] == "accept_text":
+                if not live:
+                    yield {"kind": "text_delta", "text": text}
+                self._response_text, self._tool_map = text, {}
+                break
+
+            if outcome[0] == "accept_tools":
+                if not live and text:
+                    yield {"kind": "text_delta", "text": text}
+                self._response_text, self._tool_map = text, outcome[1]
+                if outcome[2]:
+                    self.guardrail_rescues += 1
+                    log.info("ollama guardrail rescued model=%s attempt=%d finish_reason=%s",
+                             self.model, attempt_no, finish_reason)
+                break
+
+            # outcome[0] == "retry"
+            tracker.record_retry()
+            self.guardrail_retries += 1
+            log.warning("ollama guardrail nudge model=%s attempt=%d reason=%s",
+                       self.model, attempt_no, outcome[1])
+            if tracker.retries_exhausted:
+                self.guardrail_exhausted = True
+                log.warning("ollama guardrail exhausted model=%s attempts=%d policy=%s",
+                           self.model, attempt_no + 1, self.on_exhausted)
+                if self.on_exhausted == "escalate":
+                    yield {"kind": "provider_error",
+                           "message": f"Ollama guardrail exhausted after {attempt_no + 1} attempts: {outcome[1]}"}
+                    return
+                # best_effort: keep whatever the last attempt produced — mode=local
+                # has never hard-failed on a bad response, don't start now.
+                self._response_text, self._tool_map = text, tool_map
+                break
+
+            attempt_messages = attempt_messages + [
+                _ollama_assistant_message(text, tool_map),
+                {"role": "user", "content": retry_nudge(text)},
+            ]
+            attempt_no += 1
+            live = False
+
+        tool_use = bool(self._tool_map)
         if tool_use:
             # This endpoint buffers tool calls rather than streaming them, so
             # the UI's start/input/end triplet is emitted once, post-stream.
@@ -287,21 +481,24 @@ class OllamaProvider:
         }
 
     def append_assistant_turn(self, messages: list) -> None:
-        messages.append({
-            "role":    "assistant",
-            "content": self._response_text or None,
-            "tool_calls": [
-                {
-                    "index": idx, "id": tc["id"], "type": "function",
-                    "function": {"name": tc["name"], "arguments": tc["arguments_str"]},
-                }
-                for idx, tc in sorted(self._tool_map.items())
-            ],
-        })
+        # Canonical (Anthropic) shape, same as AnthropicProvider — current_messages
+        # is the list that later rides the `history` SSE event and may continue
+        # on either backend next turn, so it must never carry Ollama-native shape.
+        content = []
+        if self._response_text:
+            content.append({"type": "text", "text": self._response_text})
+        for _, tc in sorted(self._tool_map.items()):
+            content.append({
+                "type": "tool_use", "id": tc["id"], "name": tc["name"],
+                "input": _parse_input(tc["arguments_str"]),
+            })
+        messages.append({"role": "assistant", "content": content})
 
     def append_tool_results(self, messages: list, results: list) -> None:
-        for tid, content in results:
-            messages.append({"role": "tool", "tool_call_id": tid, "content": content})
+        messages.append({"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": tid, "content": content}
+            for tid, content in results
+        ]})
 
     def history_messages(self, messages: list) -> list:
         if (messages and messages[0].get("role") == "system"
@@ -318,4 +515,7 @@ class OllamaProvider:
         return {"input_tokens": 0, "output_tokens": self.budget_tokens(messages), "tps": 0}
 
     async def write_routing(self, ttft_ms: int, elapsed_ms: int) -> None:
-        await self._route(0, max(self.output_chars // 4, 1), ttft_ms, elapsed_ms)
+        await self._route(0, max(self.output_chars // 4, 1), ttft_ms, elapsed_ms,
+                          guardrail_rescues=self.guardrail_rescues,
+                          guardrail_retries=self.guardrail_retries,
+                          guardrail_exhausted=self.guardrail_exhausted)

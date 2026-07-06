@@ -123,37 +123,43 @@
           },
           {
             "role": "assistant",
-            "content": "checking",
-            "tool_calls": [
+            "content": [
               {
-                "index": 0,
+                "type": "text",
+                "text": "checking"
+              },
+              {
+                "type": "tool_use",
                 "id": "call_1",
-                "type": "function",
-                "function": {
-                  "name": "read_file",
-                  "arguments": "{\"path\": \"a.txt\"}"
+                "name": "read_file",
+                "input": {
+                  "path": "a.txt"
                 }
               },
               {
-                "index": 1,
+                "type": "tool_use",
                 "id": "call_2",
-                "type": "function",
-                "function": {
-                  "name": "list_directory",
-                  "arguments": "{\"path\": \"/tmp\"}"
+                "name": "list_directory",
+                "input": {
+                  "path": "/tmp"
                 }
               }
             ]
           },
           {
-            "role": "tool",
-            "tool_call_id": "call_1",
-            "content": "RESULT[read_file:{\"path\": \"a.txt\"}]"
-          },
-          {
-            "role": "tool",
-            "tool_call_id": "call_2",
-            "content": "RESULT[list_directory:{\"path\": \"/tmp\"}]"
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_1",
+                "content": "RESULT[read_file:{\"path\": \"a.txt\"}]"
+              },
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_2",
+                "content": "RESULT[list_directory:{\"path\": \"/tmp\"}]"
+              }
+            ]
           }
         ]
       }
@@ -168,9 +174,14 @@
       "mode": "local",
       "model": "gemma4:26b",
       "reason": "forced:local",
+      "summarised": 0,
+      "preprocess_ms": 0,
       "output_tokens": 3,
       "ttft_ms": 0,
-      "elapsed_ms": 0
+      "elapsed_ms": 0,
+      "guardrail_rescues": 0,
+      "guardrail_retries": 0,
+      "guardrail_exhausted": false
     }
   ]
 }

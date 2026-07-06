@@ -792,6 +792,7 @@ let forceApi     = false;   // set to true when Pro quota is exhausted
 let lastUserMsg  = '';      // stored for quota retry
 let toolOffload  = false;
 let proSessionId = null;    // claude-CLI session (pro mode) — keeps tool turns across requests
+let pendingContext = null;  // staged-change context (/?staged=<id>) — merged into the next sent message
 
 const modeDefaults = { ai: 'claude-sonnet-4-6', auto: 'claude-sonnet-4-6', local: 'gemma4:26b' };
 
@@ -1262,6 +1263,45 @@ function initSectionStates() {
 }
 initSectionStates();
 
+// ── Staged-change context (/?staged=<id>) ─────────────────────────────────────
+// Opened from a staging detail page's "Chat about this" button. The context is
+// fetched once, shown as a collapsible notice, and merged into the first
+// message the user sends (see send()).
+async function loadStagedContext() {
+  const stagedId = new URLSearchParams(location.search).get('staged');
+  if (!stagedId) return;
+  try {
+    const r = await fetch(`/staging/${encodeURIComponent(stagedId)}/context`);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    pendingContext = d.context;
+
+    const wrap = document.createElement('div');
+    wrap.className = 'msg user';
+    const group = document.createElement('div');
+    group.className = 'sub-bubbles';
+    const sb  = document.createElement('div');  sb.className = 'sub-bubble';
+    const hdr = document.createElement('div');  hdr.className = 'sub-bubble-hdr';
+    const bod = document.createElement('div');  bod.className = 'sub-bubble-body';
+    hdr.innerHTML = `<span class="chevron">▶</span><span class="sub-bubble-name">📄 Staged change loaded as context</span><span class="sub-bubble-args"></span>`;
+    hdr.querySelector('.sub-bubble-args').textContent = `${d.target_path} · ${d.status}`;
+    bod.textContent = d.context;
+    hdr.addEventListener('click', () => sb.classList.toggle('open'));
+    sb.append(hdr, bod);
+    group.appendChild(sb);
+    wrap.appendChild(group);
+    msgsIn.appendChild(wrap);
+    autoScroll();
+    inputEl.focus();
+  } catch (e) {
+    const marker = document.createElement('div');
+    marker.className = 'switch-marker';
+    marker.textContent = `Could not load staged change ${stagedId}: ${e.message}`;
+    msgsIn.appendChild(marker);
+  }
+}
+loadStagedContext();
+
 function renderAvgTtft() {
   const el = document.getElementById('rs-avg-ttft');
   if (!el) return;
@@ -1360,9 +1400,16 @@ async function send() {
   inputEl.style.height = '';
   setBusy(true);
 
-  lastUserMsg = text;
-  const userMsg = text;
-  convHistory.push({ role: 'user', content: text });
+  // Staged-change context rides along inside the first sent message (a lone
+  // context turn would create consecutive user messages, which not every
+  // backend path accepts). The bubble shows only what the user typed.
+  const payloadText = pendingContext
+    ? pendingContext + '\n\n---\n\nMy thoughts:\n' + text
+    : text;
+  pendingContext = null;
+  lastUserMsg = payloadText;
+  const userMsg = payloadText;
+  convHistory.push({ role: 'user', content: payloadText });
   addBubble('user', false).bubble.textContent = text;
 
   const resolvedMode = _resolvedMode();
