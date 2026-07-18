@@ -10,13 +10,16 @@ import logging
 import re
 from pathlib import Path
 
+import httpx
+
 import blobstore
+import config
 import logtools
 import staging
 import steam
 from config import CONV_DIR, FS_ROOT, OLLAMA_DEFAULT_MODEL
 from fs_core import is_denied_path, list_directory, read_file
-from helpers import ollama_chat
+from helpers import SSETextCollector, ollama_chat
 from memory import _load_all_memories
 
 log = logging.getLogger("router")
@@ -212,6 +215,66 @@ async def _tool_grep_blob(tool_input: dict) -> str:
 
 
 # ── The single tool table ─────────────────────────────────────────────────────
+# ── Staging-twin verification (prod-only) ─────────────────────────────────────
+
+_ASK_STAGING_MAX_CHARS = 20_000
+_ASK_STAGING_TIMEOUT_S = 120.0
+
+
+async def _tool_check_staging(tool_input: dict) -> str:
+    """Health/identity snapshot of the staging instance."""
+    base = config.STAGING_ROUTER_URL
+    lines = [f"Staging instance at {base}:"]
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            for path in ("/healthz", "/version", "/system"):
+                r = await client.get(f"{base}{path}")
+                body = r.json() if r.status_code == 200 else f"HTTP {r.status_code}"
+                lines.append(f"  {path}: {json.dumps(body) if isinstance(body, dict) else body}")
+    except (httpx.HTTPError, OSError) as e:
+        return (f"Staging instance unreachable at {base} ({e.__class__.__name__}: {e}). "
+                "It may not be deployed yet — a human can queue 'Deploy staging' "
+                "from /staging or /deploys.")
+    return "\n".join(lines)
+
+
+async def _tool_ask_staging(tool_input: dict) -> str:
+    """Send one prompt to the staging twin's /chat and return its answer."""
+    prompt = str(tool_input.get("prompt", "")).strip()
+    if not prompt:
+        return "Error: prompt is required"
+    mode = str(tool_input.get("mode") or "local")
+    if mode not in ("local", "api", "auto"):
+        return f"Error: mode must be local|api|auto (pro is unavailable on staging), got {mode!r}"
+    model = str(tool_input.get("model") or "")
+    body: dict = {"messages": [{"role": "user", "content": prompt}], "mode": mode}
+    if model:
+        body["model"] = model
+    elif mode == "local":
+        body["model"] = OLLAMA_DEFAULT_MODEL   # /chat's default is a Claude model
+    collector = SSETextCollector(max_chars=_ASK_STAGING_MAX_CHARS)
+    url = f"{config.STAGING_ROUTER_URL}/chat"
+    try:
+        async with httpx.AsyncClient(timeout=_ASK_STAGING_TIMEOUT_S) as client:
+            async with client.stream("POST", url, json=body) as r:
+                if r.status_code != 200:
+                    return f"Staging /chat returned HTTP {r.status_code}"
+                async for chunk in r.aiter_text():
+                    collector.feed(chunk)
+                    if collector.overflow:
+                        break
+    except (httpx.HTTPError, OSError) as e:
+        return (f"Staging instance unreachable at {url} ({e.__class__.__name__}: {e}). "
+                "It may not be deployed yet.")
+    parts = []
+    if collector.text:
+        suffix = "\n… (truncated at 20 KB)" if collector.overflow else ""
+        parts.append(collector.text + suffix)
+    if collector.errors:
+        parts.append("Errors from staging: " + "; ".join(collector.errors))
+    return "\n\n".join(parts) or "(staging returned no text)"
+
+
 # Order matters: it defines the order tools appear in FS_TOOLS/OLLAMA_TOOLS
 # (and therefore in provider request bodies).
 
@@ -222,10 +285,12 @@ TOOL_TABLE: list[dict] = [
             "Propose writing a file. The write is NOT applied immediately — it is "
             "staged for human review and only written to disk after a person "
             "approves it at /staging. Use this to create or edit files (e.g. draft "
-            "a blog post, write a note, scaffold source). Provide the full intended "
-            "file contents; on an existing file this overwrites it. Secrets, shell "
-            "scripts, container/CI config, and bix-ai's own source are refused. "
-            "Always tell the user the change was staged for review, not written."
+            "a blog post, write a note, scaffold source — including bix-ai's own "
+            "source: approved self-changes are applied to the bix-ai-staging clone, "
+            "never the running prod tree). Provide the full intended file contents; "
+            "on an existing file this overwrites it. Secrets, shell scripts, and "
+            "container/CI config are refused. Always tell the user the change was "
+            "staged for review, not written."
         ),
         "input_schema": {
             "type": "object",
@@ -430,14 +495,71 @@ TOOL_TABLE: list[dict] = [
         "handler": _tool_grep_blob,
         "brief": "Search a spilled blob for a regex pattern with surrounding context",
     },
+    {
+        "name": "check_staging",
+        "description": (
+            "Check the staging instance of this service (the read-only twin running "
+            "the bix-ai-staging tree, where approved self-changes are deployed for "
+            "verification before a human promotes them to prod). Returns its health, "
+            "build identity (/version: role, git sha, built time) and system metrics. "
+            "Use after a staging deploy to confirm the new build is up."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+        "handler": _tool_check_staging,
+        "brief": "Health + build identity of the staging twin",
+    },
+    {
+        "name": "ask_staging",
+        "description": (
+            "Send one prompt to the staging instance's /chat and return its answer. "
+            "Use to verify a deployed self-change behaves as intended (e.g. ask it "
+            "something that exercises the changed code path). The staging twin is "
+            "read-only and answers with the candidate code. Response is capped at "
+            "20 KB / 120 s."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string", "description": "The question to ask the staging instance."},
+                "mode":   {"type": "string", "description": "local (default) | api | auto — pro is unavailable on staging."},
+                "model":  {"type": "string", "description": "Optional model override; defaults per mode."},
+            },
+            "required": ["prompt"],
+        },
+        "handler": _tool_ask_staging,
+        "brief": "Ask the staging twin a question to verify a deployed change",
+    },
 ]
 
 _HANDLERS = {t["name"]: t["handler"] for t in TOOL_TABLE}
 
 
+# ── Role gating ───────────────────────────────────────────────────────────────
+# The staging container (BIX_ROLE=staging) is a read-only twin: it answers
+# questions but never mutates anything. Its registries omit these tools AND
+# _execute_tool refuses them at call time (defence in depth — a model can still
+# hallucinate a tool name that isn't in its registry).
+
+_MUTATING_TOOLS = {"stage_write"}
+# Querying the staging twin must never recurse from staging itself.
+_PROD_ONLY_TOOLS = {"check_staging", "ask_staging"}
+
+
+def _role_denied_tools(role: str) -> set[str]:
+    return set() if role == "prod" else _MUTATING_TOOLS | _PROD_ONLY_TOOLS
+
+
+def tool_table_for_role(role: str) -> list[dict]:
+    denied = _role_denied_tools(role)
+    return [t for t in TOOL_TABLE if t["name"] not in denied]
+
+
 # ── Tool execution ────────────────────────────────────────────────────────────
 
 async def _execute_tool(name: str, tool_input: dict) -> str:
+    if name in _role_denied_tools(config.BIX_ROLE):
+        return (f"Tool '{name}' is not available: this instance runs the "
+                f"read-only {config.BIX_ROLE} role and cannot make changes.")
     handler = _HANDLERS.get(name)
     if handler is None:
         return f"Unknown tool: {name}"
@@ -446,19 +568,27 @@ async def _execute_tool(name: str, tool_input: dict) -> str:
 
 # ── Generated wire formats ────────────────────────────────────────────────────
 
-FS_TOOLS = [
-    {"name": t["name"], "description": t["description"], "input_schema": t["input_schema"]}
-    for t in TOOL_TABLE
-]
+def fs_tools_for_role(role: str) -> list[dict]:
+    return [
+        {"name": t["name"], "description": t["description"], "input_schema": t["input_schema"]}
+        for t in tool_table_for_role(role)
+    ]
 
-OLLAMA_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name":        t["name"],
-            "description": t["description"],
-            "parameters":  t["input_schema"],
-        },
-    }
-    for t in TOOL_TABLE
-]
+
+def ollama_tools_for_role(role: str) -> list[dict]:
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name":        t["name"],
+                "description": t["description"],
+                "parameters":  t["input_schema"],
+            },
+        }
+        for t in tool_table_for_role(role)
+    ]
+
+
+# Frozen at import for this process's role — the role never changes at runtime.
+FS_TOOLS     = fs_tools_for_role(config.BIX_ROLE)
+OLLAMA_TOOLS = ollama_tools_for_role(config.BIX_ROLE)

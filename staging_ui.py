@@ -14,7 +14,8 @@ DOM via textContent or after escaping.
 import difflib
 import html
 import json
-from pathlib import Path
+
+import staging
 
 _MD_SUFFIXES = (".md", ".markdown", ".txt")
 
@@ -36,8 +37,12 @@ def _fmt_model(m: str | None) -> str:
 # ── Diff ──────────────────────────────────────────────────────────────────────
 
 def diff_lines(record: dict) -> list[str]:
-    """Unified diff between the live target file and the proposed content."""
-    target = Path(record["target_path"])
+    """Unified diff between the current on-disk version and the proposed content.
+
+    Reads staging.current_source_path (the tree approve() actually writes), so a
+    self-change diffs against the staging clone, not the untouched prod tree.
+    """
+    target = staging.current_source_path(record)
     try:
         current = target.read_text(errors="replace").splitlines() if target.exists() else []
     except OSError:
@@ -45,7 +50,7 @@ def diff_lines(record: dict) -> list[str]:
     proposed = record["content"].splitlines()
     return list(difflib.unified_diff(
         current, proposed,
-        fromfile=f"a/{record['target_path']}", tofile=f"b/{record['target_path']}",
+        fromfile=f"a/{target}", tofile=f"b/{target}",
         lineterm="",
     ))
 
@@ -80,11 +85,21 @@ def build_chat_context(record: dict) -> str:
         f"- target file: {record['target_path']}",
         f"- proposed by {record.get('proposed_by', '?')} at {_fmt_ts(record.get('created_at'))}",
     ]
+    if record.get("self_change"):
+        parts.append(
+            f"- this is a change to bix-ai's own source; on approval it is applied to "
+            f"the staging clone at {staging.current_source_path(record)}, never prod"
+        )
+    if record.get("critical"):
+        parts.append(
+            "- CRITICAL: the target is part of bix-ai's guardrail/privilege surface "
+            "(path checks, staging, config, tool registry) — review with extra care"
+        )
     if record.get("revisions"):
         parts.append(f"- revised {len(record['revisions'])} time(s) since first proposed")
     parts += ["", "<proposed_content>", record["content"], "</proposed_content>", ""]
 
-    target = Path(record["target_path"])
+    target = staging.current_source_path(record)
     if target.exists():
         dl = diff_lines(record)
         if len(dl) > _CTX_DIFF_MAX_LINES:
@@ -148,6 +163,11 @@ a:hover { text-decoration:underline; }
 .row .sub { color:var(--subtext); font-size:.74rem; font-variant-numeric:tabular-nums; }
 .badge { font-size:.68rem; text-transform:uppercase; letter-spacing:.06em; padding:1px 7px; border-radius:3px; background:var(--surface1); color:var(--subtext); }
 .badge.pending { color:var(--yellow); } .badge.approved { color:var(--green); } .badge.rejected { color:var(--red); }
+.badge.crit { color:var(--red); border:1px solid var(--red); background:none; }
+.banner-crit { background:rgba(243,139,168,.1); border-left:2px solid var(--red); color:var(--text);
+               padding:10px 14px; margin:14px 0; font-size:.85rem; border-radius:0 4px 4px 0; }
+.banner-crit b { color:var(--red); }
+.applies-to { color:var(--subtext); font-size:.78rem; font-variant-numeric:tabular-nums; margin:6px 0 0; }
 pre.diff { background:#181825; padding:14px; border-radius:6px; overflow-x:auto; font-size:.8rem; line-height:1.45; }
 .dl { display:block; white-space:pre; }
 .dl.add { color:var(--green); } .dl.del { color:var(--red); } .dl.hunk { color:var(--blue); }
@@ -234,10 +254,11 @@ def render_list(records: list[dict]) -> str:
             st = r.get("status", "pending")
             open_c = sum(1 for c in (r.get("comments") or []) if not c.get("resolved"))
             extra = f' · {open_c} open comment(s)' if open_c else ""
+            crit = ' <span class="badge crit">critical</span>' if r.get("critical") else ""
             rows.append(
                 f'<a class="row {st}" href="/staging/{_esc(r["id"])}">'
                 f'<div class="path">{_esc(r.get("target_path",""))} '
-                f'<span class="badge {st}">{_esc(st)}</span></div>'
+                f'<span class="badge {st}">{_esc(st)}</span>{crit}</div>'
                 f'<div class="sub">{_esc(_fmt_ts(r.get("created_at")))} '
                 f'· by {_esc(r.get("proposed_by","?"))} · id {_esc(r["id"])}{_esc(extra)}</div></a>'
             )
@@ -307,9 +328,27 @@ def render_detail(record: dict, *, models: list[str], default_model: str) -> str
     else:
         applied = _fmt_ts(record.get("applied_at"))
         extra = f" at {_esc(applied)}" if applied else ""
+        deploy_bits = ""
+        if st == "approved" and record.get("self_change"):
+            if record.get("promoted_at"):
+                deploy_bits = (f'<span class="badge approved">promoted '
+                               f'{_esc(_fmt_ts(record["promoted_at"]))}</span>')
+            else:
+                # Queue for the host-side runner: build+run the staging container,
+                # or promote this record's content into the prod tree.
+                deploy_bits = (
+                    f'<form method="post" action="/deploys/enqueue">'
+                    f'<input type="hidden" name="action" value="deploy-staging">'
+                    f'<input type="hidden" name="note" value="staging record {rid}">'
+                    f'<button class="btn-review">Deploy staging</button></form>'
+                    f'<form method="post" action="/deploys/enqueue">'
+                    f'<input type="hidden" name="action" value="promote">'
+                    f'<input type="hidden" name="record_ids" value="{rid}">'
+                    f'<button class="btn-approve">Promote to prod</button></form>'
+                )
         actions = (
             f'<div class="actions"><span class="note">This change is {_esc(st)}{extra}. '
-            f'No further action.</span>{chat_btn}</div>'
+            f'</span>{deploy_bits}{chat_btn}</div>'
         )
 
     # Review box
@@ -325,11 +364,28 @@ def render_detail(record: dict, *, models: list[str], default_model: str) -> str
             f'<div class="rbody">{_esc(record["claude_review"])}</div></div>'
         )
 
+    crit_badge = ' <span class="badge crit">critical</span>' if record.get("critical") else ""
+    crit_banner = ""
+    if record.get("critical"):
+        crit_banner = (
+            '<div class="banner-crit"><b>Critical self-file.</b> This file is part of '
+            "bix-ai's guardrail/privilege surface (path checks, staging, config, tool "
+            'registry). Review with extra care before approving.</div>'
+        )
+    applies_html = ""
+    if record.get("self_change"):
+        applies_html = (
+            f'<div class="applies-to">applies to: '
+            f'{_esc(str(staging.current_source_path(record)))} '
+            f'(staging clone — prod is only written on promote)</div>'
+        )
+
     return f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Staged write — {rid}</title><style>{CSS}</style></head><body class="detail">
-<div class="hdr"><h1>{_esc(record.get("target_path",""))} <span class="badge {st}">{_esc(st)}</span></h1>
-<div class="meta">{"".join(meta)}</div></div>
+<div class="hdr"><h1>{_esc(record.get("target_path",""))} <span class="badge {st}">{_esc(st)}</span>{crit_badge}</h1>
+<div class="meta">{"".join(meta)}</div>{applies_html}</div>
+{crit_banner}
 {actions}
 {review_html}
 <div class="layout">

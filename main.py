@@ -5,13 +5,14 @@ import logging.handlers
 import re
 import secrets
 import time
+import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import httpx
 import psutil
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import (
     FileResponse, JSONResponse, StreamingResponse, RedirectResponse, Response,
 )
@@ -33,6 +34,8 @@ except Exception:
     pass
 
 import blobstore  # noqa: E402 — after logging setup
+import deploy  # noqa: E402 — after logging setup
+import model_admin  # noqa: E402 — after logging setup
 import routing_dash  # noqa: E402 — after logging setup
 import staging  # noqa: E402 — after logging setup
 import staging_ui  # noqa: E402 — after logging setup
@@ -42,7 +45,7 @@ import config  # noqa: E402
 from config import (  # noqa: E402
     ANTHROPIC_API_KEY, ANTHROPIC_URL, BIX_PROXY_SECRET,
     DEFAULT_MODEL, OLLAMA_DEFAULT_MODEL, OLLAMA_HOST, ROUTING_LOG,
-    _ALLOWED_ANTHROPIC_BETAS, _ALLOWED_CLAUDE_MODELS, _ALLOWED_OLLAMA_MODELS,
+    _ALLOWED_ANTHROPIC_BETAS, _ALLOWED_CLAUDE_MODELS,
     _MAX_BODY_BYTES, _MAX_TOKENS_CAP,
 )
 from helpers import _agg, _claude_session, _write_routing_event, with_keepalive  # noqa: E402
@@ -90,6 +93,20 @@ _GPU_TTL = 3.0
 @app.get("/healthz")
 async def healthz():
     return {"ok": True}
+
+
+_STARTED_AT = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+@app.get("/version")
+async def version():
+    # config attrs read at call time so tests can monkeypatch BIX_ROLE etc.
+    return {
+        "role":       config.BIX_ROLE,
+        "git_sha":    config.GIT_SHA,
+        "built_at":   config.BUILT_AT,
+        "started_at": _STARTED_AT,
+    }
 
 
 @app.get("/stats")
@@ -279,7 +296,9 @@ async def get_memory_entry(entry_id: str):
 
 def _current_file_block(record: dict) -> str:
     try:
-        p = Path(record["target_path"])
+        # current_source_path: self-changes read the staging clone (the tree
+        # approve() writes), not the untouched prod tree.
+        p = staging.current_source_path(record)
         return p.read_text(errors="replace") if p.exists() else "(new file — does not exist yet)"
     except OSError:
         return "(new file — does not exist yet)"
@@ -375,6 +394,16 @@ async def _claude_revise(record: dict, model: str) -> tuple[str, str | None]:
     return summary, m.group(1)
 
 
+def _require_prod() -> None:
+    """Guard for mutating routes: the staging twin is read-only. 405, not 403 —
+    the method genuinely isn't available on that instance."""
+    if config.BIX_ROLE != "prod":
+        raise HTTPException(
+            status_code=405,
+            detail=f"mutating routes are disabled on the read-only {config.BIX_ROLE} role",
+        )
+
+
 class StagingCommentRequest(BaseModel):
     quote: str = ""
     text:  str
@@ -427,6 +456,7 @@ async def staging_context(rec_id: str):
 
 @app.post("/staging/{rec_id}/approve")
 async def staging_approve(rec_id: str):
+    _require_prod()
     result = await asyncio.to_thread(staging.approve, rec_id)
     log.info("staging approve id=%s ok=%s", rec_id, result.get("ok"))
     return RedirectResponse(f"/staging/{rec_id}", status_code=303)
@@ -434,6 +464,7 @@ async def staging_approve(rec_id: str):
 
 @app.post("/staging/{rec_id}/reject")
 async def staging_reject(rec_id: str):
+    _require_prod()
     await asyncio.to_thread(staging.reject, rec_id)
     log.info("staging reject id=%s", rec_id)
     return RedirectResponse("/staging", status_code=303)
@@ -470,6 +501,7 @@ async def staging_review(rec_id: str, request: Request):
     works and means a default-model review. Never touches the live file;
     approve stays the only privileged step.
     """
+    _require_prod()
     record = await asyncio.to_thread(staging.get, rec_id)
     if not record:
         return JSONResponse({"ok": False, "message": "No such staged change."}, status_code=404)
@@ -608,6 +640,228 @@ async def blob_delete(blob_hash: str):
     return RedirectResponse("/blobs", status_code=303)
 
 
+# ── Deploys (queue UI; execution happens in the host-side runner) ─────────────
+
+_DEPLOY_CSS = """
+.badge.queued { color:var(--yellow); } .badge.running { color:var(--blue); }
+.badge.success { color:var(--green); } .badge.failed { color:var(--red); }
+.row.queued { border-left-color:var(--yellow); } .row.running { border-left-color:var(--blue); }
+.row.success { border-left-color:var(--green); } .row.failed { border-left-color:var(--red); }
+pre.log { background:#181825; padding:14px; border-radius:6px; overflow-x:auto;
+          font-size:.78rem; line-height:1.45; white-space:pre-wrap; word-wrap:break-word; }
+.kv { display:grid; grid-template-columns:max-content 1fr; gap:4px 16px; font-size:.85rem;
+      margin:14px 0; font-variant-numeric:tabular-nums; }
+.kv dt { color:var(--subtext); } .kv dd { margin:0; word-break:break-all; }
+"""
+
+
+async def _staging_version() -> dict | None:
+    """Best-effort /version of the staging twin; None when unreachable."""
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            r = await client.get(f"{config.STAGING_ROUTER_URL}/version")
+            if r.status_code == 200:
+                return r.json()
+    except (httpx.HTTPError, OSError):
+        pass
+    return None
+
+
+@app.get("/staging-service/version")
+async def staging_service_version():
+    """Prod's view of the staging twin's build identity (drawer/UI helper)."""
+    _require_prod()
+    v = await _staging_version()
+    if v is None:
+        return JSONResponse({"ok": False, "message": "staging unreachable"}, status_code=502)
+    return {"ok": True, **v}
+
+
+def _render_deploys_list(deps: list[dict], staging_sha: str = "?") -> str:
+    if not deps:
+        body = '<div class="note">No deploys yet.</div>'
+    else:
+        rows = []
+        for dep in deps:
+            st = dep.get("status", "queued")
+            ids = f' · records {",".join(dep["record_ids"])}' if dep.get("record_ids") else ""
+            note = f' · {dep["note"]}' if dep.get("note") else ""
+            rows.append(
+                f'<a class="row {_esc(st)}" href="/deploys/{_esc(dep["id"])}">'
+                f'<div class="path">{_esc(dep.get("action", "?"))} '
+                f'<span class="badge {_esc(st)}">{_esc(st)}</span></div>'
+                f'<div class="sub">{_esc((dep.get("requested_at") or "")[:19].replace("T", " "))} '
+                f'· by {_esc(dep.get("requested_by", "?"))} · id {_esc(dep["id"])}'
+                f'{_esc(ids)}{_esc(note)}</div></a>'
+            )
+        body = "\n".join(rows)
+    return (
+        f'<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">'
+        f'<title>Deploys</title><style>{staging_ui.CSS}{_DEPLOY_CSS}</style></head><body>'
+        f'<div class="hdr"><h1>Deploys</h1>'
+        f'<div class="meta"><span>{len(deps)} request(s)</span>'
+        f'<span>prod {_esc(config.GIT_SHA)} · staging {_esc(staging_sha)}</span>'
+        f'<span>executed by the host-side runner — this page only queues</span>'
+        f'<span><a href="/staging">staged writes</a></span>'
+        f'<span><a href="/">← chat</a></span></div></div>'
+        f'{body}</body></html>'
+    )
+
+
+def _render_deploy_detail(dep: dict, log_text: str) -> str:
+    st = dep.get("status", "queued")
+    active = st in deploy.ACTIVE_STATUSES
+    refresh = '<meta http-equiv="refresh" content="5">' if active else ""
+    kv = []
+    for key in ("action", "status", "requested_by", "requested_at", "started_at",
+                "finished_at", "exit_code", "git_sha_before", "git_sha_after", "error"):
+        if dep.get(key) not in (None, ""):
+            kv.append(f"<dt>{_esc(key)}</dt><dd>{_esc(dep[key])}</dd>")
+    if dep.get("record_ids"):
+        links = " ".join(
+            f'<a href="/staging/{_esc(r)}">{_esc(r)}</a>' for r in dep["record_ids"])
+        kv.append(f"<dt>records</dt><dd>{links}</dd>")
+    if dep.get("note"):
+        kv.append(f"<dt>note</dt><dd>{_esc(dep['note'])}</dd>")
+
+    rollback = ""
+    if dep.get("action") == "promote" and st == "success":
+        rollback = (
+            f'<form method="post" action="/deploys/enqueue" class="actions">'
+            f'<input type="hidden" name="action" value="rollback">'
+            f'<input type="hidden" name="note" value="rollback of promote {_esc(dep["id"])}">'
+            f'<button class="btn-reject">Roll back this promote</button></form>'
+        )
+
+    log_html = (f'<pre class="log">{_esc(log_text)}</pre>' if log_text
+                else '<div class="note">No runner log yet.</div>')
+    live = ' <span class="note">(refreshing every 5 s while active)</span>' if active else ""
+    return (
+        f'<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">{refresh}'
+        f'<title>Deploy — {_esc(dep["id"])}</title>'
+        f'<style>{staging_ui.CSS}{_DEPLOY_CSS}</style></head><body>'
+        f'<div class="hdr"><h1>{_esc(dep.get("action", "?"))} '
+        f'<span class="badge {_esc(st)}">{_esc(st)}</span></h1>'
+        f'<div class="meta"><span>id {_esc(dep["id"])}</span>'
+        f'<span><a href="/deploys">← all deploys</a></span></div></div>'
+        f'<dl class="kv">{"".join(kv)}</dl>'
+        f'{rollback}'
+        f'<h2 style="font-size:.85rem;margin:14px 0 8px;">Runner log{live}</h2>'
+        f'{log_html}</body></html>'
+    )
+
+
+@app.get("/deploys")
+async def deploys_list():
+    deps = await asyncio.to_thread(deploy.list_all)
+    v = await _staging_version()
+    staging_sha = v.get("git_sha", "?") if v else "unreachable"
+    return Response(_render_deploys_list(deps, staging_sha),
+                    media_type="text/html; charset=utf-8")
+
+
+# Declared before /deploys/{dep_id} so "count" is never captured as an id
+# (same pitfall as /staging/count — see test_deploy_count_route_order).
+@app.get("/deploys/count")
+async def deploys_count():
+    deps = await asyncio.to_thread(deploy.list_all)
+    active = sum(1 for d in deps if d.get("status") in deploy.ACTIVE_STATUSES)
+    return {"active": active, "total": len(deps)}
+
+
+@app.get("/deploys/{dep_id}")
+async def deploy_detail(dep_id: str):
+    dep = await asyncio.to_thread(deploy.get, dep_id)
+    if not dep:
+        return Response("<h1>Deploy not found</h1>", status_code=404, media_type="text/html")
+    log_text = await asyncio.to_thread(deploy.read_log, dep_id)
+    return Response(_render_deploy_detail(dep, log_text), media_type="text/html; charset=utf-8")
+
+
+@app.post("/deploys/enqueue")
+async def deploy_enqueue(request: Request):
+    """Form-posted from /deploys and /staging/{id}; queues for the host runner.
+
+    Parses the urlencoded body with stdlib — starlette's request.form() would
+    pull in python-multipart for what is always a simple HTML form post.
+    """
+    _require_prod()
+    raw = (await request.body()).decode("utf-8", errors="replace")
+    form = {k: v[0] for k, v in urllib.parse.parse_qs(raw).items()}
+    action = form.get("action", "")
+    record_ids = [r.strip() for r in form.get("record_ids", "").split(",") if r.strip()]
+    note = form.get("note", "")
+    try:
+        req = await asyncio.to_thread(
+            deploy.enqueue, action, record_ids=record_ids, note=note)
+    except ValueError as e:
+        return Response(f"<h1>Cannot queue deploy</h1><p>{_esc(e)}</p>",
+                        status_code=400, media_type="text/html")
+    log.info("deploy enqueued id=%s action=%s records=%s", req["id"], action, record_ids)
+    return RedirectResponse(f"/deploys/{req['id']}", status_code=303)
+
+
+# ── Ollama model management ───────────────────────────────────────────────────
+
+class ModelNameRequest(BaseModel):
+    # POST body (not a path param) because model names contain ':' and '/'.
+    name: str
+
+
+@app.get("/models/ollama")
+async def models_ollama():
+    _require_prod()
+    try:
+        models = await model_admin.list_installed()
+    except (httpx.HTTPError, OSError, ValueError) as e:
+        log.warning("model list failed: %s", e)
+        return JSONResponse({"ok": False, "message": f"Ollama unreachable: {e}"},
+                            status_code=502)
+    return {"ok": True, "models": models}
+
+
+@app.post("/models/ollama/pull")
+async def models_ollama_pull(body: ModelNameRequest):
+    _require_prod()
+    try:
+        repo, tag = model_admin.validate_model_name(body.name)
+    except ValueError as e:
+        return JSONResponse({"ok": False, "message": str(e)}, status_code=400)
+    # Manifest pre-check: typos fail fast with a clear message instead of an
+    # Ollama pull error minutes in.
+    try:
+        exists = await model_admin.registry_manifest_exists(repo, tag)
+    except Exception as e:
+        log.warning("registry check failed for %s:%s: %s", repo, tag, e)
+        return JSONResponse({"ok": False, "message": f"registry check failed: {e}"},
+                            status_code=502)
+    if not exists:
+        return JSONResponse(
+            {"ok": False,
+             "message": f"'{body.name}' not found in the Ollama registry — "
+                        "browse ollama.com/library for available models"},
+            status_code=404)
+    log.info("model pull start name=%s", body.name)
+    return StreamingResponse(with_keepalive(model_admin.pull_events(body.name)),
+                             media_type="text/event-stream")
+
+
+@app.post("/models/ollama/delete")
+async def models_ollama_delete(body: ModelNameRequest):
+    _require_prod()
+    try:
+        model_admin.validate_model_name(body.name)
+    except ValueError as e:
+        return JSONResponse({"ok": False, "message": str(e)}, status_code=400)
+    try:
+        ok, message = await model_admin.delete_model(body.name)
+    except (httpx.HTTPError, OSError) as e:
+        return JSONResponse({"ok": False, "message": f"Ollama unreachable: {e}"},
+                            status_code=502)
+    log.info("model delete name=%s ok=%s", body.name, ok)
+    return JSONResponse({"ok": ok, "message": message}, status_code=200 if ok else 502)
+
+
 # ── Summarize route ───────────────────────────────────────────────────────────
 
 @app.post("/summarize")
@@ -654,7 +908,9 @@ async def chat(request: Request):
             content=json.dumps({"error": f"Model not permitted: {model}"}),
             media_type="application/json",
         )
-    if mode == "local" and model not in _ALLOWED_OLLAMA_MODELS:
+    # Dynamic allowlist: any installed Ollama model (static-config fallback
+    # inside is_allowed_local_model when Ollama is down).
+    if mode == "local" and not await model_admin.is_allowed_local_model(model):
         return Response(
             status_code=400,
             content=json.dumps({"error": f"Model not permitted: {model}"}),

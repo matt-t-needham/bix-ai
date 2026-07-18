@@ -5,6 +5,10 @@ tool (bix_mcp.py). The proposal lands here as a JSON record and **never** touche
 the live tree. A human reviews the diff at /staging and approves — the only step
 that writes to disk, always human-triggered, re-validating every guard.
 
+Self-changes (targets inside bix-ai's own prod tree) are additionally redirected
+at approve time to the staging clone via apply_path_for(); the prod tree is only
+ever written by the human-gated host-side deploy runner (promote).
+
 Stdlib-only by contract: bix_mcp.py is a stdio server that imports nothing
 heavier than fs_core, and it routes through this module. So no FastAPI / httpx /
 pydantic here — only json / pathlib / datetime / uuid, mirroring memory.py.
@@ -18,7 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import config
-from fs_core import is_denied_path, is_write_denied_path
+from fs_core import is_critical_path, is_denied_path, is_write_denied_path
 
 _MAX_CONTENT_BYTES = 200_000
 
@@ -63,6 +67,32 @@ def validate_target(target_path: str) -> Path:
     return rp
 
 
+def apply_path_for(rp: Path) -> Path:
+    """Where an approved write is actually applied.
+
+    Targets inside the service's own prod tree (config.self_prod_tree()) are
+    redirected to the same relative path in the staging clone
+    (config.self_staging_tree()); everything else applies in place. This
+    process never writes the prod tree — promotion to prod is the host-side
+    deploy runner's job, human-gated and independently validated.
+    """
+    try:
+        rel = Path(rp).relative_to(config.self_prod_tree())
+    except ValueError:
+        return Path(rp)
+    return config.self_staging_tree() / rel
+
+
+def current_source_path(record: dict) -> Path:
+    """The path holding the current on-disk version of a record's target — the
+    file approve() writes (applied_to once applied). Diffs and 'current file'
+    context must read this, not target_path, or self-change diffs would compare
+    against the untouched prod tree."""
+    if record.get("applied_to"):
+        return Path(record["applied_to"])
+    return apply_path_for(Path(record["target_path"]))
+
+
 def create(target_path: str, content: str, proposed_by: str = "assistant") -> dict:
     """Validate and persist a pending write proposal. Raises ValueError if denied.
 
@@ -78,6 +108,10 @@ def create(target_path: str, content: str, proposed_by: str = "assistant") -> di
         "target_path":   str(rp),
         "content":       content,
         "status":        "pending",   # pending | approved | rejected
+        "critical":      is_critical_path(rp),          # guardrail-surface file — UI flag
+        "self_change":   apply_path_for(rp) != rp,      # applies to the staging clone
+        "applied_to":    None,   # actual path written by approve()
+        "promoted_at":   None,   # set by the deploy runner when promoted to prod
         "claude_review": None,
         "review_model":  None,
         "reviewed_at":   None,
@@ -212,20 +246,27 @@ def approve(rec_id: str) -> dict:
 
     try:
         rp = validate_target(rec["target_path"])
+        ap = apply_path_for(rp)
+        if ap != rp:
+            # Self-change redirected to the staging clone: run the full guard
+            # set on the rewritten path too (resolve/containment/denylists), so
+            # e.g. a symlinked bix-ai-staging can't escape FS_ROOT.
+            ap = validate_target(str(ap))
     except ValueError as e:
         return {"ok": False, "message": f"Re-validation failed: {e}", "record": rec}
 
     try:
-        rp.parent.mkdir(parents=True, exist_ok=True)
-        rp.write_text(rec["content"])
+        ap.parent.mkdir(parents=True, exist_ok=True)
+        ap.write_text(rec["content"])
     except OSError as e:
         # Read-only mount / permission — keep the record pending, report clearly.
         return {"ok": False, "message": f"Write failed (target not writable?): {e}", "record": rec}
 
     rec["status"]     = "approved"
     rec["applied_at"] = _now()
+    rec["applied_to"] = str(ap)
     _write_record(rec)
-    return {"ok": True, "message": f"Wrote {len(rec['content'])} bytes to {rp}", "record": rec}
+    return {"ok": True, "message": f"Wrote {len(rec['content'])} bytes to {ap}", "record": rec}
 
 
 def reject(rec_id: str) -> dict:

@@ -85,8 +85,18 @@ TOOL_DEFS = [
     },
 ]
 
+# The read-only staging role never gets write_file: omitted from the listing
+# and refused at dispatch (the env flows into the claude CLI subprocess).
+_ROLE = os.environ.get("BIX_ROLE", "prod")
+if _ROLE != "prod":
+    TOOL_DEFS = [t for t in TOOL_DEFS if t["name"] != "write_file"]
+
 
 def _execute(name: str, args: dict) -> dict:
+    if name == "write_file" and _ROLE != "prod":
+        return _tool_error(
+            f"write_file is not available: this instance runs the read-only {_ROLE} role."
+        )
     if name == "list_directory":
         raw = args.get("path", "")
         p = pathlib.Path(raw)

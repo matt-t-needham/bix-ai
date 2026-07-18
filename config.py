@@ -73,6 +73,29 @@ ROUTING_LOG       = Path("logs") / "routing.ndjson"
 MEM_DIR     = DATA_DIR / "memories"
 CONV_DIR    = DATA_DIR / "convos"
 STAGING_DIR = DATA_DIR / "staging"
+DEPLOY_DIR  = DATA_DIR / "deploy"
+
+# ── Role / build identity (self-mod + staging deploys) ────────────────────────
+# BIX_ROLE distinguishes the prod container from the read-only staging one.
+# Anything other than "prod" is treated as non-prod by the mutating-route and
+# tool-registry guards; "staging" is the only other value in use.
+BIX_ROLE = os.environ.get("BIX_ROLE", "prod")
+# Stamped by the Dockerfile via --build-arg at image build; "unknown" for dev runs.
+GIT_SHA  = os.environ.get("GIT_SHA", "unknown")
+BUILT_AT = os.environ.get("BUILT_AT", "unknown")
+# Where the prod container reaches its staging twin (bix docker network).
+STAGING_ROUTER_URL = os.environ.get("STAGING_ROUTER_URL", "http://ai-router-staging:8000")
+
+
+def self_prod_tree() -> Path:
+    """The service's own prod source tree. Function (not constant) so it tracks
+    a monkeypatched FS_ROOT at call time, like STAGING_DIR consumers do."""
+    return Path(os.environ.get("SELF_PROD_TREE", str(FS_ROOT / "bix-ai")))
+
+
+def self_staging_tree() -> Path:
+    """The git clone that approved self-changes are applied to."""
+    return Path(os.environ.get("SELF_STAGING_TREE", str(FS_ROOT / "bix-ai-staging")))
 # Size cap for the content-addressed blob store (blobstore.py). Generous default —
 # blobs are spilled artifacts (pasted logs/source/etc.), not primary storage.
 # Not derived into a BLOB_DIR constant here — blobstore.py reads config.DATA_DIR

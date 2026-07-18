@@ -13,7 +13,25 @@ _DENY_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".crt", ".cer")
 _DENY_KEYWORDS = ("credential", "secret", "password", "passwd", "token")
 
 # Directories under which writing could subvert the guardrails or privilege model.
-_WRITE_DENY_DIRS = {"scripts", ".github", "bix-ai"}
+# bix-ai's own source is deliberately NOT here anymore: self-changes are allowed
+# to be *staged*, and staging.approve() applies them to the separate staging
+# clone (bix-ai-staging), never the running prod tree. Promotion to prod is a
+# human-gated host-side runner with its own independent validation.
+_WRITE_DENY_DIRS = {"scripts", ".github"}
+
+# Guardrail/privilege surface of bix-ai itself. Writes to these are stageable
+# like any self-change, but the review UI flags them so the human reviews with
+# extra care. UI signal only — containment comes from the staging-tree redirect.
+_CRITICAL_SELF_FILES = {
+    "fs_core.py", "staging.py", "config.py", "main.py",
+    "tools.py", "bix_mcp.py", "deploy.py", "requirements.txt",
+}
+
+
+def is_critical_path(p: Path) -> bool:
+    """True for guardrail-relevant files in bix-ai's own tree. Exact part match:
+    'bix-ai-staging' is a different path part, so the staging clone never flags."""
+    return "bix-ai" in p.parts and p.name in _CRITICAL_SELF_FILES
 
 
 def is_denied_path(p: Path) -> bool:
@@ -33,10 +51,11 @@ def is_write_denied_path(p: Path) -> bool:
     """Return True if writing to this path could subvert guardrails/privilege.
 
     Applied *in addition to* is_denied_path (secrets) on any write. Covers the
-    privilege/guardrail-subverting class: shell scripts, container/CI config, and
-    bix-ai's own source (self-modification could rewrite these very checks). Does
-    not restrict ordinary app source or content elsewhere — that is the point of
-    the staged-write feature.
+    privilege/guardrail-subverting class: shell scripts, container/CI config,
+    and the scripts//.github dirs. The filename rules apply everywhere — a
+    bix-ai/deploy.sh or bix-ai/Dockerfile stays denied even though bix-ai
+    source files are stageable now. Does not restrict ordinary app source or
+    content elsewhere — that is the point of the staged-write feature.
     """
     lower = p.name.lower()
     if lower.endswith(".sh"):

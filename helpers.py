@@ -20,6 +20,59 @@ def sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+def parse_sse_event(raw: str) -> str:
+    """Event name from one SSE block ('event: x\\ndata: {...}')."""
+    for line in raw.split("\n"):
+        if line.startswith("event:"):
+            return line[6:].strip()
+    return ""
+
+
+def parse_sse_data(raw: str) -> dict:
+    """Parsed data payload from one SSE block; {} on anything malformed."""
+    for line in raw.split("\n"):
+        if line.startswith("data:"):
+            try:
+                return json.loads(line[5:].strip())
+            except Exception:
+                return {}
+    return {}
+
+
+class SSETextCollector:
+    """Accumulate the text answer (and errors) from a raw /chat SSE stream.
+
+    feed() takes arbitrary chunk boundaries (network chunks rarely align with
+    event blocks) and buffers to complete '\\n\\n'-terminated blocks. Collection
+    stops once max_chars of delta text has accumulated (overflow=True) so a
+    runaway stream can't blow up the caller's context.
+    """
+
+    def __init__(self, max_chars: int = 20_000):
+        self._buf = ""
+        self._max = max_chars
+        self.text = ""
+        self.errors: list[str] = []
+        self.overflow = False
+
+    def feed(self, chunk: str) -> None:
+        self._buf += chunk
+        while "\n\n" in self._buf:
+            block, self._buf = self._buf.split("\n\n", 1)
+            self._handle(block)
+
+    def _handle(self, block: str) -> None:
+        event = parse_sse_event(block)
+        if event == "delta":
+            if not self.overflow:
+                self.text += str(parse_sse_data(block).get("text", ""))
+                if len(self.text) >= self._max:
+                    self.text = self.text[:self._max]
+                    self.overflow = True
+        elif event == "error":
+            self.errors.append(str(parse_sse_data(block).get("message", "unknown error")))
+
+
 async def with_keepalive(gen, interval: float = 15.0):
     # Cloudflare Tunnel resets idle streams after ~100s, so emit a comment
     # heartbeat during long gaps (e.g. while a subprocess thinks between tool

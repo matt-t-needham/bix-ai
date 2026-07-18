@@ -24,6 +24,12 @@ FROM base AS runtime
 # This COPY makes `runtime` depend on `test`, so the build cannot succeed unless
 # the test stage (and therefore the suite) passed. The marker file is inert.
 COPY --from=test /app/.tests-passed /app/.tests-passed
+# Build identity for GET /version. Declared this late in the stage on purpose:
+# a new sha only invalidates these cheap trailing layers, never the pip/test ones.
+ARG GIT_SHA=unknown
+ARG BUILT_AT=unknown
+ENV GIT_SHA=${GIT_SHA} \
+    BUILT_AT=${BUILT_AT}
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')" || exit 1

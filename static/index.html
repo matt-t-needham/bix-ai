@@ -652,6 +652,7 @@
       <div class="d-fixed">
         <a class="metrics-link" href="https://metrics.bix.computer" target="_blank">Internal Metrics →</a>
         <a class="metrics-link" id="staging-link" href="/staging" target="_blank">Staged writes →</a>
+        <a class="metrics-link" id="deploys-link" href="/deploys" target="_blank">Deploys →</a>
         <a class="metrics-link" href="/routing" target="_blank">Routing dashboard →</a>
         <a class="metrics-link" href="/blobs" target="_blank">Blob store →</a>
 
@@ -672,6 +673,7 @@
               </div>
             </div>
             <div id="auth-hint" style="display:none;font-size:.71rem;color:var(--yellow);margin-bottom:8px;line-height:1.6"></div>
+            <div id="build-info" style="font-size:.7rem;color:var(--subtext);margin-bottom:6px;font-variant-numeric:tabular-nums"></div>
             <div class="hi-stats">
               <div class="hi-stat"><span class="sk">Requests</span><span class="sv" id="rs-requests">—</span></div>
               <div class="hi-stat"><span class="sk">Spilled</span><span class="sv ollama-tag" id="rs-spilled">—</span></div>
@@ -757,6 +759,31 @@
             <span id="mem-badge" style="font-weight:400;color:var(--subtext);font-size:.75rem;font-variant-numeric:tabular-nums">—</span>
           </div>
           <div id="mem-list" style="display:none;flex-direction:column;gap:6px;"></div>
+        </div>
+
+        <div class="d-section" id="models-section" style="border-top:1px solid var(--surface1);padding-top:12px">
+          <div class="d-title mem-hdr" onclick="toggleModelsList()">
+            <span style="display:flex;align-items:center;gap:6px">
+              <span class="chevron" id="models-chevron" style="font-size:.6rem;transition:transform .18s">▶</span>
+              Models
+            </span>
+            <span id="models-badge" style="font-weight:400;color:var(--subtext);font-size:.75rem;font-variant-numeric:tabular-nums">—</span>
+          </div>
+          <div id="models-body" style="display:none;flex-direction:column;gap:8px">
+            <div id="models-list" style="display:flex;flex-direction:column;gap:4px"></div>
+            <div style="display:flex;gap:6px">
+              <input id="model-pull-name" placeholder="e.g. qwen2.5:0.5b" spellcheck="false"
+                     style="flex:1;min-width:0;font:inherit;font-size:.75rem;background:var(--bg);color:var(--text);border:1px solid var(--surface1);border-radius:4px;padding:4px 8px">
+              <button id="model-pull-btn" onclick="pullModel()"
+                      style="font:inherit;font-size:.75rem;padding:4px 12px;border:none;border-radius:4px;background:var(--yellow);color:var(--bg);cursor:pointer">Pull</button>
+            </div>
+            <div id="model-pull-progress" style="display:none">
+              <div class="sys-label-row"><span class="sk" id="model-pull-status" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">…</span><span class="sv" id="model-pull-pct" style="font-variant-numeric:tabular-nums"></span></div>
+              <div class="bar-wrap"><div class="bar-fill warn" id="model-pull-bar" style="width:0%"></div></div>
+            </div>
+            <div id="models-error" style="display:none;font-size:.72rem;color:var(--red);line-height:1.5"></div>
+            <a href="https://ollama.com/library" target="_blank" style="font-size:.7rem;color:var(--blue)">browse ollama.com/library →</a>
+          </div>
         </div>
 
         <div class="d-section" style="border-top:1px solid var(--surface1);padding-top:12px">
@@ -890,9 +917,15 @@ function estimateCost(model, inTok, outTok) {
 }
 
 // ── Mode ──────────────────────────────────────────────────────────────────────
-const localModelValues = new Set(
-  [...document.querySelectorAll('#model-select option')].filter(o => o.closest('optgroup')?.label?.includes('local')).map(o => o.value)
-);
+// Rebuilt whenever the Ollama optgroup is repopulated from GET /models/ollama —
+// the change handler below depends on it, so it can't stay a parse-time const.
+let localModelValues = new Set();
+function refreshLocalModelValues() {
+  localModelValues = new Set(
+    [...document.querySelectorAll('#model-select option')].filter(o => o.closest('optgroup')?.label?.includes('local')).map(o => o.value)
+  );
+}
+refreshLocalModelValues();
 
 function setMode(m, syncModel = true) {
   mode = m;
@@ -948,7 +981,17 @@ function openDrawer()  {
   startSysPoll();
   fetchAuthStatus();
   fetchStagingCount();
+  fetchDeploysCount();
+  fetchBuildInfo();
   if (!memLoaded) loadMemory();
+  if (!modelsLoaded) loadModels();
+}
+async function fetchBuildInfo() {
+  try {
+    const v = await fetch('/version').then(r => r.json());
+    const el = document.getElementById('build-info');
+    if (el) el.textContent = `build ${(v.git_sha || '?').slice(0, 7)} · ${v.role || '?'}`;
+  } catch (_) { /* best-effort */ }
 }
 async function fetchStagingCount() {
   try {
@@ -959,6 +1002,17 @@ async function fetchStagingCount() {
     if (el) el.textContent = pending > 0
       ? `Staged writes (${pending} pending) →`
       : 'Staged writes →';
+  } catch (_) { /* best-effort */ }
+}
+async function fetchDeploysCount() {
+  try {
+    const r = await fetch('/deploys/count');
+    if (!r.ok) return;
+    const { active } = await r.json();
+    const el = document.getElementById('deploys-link');
+    if (el) el.textContent = active > 0
+      ? `Deploys (${active} active) →`
+      : 'Deploys →';
   } catch (_) { /* best-effort */ }
 }
 function closeDrawer() { drawer.classList.remove('open'); toggleBtn.classList.remove('open'); stopSysPoll(); }
@@ -1329,6 +1383,175 @@ function toggleMemList() {
   chevron.style.transform = memExpanded ? 'rotate(90deg)' : '';
   if (memExpanded) {
     if (!memLoaded) loadMemory(); else renderMemList();
+  }
+}
+
+// ── Ollama model management ───────────────────────────────────────────────────
+let modelsLoaded = false, modelsExpanded = false, modelPulling = false;
+
+function toggleModelsList() {
+  modelsExpanded = !modelsExpanded;
+  document.getElementById('models-body').style.display = modelsExpanded ? 'flex' : 'none';
+  document.getElementById('models-chevron').style.transform = modelsExpanded ? 'rotate(90deg)' : '';
+  if (modelsExpanded && !modelsLoaded) loadModels();
+}
+
+function showModelsError(msg) {
+  const el = document.getElementById('models-error');
+  el.textContent = msg || '';
+  el.style.display = msg ? 'block' : 'none';
+}
+
+function fmtGB(bytes) { return (bytes / 1e9).toFixed(1) + ' GB'; }
+
+async function loadModels() {
+  try {
+    const res = await fetch('/models/ollama');
+    const data = await res.json();
+    if (!res.ok || data.ok === false) {
+      showModelsError(data.message || `HTTP ${res.status}`);
+      return;
+    }
+    modelsLoaded = true;
+    showModelsError('');
+    renderModelsList(data.models || []);
+    populateModelPicker(data.models || []);
+  } catch (e) {
+    showModelsError('Model list unavailable: ' + e.message);
+  }
+}
+
+function renderModelsList(models) {
+  document.getElementById('models-badge').textContent = models.length || '—';
+  const list = document.getElementById('models-list');
+  list.textContent = '';
+  if (!models.length) {
+    list.innerHTML = '<span class="d-empty">No models installed</span>';
+    return;
+  }
+  for (const m of models) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:7px;font-size:.75rem;padding:2px 0';
+    const dot = document.createElement('span');
+    dot.style.cssText = `width:6px;height:6px;border-radius:50%;flex-shrink:0;background:${m.loaded ? 'var(--yellow)' : 'var(--surface1)'}`;
+    dot.title = m.loaded ? 'loaded in Ollama' : 'not loaded';
+    const name = document.createElement('span');
+    name.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)';
+    name.textContent = m.name;
+    const size = document.createElement('span');
+    size.style.cssText = 'color:var(--subtext);font-variant-numeric:tabular-nums;flex-shrink:0';
+    size.textContent = fmtGB(m.size);
+    const del = document.createElement('button');
+    del.textContent = '✕';
+    del.title = `Delete ${m.name}`;
+    del.style.cssText = 'background:transparent;border:none;color:var(--subtext);cursor:pointer;font-size:.75rem;padding:0 2px;flex-shrink:0';
+    del.addEventListener('mouseover', () => del.style.color = 'var(--red)');
+    del.addEventListener('mouseout',  () => del.style.color = 'var(--subtext)');
+    del.addEventListener('click', () => deleteModel(m.name));
+    row.append(dot, name, size, del);
+    list.appendChild(row);
+  }
+}
+
+function populateModelPicker(models) {
+  if (!models.length) return;   // keep the hardcoded fallback options
+  const group = [...document.querySelectorAll('#model-select optgroup')]
+    .find(g => g.label?.includes('local'));
+  if (!group) return;
+  const selected = modelSel.value;
+  group.textContent = '';
+  for (const m of models) {
+    const opt = document.createElement('option');
+    opt.value = m.name;
+    opt.textContent = m.name;
+    group.appendChild(opt);
+  }
+  refreshLocalModelValues();
+  // keep the current selection when it still exists (Claude options are untouched)
+  if ([...modelSel.options].some(o => o.value === selected)) modelSel.value = selected;
+  else { modelSel.value = model = modeDefaults.ai; if (mode === 'local') setMode('ai', false); }
+}
+
+async function deleteModel(name) {
+  if (!confirm(`Delete ${name} from Ollama? Re-pulling will re-download it.`)) return;
+  try {
+    const res = await fetch('/models/ollama/delete', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok === false) { showModelsError(data.message || `HTTP ${res.status}`); return; }
+    showModelsError('');
+    loadModels();
+  } catch (e) { showModelsError('Delete failed: ' + e.message); }
+}
+
+async function pullModel() {
+  if (modelPulling) return;
+  const input = document.getElementById('model-pull-name');
+  const name = input.value.trim();
+  if (!name) { input.focus(); return; }
+  const btn      = document.getElementById('model-pull-btn');
+  const progress = document.getElementById('model-pull-progress');
+  const statusEl = document.getElementById('model-pull-status');
+  const pctEl    = document.getElementById('model-pull-pct');
+  const bar      = document.getElementById('model-pull-bar');
+  modelPulling = true;
+  btn.disabled = true; btn.style.opacity = '.5';
+  showModelsError('');
+  progress.style.display = 'block';
+  statusEl.textContent = 'checking registry…'; pctEl.textContent = ''; bar.style.width = '0%';
+  try {
+    const res = await fetch('/models/ollama/pull', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    if (!res.headers.get('content-type')?.includes('event-stream')) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.message || `HTTP ${res.status}`);
+    }
+    // Same SSE parse pattern as the chat reader.
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const blocks = buf.split('\n\n');
+      buf = blocks.pop();
+      for (const block of blocks) {
+        let evType = null, dataStr = null;
+        for (const line of block.split('\n')) {
+          if      (line.startsWith('event:')) evType  = line.slice(6).trim();
+          else if (line.startsWith('data:'))  dataStr = line.slice(5).trim();
+        }
+        if (!evType || !dataStr) continue;
+        let data;
+        try { data = JSON.parse(dataStr); } catch { continue; }
+        if (evType === 'pull_progress') {
+          statusEl.textContent = data.status || '…';
+          if (data.total) {
+            const pct = Math.min(100, (data.completed || 0) / data.total * 100);
+            bar.style.width = pct.toFixed(1) + '%';
+            pctEl.textContent = pct.toFixed(0) + '%';
+          }
+        } else if (evType === 'pull_done') {
+          statusEl.textContent = 'done'; bar.style.width = '100%'; pctEl.textContent = '100%';
+          input.value = '';
+          loadModels();
+        } else if (evType === 'error') {
+          throw new Error(data.message || 'pull failed');
+        }
+      }
+    }
+  } catch (e) {
+    showModelsError('Pull failed: ' + e.message);
+    progress.style.display = 'none';
+  } finally {
+    modelPulling = false;
+    btn.disabled = false; btn.style.opacity = '';
+    setTimeout(() => { if (!modelPulling) progress.style.display = 'none'; }, 4000);
   }
 }
 

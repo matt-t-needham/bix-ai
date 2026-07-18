@@ -1,29 +1,16 @@
-import json
 import logging
 
 import routing
-from helpers import ollama_chat, sse
+from helpers import ollama_chat, parse_sse_data, parse_sse_event, sse
 from streaming.claude import _stream_claude
 from streaming.ollama import _stream_ollama
 
 log = logging.getLogger("router")
 
-
-def _parse_sse_event(raw: str) -> str:
-    for line in raw.split("\n"):
-        if line.startswith("event:"):
-            return line[6:].strip()
-    return ""
-
-
-def _parse_sse_data(raw: str) -> dict:
-    for line in raw.split("\n"):
-        if line.startswith("data:"):
-            try:
-                return json.loads(line[5:].strip())
-            except Exception:
-                return {}
-    return {}
+# Back-compat aliases — the parse helpers moved to helpers.py (Phase 5) so the
+# staging-verification tools can share them.
+_parse_sse_event = parse_sse_event
+_parse_sse_data  = parse_sse_data
 
 
 async def _stream_local_first(

@@ -23,7 +23,8 @@ DENIED = [
     "Dockerfile",                   # container config
     "docker-compose.yml",          # compose config
     ".github/workflows/ci.yml",    # CI
-    "bix-ai/main.py",              # self-modification
+    "bix-ai/deploy.sh",            # filename rules still bite inside bix-ai
+    "bix-ai/Dockerfile",
 ]
 
 
@@ -155,6 +156,71 @@ def test_approve_read_only_target_stays_pending(env):
     result = staging.approve(rec["id"])
     assert result["ok"] is False
     assert staging.get(rec["id"])["status"] == "pending"
+
+
+# ── Self-changes (bix-ai's own source → staging-tree redirect) ────────────────
+
+def test_self_change_flags(env):
+    rec = staging.create(str(env / "bix-ai" / "main.py"), "# new")
+    assert rec["self_change"] is True
+    assert rec["critical"] is True
+    assert rec["applied_to"] is None and rec["promoted_at"] is None
+
+
+def test_self_change_noncritical_file(env):
+    rec = staging.create(str(env / "bix-ai" / "static" / "index.html"), "<html>")
+    assert rec["self_change"] is True
+    assert rec["critical"] is False
+
+
+def test_non_self_change_not_flagged(env):
+    rec = staging.create(str(env / "bix-blog" / "post.md"), "hi")
+    assert rec["self_change"] is False
+    assert rec["critical"] is False
+
+
+def test_staging_clone_paths_not_flagged_critical(env):
+    # bix-ai-staging is a distinct path part — exact-part match must not fire.
+    rec = staging.create(str(env / "bix-ai-staging" / "main.py"), "# direct")
+    assert rec["critical"] is False
+    assert rec["self_change"] is False
+
+
+def test_approve_self_change_writes_staging_tree_only(env):
+    prod_file = env / "bix-ai" / "strategy.py"
+    prod_file.parent.mkdir(parents=True)
+    prod_file.write_text("# prod version")
+    rec = staging.create(str(prod_file), "# proposed")
+    result = staging.approve(rec["id"])
+    assert result["ok"] is True
+    assert prod_file.read_text() == "# prod version"          # prod untouched
+    staged = env / "bix-ai-staging" / "strategy.py"
+    assert staged.read_text() == "# proposed"
+    rec = staging.get(rec["id"])
+    assert rec["applied_to"] == str(staged)
+    assert staging.current_source_path(rec) == staged
+
+
+def test_approve_non_self_change_applies_in_place(env):
+    target = env / "bix-blog" / "post.md"
+    rec = staging.create(str(target), "content")
+    assert staging.approve(rec["id"])["ok"] is True
+    assert target.read_text() == "content"
+    assert staging.get(rec["id"])["applied_to"] == str(target)
+
+
+def test_approve_refused_when_staging_tree_symlinks_out(env, tmp_path):
+    # bix-ai-staging symlinked outside FS_ROOT: the rewritten apply path must
+    # be re-validated and refused; the record stays pending.
+    outside = tmp_path.parent / "evil_staging_tree"
+    outside.mkdir(exist_ok=True)
+    (env / "bix-ai-staging").symlink_to(outside)
+    rec = staging.create(str(env / "bix-ai" / "helpers.py"), "# x")
+    result = staging.approve(rec["id"])
+    assert result["ok"] is False
+    assert "Re-validation failed" in result["message"]
+    assert staging.get(rec["id"])["status"] == "pending"
+    assert not (outside / "helpers.py").exists()
 
 
 # ── Comments ──────────────────────────────────────────────────────────────────
