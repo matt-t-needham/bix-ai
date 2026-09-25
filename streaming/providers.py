@@ -10,8 +10,14 @@ Normalised events yielded by stream_turn (plain dicts, `kind` discriminated):
     tool_input_delta  {index, partial_json}
     tool_end          {index}
     provider_error    {message}                     — upstream refused; loop stops
-    turn_end          {tool_use: bool, tool_calls: [{id, name, input}]}
-                                                    — always last unless error
+    working           {message}                     — Ollama only: progress heartbeat
+                                                    while output accumulates invisibly
+                                                    (tool JSON / retry); loop maps it
+                                                    to a `status` SSE event
+    turn_end          {tool_use: bool, truncated: bool, tool_calls: [{id, name, input}]}
+                                                    — always last unless error;
+                                                    truncated = output cap hit
+                                                    (max_tokens / length stop)
 
 Messages stay provider-native end to end: the loop never inspects them, it
 only threads them through append_assistant_turn / append_tool_results /
@@ -33,10 +39,11 @@ local leg share one implementation with no forced terminal tool.
 """
 import json
 import logging
+import time
 
 from forge import ErrorTracker, rescue_tool_call, retry_nudge
 
-from config import ANTHROPIC_URL, OLLAMA_URL
+from config import ANTHROPIC_URL, OLLAMA_URL, PROGRESS_HEARTBEAT_SECONDS
 from strategy import estimate_tokens
 
 log = logging.getLogger("router")
@@ -224,6 +231,7 @@ class AnthropicProvider:
         yield {
             "kind": "turn_end",
             "tool_use": stop_reason == "tool_use",
+            "truncated": stop_reason == "max_tokens",
             "tool_calls": [
                 {"id": b["id"], "name": b["name"], "input": _parse_input(b["input_json"])}
                 for _, b in sorted(self._blocks.items()) if b["type"] == "tool_use"
@@ -279,6 +287,7 @@ class OllamaProvider:
         self.system_sentinel = system_sentinel  # injected system msg to strip from history
         self.on_exhausted = on_exhausted  # "best_effort" | "escalate"
         self.max_retries = max_retries
+        self.progress_interval = PROGRESS_HEARTBEAT_SECONDS  # tests set 0 to force `working` events
         self._tool_names = [t["function"]["name"] for t in tools]
         self.output_chars = 0
         self._tool_map: dict = {}
@@ -312,10 +321,15 @@ class OllamaProvider:
         """One raw HTTP round-trip. Yields text_delta only when live=True —
         a discarded retry attempt still burns real inference time (tracked
         via output_chars regardless), it just isn't shown to the user until
-        it's accepted. Always ends with one attempt_end."""
+        it's accepted. Always ends with one attempt_end.
+
+        While output accumulates invisibly (tool-call JSON, or buffered
+        retry text), a throttled `working` event carries a growing byte
+        count to the UI — proof of life during minutes-long generation."""
         text = ""
         tool_map: dict = {}
         finish_reason = None
+        last_progress = time.monotonic()
 
         async with self.client_factory() as client:
             async with client.stream("POST", OLLAMA_URL, json={
@@ -355,6 +369,18 @@ class OllamaProvider:
 
                     for tc in delta.get("tool_calls") or []:
                         self._accumulate_tool_call(tc, tool_map)
+
+                    hidden = bool(tool_map) or (bool(text) and not live)
+                    if hidden and time.monotonic() - last_progress >= self.progress_interval:
+                        last_progress = time.monotonic()
+                        if tool_map:
+                            names = ", ".join(e["name"] or "tool"
+                                              for _, e in sorted(tool_map.items()))
+                            chars = sum(len(e["arguments_str"]) for e in tool_map.values())
+                            msg = f"{self.model} writing {names} call… {chars:,} chars"
+                        else:
+                            msg = f"{self.model} retrying… {len(text):,} chars"
+                        yield {"kind": "working", "message": msg}
 
         yield {"kind": "attempt_end", "text": text, "tool_map": tool_map,
                "finish_reason": finish_reason}
@@ -417,6 +443,8 @@ class OllamaProvider:
                     return
                 if ev["kind"] == "text_delta":
                     yield ev
+                elif ev["kind"] == "working":
+                    yield ev
                 elif ev["kind"] == "attempt_end":
                     text, tool_map, finish_reason = ev["text"], ev["tool_map"], ev["finish_reason"]
 
@@ -456,6 +484,8 @@ class OllamaProvider:
                 self._response_text, self._tool_map = text, tool_map
                 break
 
+            yield {"kind": "working",
+                   "message": f"{self.model} produced a garbled tool call — retrying (attempt {attempt_no + 2})…"}
             attempt_messages = attempt_messages + [
                 _ollama_assistant_message(text, tool_map),
                 {"role": "user", "content": retry_nudge(text)},
@@ -474,6 +504,7 @@ class OllamaProvider:
         yield {
             "kind": "turn_end",
             "tool_use": tool_use,
+            "truncated": finish_reason == "length",
             "tool_calls": [
                 {"id": tc["id"], "name": tc["name"], "input": _parse_input(tc["arguments_str"])}
                 for _, tc in sorted(self._tool_map.items())

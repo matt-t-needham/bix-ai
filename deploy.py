@@ -86,7 +86,7 @@ def enqueue(action: str, *, record_ids: list[str] | None = None,
                 raise ValueError(f"record {rid} is not a bix-ai self-change")
 
     request = {
-        "id":           uuid.uuid4().hex[:12],
+        "id":           uuid.uuid4().hex,
         "action":       action,
         "record_ids":   record_ids,
         "note":         str(note or ""),

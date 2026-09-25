@@ -102,7 +102,7 @@ def create(target_path: str, content: str, proposed_by: str = "assistant") -> di
     if len(content.encode("utf-8", errors="replace")) > _MAX_CONTENT_BYTES:
         raise ValueError(f"content too large (max {_MAX_CONTENT_BYTES // 1000} KB)")
     record = {
-        "id":            uuid.uuid4().hex[:12],
+        "id":            uuid.uuid4().hex,
         "created_at":    _now(),
         "proposed_by":   proposed_by,
         "target_path":   str(rp),

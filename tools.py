@@ -15,6 +15,7 @@ import httpx
 import blobstore
 import config
 import logtools
+import deploy
 import staging
 import steam
 from config import CONV_DIR, FS_ROOT, OLLAMA_DEFAULT_MODEL
@@ -71,10 +72,13 @@ async def _tool_read_file(tool_input: dict) -> str:
 async def _tool_stage_write(tool_input: dict) -> str:
     target  = tool_input.get("target_path") or tool_input.get("path", "")
     content = tool_input.get("content", "")
+    # Injected by the streaming adapters (not a model-supplied field): the
+    # model actually running this tool call, recorded as the record's author.
+    proposer = tool_input.get("_acting_model") or "assistant"
     if not target:
         return "No target_path provided."
     try:
-        rec = await asyncio.to_thread(staging.create, target, content, "assistant")
+        rec = await asyncio.to_thread(staging.create, target, content, proposer)
     except ValueError as e:
         return f"Cannot stage write: {e}"
     except Exception as e:
@@ -85,6 +89,46 @@ async def _tool_stage_write(tool_input: dict) -> str:
         f"{rec['target_path']} — it will only be applied after a human "
         "approves it at /staging."
     )
+
+
+async def _tool_list_deploys(tool_input: dict) -> str:
+    deps = await asyncio.to_thread(deploy.list_all)
+    if not deps:
+        return "No deploys."
+    lines = []
+    for d in deps[:10]:
+        tag  = f" [{d['summary_tag']}]" if d.get("summary_tag") else ""
+        note = f" — {d['note']}" if d.get("note") else ""
+        lines.append(f"{d['id']}  {d.get('status', 'queued'):8}  "
+                     f"{d.get('action', '?'):14}  "
+                     f"{(d.get('requested_at') or '')[:19]}{tag}{note}")
+    return "\n".join(lines)
+
+
+async def _tool_read_deploy(tool_input: dict) -> str:
+    dep_id = str(tool_input.get("deploy_id", "")).strip()
+    if not dep_id:
+        return "No deploy_id provided."
+    dep = await asyncio.to_thread(deploy.get, dep_id)
+    if not dep:
+        # Tolerate a prefix — IDs are long and models truncate them.
+        matches = [d for d in await asyncio.to_thread(deploy.list_all)
+                   if d["id"].startswith(dep_id)]
+        if len(matches) != 1:
+            return f"No deploy found with id {dep_id}."
+        dep = matches[0]
+    lines = [f"{k}: {dep[k]}" for k in (
+        "id", "action", "status", "requested_by", "requested_at", "started_at",
+        "finished_at", "exit_code", "git_sha_before", "git_sha_after", "note",
+        "error", "summary_tag", "summary_text",
+    ) if dep.get(k) not in (None, "")]
+    if dep.get("record_ids"):
+        lines.append("staging record_ids: " + ", ".join(dep["record_ids"])
+                     + "  (records live at data/staging/<id>.json)")
+    log_tail = await asyncio.to_thread(deploy.read_log, dep["id"])
+    if log_tail:
+        lines += ["", "--- runner log (tail) ---", log_tail]
+    return "\n".join(lines)
 
 
 async def _tool_list_steam_games(tool_input: dict) -> str:
@@ -308,6 +352,41 @@ TOOL_TABLE: list[dict] = [
         },
         "handler": _tool_stage_write,
         "brief": "Propose a file write — staged for human review, never applied directly",
+    },
+    {
+        "name": "read_deploy",
+        "description": (
+            "Look up a deploy by its ID: status, timestamps, error, the local "
+            "model's summary, linked staging record ids, and the tail of the "
+            "runner's build/deploy log (including verbatim pytest output on a "
+            "failed build). Call this FIRST whenever the user references a "
+            "deploy id or asks why a deploy failed — do not go hunting through "
+            "log files for deploy results. A unique id prefix is accepted."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "deploy_id": {
+                    "type": "string",
+                    "description": "The deploy's hex id (full, or a unique prefix).",
+                },
+            },
+            "required": ["deploy_id"],
+        },
+        "handler": _tool_read_deploy,
+        "brief": "Deploy status + runner log by deploy ID",
+    },
+    {
+        "name": "list_deploys",
+        "description": (
+            "List recent deploys (active first, then newest; max 10): id, status, action, "
+            "requested time, summary tag, and note. Call this when the user "
+            "asks about deploys without giving an id, or to find the deploy "
+            "they mean; then use read_deploy for the full log."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+        "handler": _tool_list_deploys,
+        "brief": "List recent deploys with status and summary tags",
     },
     {
         "name": "list_directory",

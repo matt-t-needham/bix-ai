@@ -119,6 +119,14 @@
     }
     .use-api-btn:hover { border-color: var(--text); }
 
+    .budget {
+      font-size: .68rem;
+      color: var(--subtext);
+      font-variant-numeric: tabular-nums;
+      border-left: 1px solid var(--surface1);
+      padding-left: 7px;
+    }
+    .budget:empty { display: none; }
     .status {
       display: flex;
       align-items: center;
@@ -616,6 +624,7 @@
     <div class="status">
       <div class="dot" id="dot"></div>
       <span id="status-label">idle</span>
+      <span id="budget-label" class="budget"></span>
     </div>
     <button id="drawer-toggle" title="Stats">≡</button>
   </header>
@@ -830,6 +839,7 @@ const inputEl     = document.getElementById('input');
 const sendBtn     = document.getElementById('send');
 const dotEl       = document.getElementById('dot');
 const lblEl       = document.getElementById('status-label');
+const budgetEl    = document.getElementById('budget-label');
 const drawer      = document.getElementById('drawer');
 const toggleBtn   = document.getElementById('drawer-toggle');
 const closeBtn    = document.getElementById('drawer-close');
@@ -848,6 +858,11 @@ msgsEl.addEventListener('scroll', () => { if (isAtBottom()) hideScrollBadge(); }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function setStatus(stage, label) { dotEl.className = 'dot ' + stage; lblEl.textContent = label; }
+function fmtTok(n) { return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n); }
+function setBudget(d) {
+  budgetEl.textContent = d ? `turn ${d.turn}/${d.max_turns} · ${d.elapsed_s}s/${d.max_seconds}s`
+                             + ` · ${fmtTok(d.tokens)}/${fmtTok(d.max_tokens)} tok` : '';
+}
 function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function fmtModel(m) { return m.replace(/^claude-/,'').replace(/-\d{8}$/,''); }
 function barClass(p) { return p > 85 ? 'bar-fill crit' : p > 70 ? 'bar-fill warn' : 'bar-fill'; }
@@ -1622,6 +1637,7 @@ async function send() {
   inputEl.value = '';
   inputEl.style.height = '';
   setBusy(true);
+  setBudget(null);
 
   // Staged-change context rides along inside the first sent message (a lone
   // context turn would create consecutive user messages, which not every
@@ -1746,6 +1762,9 @@ async function send() {
 
         } else if (evType === 'status') {
           setStatus(data.stage, data.message);
+
+        } else if (evType === 'budget') {
+          setBudget(data);
 
         } else if (evType === 'preprocess') {
           Object.assign(currentReq, {

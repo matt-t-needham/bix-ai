@@ -14,8 +14,8 @@ import httpx
 
 import compact
 import strategy
-from config import LOOP_MAX_SECONDS, LOOP_MAX_TOKENS, OLLAMA_TOOL_MODEL
-from helpers import _agg, _write_routing_event, ollama_chat, sse
+from config import LOOP_MAX_SECONDS, LOOP_MAX_TOKENS, OLLAMA_TOOL_MODEL, PROGRESS_HEARTBEAT_SECONDS
+from helpers import _agg, _write_routing_event, ollama_chat, sse, with_progress
 from identity import identity_system_prompt
 from streaming.loop import run_tool_loop
 from streaming.providers import OllamaProvider
@@ -105,12 +105,23 @@ async def _stream_ollama(
         system_sentinel=OLLAMA_SYSTEM,
         on_exhausted=on_exhausted,
     )
-    async for event in run_tool_loop(
-        provider, current_messages,
-        execute_tool=_execute_tool,
-        max_tokens_budget=LOOP_MAX_TOKENS, max_seconds=LOOP_MAX_SECONDS,
-        stats=stats,
-        preprocess_ms=preprocess_ms,
-        clock=time.monotonic,
+    # with_progress covers the fully-silent gaps the provider can't see from
+    # inside a blocked read — chiefly prompt eval, which runs minutes on this
+    # host's Vulkan setup before the first chunk arrives.
+    async for event in with_progress(
+        run_tool_loop(
+            provider, current_messages,
+            # Late-bound module-global lookup (tests patch _execute_tool); the
+            # injected _acting_model attributes staged writes to this model —
+            # stage_write only, so every other tool's input stays byte-identical.
+            execute_tool=lambda n, i: _execute_tool(
+                n, {**i, "_acting_model": model} if n == "stage_write" else i),
+            max_tokens_budget=LOOP_MAX_TOKENS, max_seconds=LOOP_MAX_SECONDS,
+            stats=stats,
+            preprocess_ms=preprocess_ms,
+            clock=time.monotonic,
+        ),
+        PROGRESS_HEARTBEAT_SECONDS,
+        label=model,
     ):
         yield event

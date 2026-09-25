@@ -8,6 +8,17 @@
       }
     },
     {
+      "event": "budget",
+      "data": {
+        "turn": 1,
+        "max_turns": 50,
+        "elapsed_s": 0,
+        "max_seconds": 1200,
+        "tokens": 703,
+        "max_tokens": 1000000
+      }
+    },
+    {
       "event": "delta",
       "data": {
         "text": "checking"
@@ -90,6 +101,17 @@
       "data": {
         "stage": "streaming",
         "message": "Streaming from Ollama (gemma4:26b)\u2026"
+      }
+    },
+    {
+      "event": "budget",
+      "data": {
+        "turn": 2,
+        "max_turns": 50,
+        "elapsed_s": 0,
+        "max_seconds": 1200,
+        "tokens": 827,
+        "max_tokens": 1000000
       }
     },
     {

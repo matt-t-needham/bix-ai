@@ -102,7 +102,11 @@ async def _stream_claude(
     )
     async for event in run_tool_loop(
         provider, req_body["messages"],
-        execute_tool=_execute_tool,
+        # Late-bound module-global lookup (tests patch _execute_tool); the
+        # injected _acting_model attributes staged writes to this model —
+        # stage_write only, so every other tool's input stays byte-identical.
+        execute_tool=lambda n, i: _execute_tool(
+            n, {**i, "_acting_model": model} if n == "stage_write" else i),
         max_tokens_budget=LOOP_MAX_TOKENS, max_seconds=LOOP_MAX_SECONDS,
         stats=stats, preprocess_ms=preprocess_ms,
         clock=time.monotonic,

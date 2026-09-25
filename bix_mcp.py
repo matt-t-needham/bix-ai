@@ -162,7 +162,7 @@ def _execute(name: str, args: dict) -> dict:
         raw     = args.get("path", "")
         content = args.get("content", "")
         try:
-            rec = staging.create(raw, content, proposed_by="mcp")
+            rec = staging.create(raw, content, proposed_by="claude (pro)")
         except ValueError as e:
             return _tool_error(f"Cannot stage write: {e}")
         except Exception as e:

@@ -65,7 +65,7 @@ app = FastAPI()
 class ChatRequest(BaseModel):
     messages:     list[dict[str, Any]]
     model:        str = DEFAULT_MODEL
-    max_tokens:   int = 4096
+    max_tokens:   int = _MAX_TOKENS_CAP
     mode:         str = "auto"
     tool_offload: bool = False
     # mode="pro" only: claude-CLI session to resume (from the pro_session SSE
@@ -645,6 +645,8 @@ async def blob_delete(blob_hash: str):
 _DEPLOY_CSS = """
 .badge.queued { color:var(--yellow); } .badge.running { color:var(--blue); }
 .badge.success { color:var(--green); } .badge.failed { color:var(--red); }
+.badge.tag { color:var(--subtext); background:var(--surface0); border:1px solid var(--surface1);
+             border-radius:9px; padding:1px 8px; font-size:.68rem; font-weight:400; }
 .row.queued { border-left-color:var(--yellow); } .row.running { border-left-color:var(--blue); }
 .row.success { border-left-color:var(--green); } .row.failed { border-left-color:var(--red); }
 pre.log { background:#181825; padding:14px; border-radius:6px; overflow-x:auto;
@@ -677,6 +679,25 @@ async def staging_service_version():
     return {"ok": True, **v}
 
 
+def _deploy_impl_models(dep: dict) -> str:
+    """Models that implemented the staged records a deploy carries — from
+    explicit record_ids plus record ids mentioned in the note (the staging
+    page's deploy button passes the record only via the note). Original
+    proposer first, then any revising models."""
+    ids = list(dep.get("record_ids") or [])
+    ids += re.findall(r"\b[0-9a-f]{12,32}\b", dep.get("note") or "")
+    models: list[str] = []
+    for rid in ids:
+        rec = staging.get(rid)
+        if not rec:
+            continue
+        for m in [rec.get("proposed_by")] + [rv.get("by") for rv in rec.get("revisions") or []]:
+            m = (m or "").removeprefix("claude:")
+            if m and m not in models:
+                models.append(m)
+    return ", ".join(models)
+
+
 def _render_deploys_list(deps: list[dict], staging_sha: str = "?") -> str:
     if not deps:
         body = '<div class="note">No deploys yet.</div>'
@@ -686,12 +707,16 @@ def _render_deploys_list(deps: list[dict], staging_sha: str = "?") -> str:
             st = dep.get("status", "queued")
             ids = f' · records {",".join(dep["record_ids"])}' if dep.get("record_ids") else ""
             note = f' · {dep["note"]}' if dep.get("note") else ""
+            tag = (f' <span class="badge tag">{_esc(dep["summary_tag"])}</span>'
+                   if dep.get("summary_tag") else "")
+            impl = _deploy_impl_models(dep)
+            impl = f' · implemented by {impl}' if impl else ""
             rows.append(
                 f'<a class="row {_esc(st)}" href="/deploys/{_esc(dep["id"])}">'
                 f'<div class="path">{_esc(dep.get("action", "?"))} '
-                f'<span class="badge {_esc(st)}">{_esc(st)}</span></div>'
+                f'<span class="badge {_esc(st)}">{_esc(st)}</span>{tag}</div>'
                 f'<div class="sub">{_esc((dep.get("requested_at") or "")[:19].replace("T", " "))} '
-                f'· by {_esc(dep.get("requested_by", "?"))} · id {_esc(dep["id"])}'
+                f'· by {_esc(dep.get("requested_by", "?"))}{_esc(impl)} · ID {_esc(dep["id"])}'
                 f'{_esc(ids)}{_esc(note)}</div></a>'
             )
         body = "\n".join(rows)
@@ -721,6 +746,9 @@ def _render_deploy_detail(dep: dict, log_text: str) -> str:
         links = " ".join(
             f'<a href="/staging/{_esc(r)}">{_esc(r)}</a>' for r in dep["record_ids"])
         kv.append(f"<dt>records</dt><dd>{links}</dd>")
+    impl = _deploy_impl_models(dep)
+    if impl:
+        kv.append(f"<dt>implemented by</dt><dd>{_esc(impl)}</dd>")
     if dep.get("note"):
         kv.append(f"<dt>note</dt><dd>{_esc(dep['note'])}</dd>")
 
@@ -736,15 +764,23 @@ def _render_deploy_detail(dep: dict, log_text: str) -> str:
     log_html = (f'<pre class="log">{_esc(log_text)}</pre>' if log_text
                 else '<div class="note">No runner log yet.</div>')
     live = ' <span class="note">(refreshing every 5 s while active)</span>' if active else ""
+    tag = (f' <span class="badge tag">{_esc(dep["summary_tag"])}</span>'
+           if dep.get("summary_tag") else "")
+    summary = ""
+    if dep.get("summary_text"):
+        model = _esc(dep.get("summary_model") or "local model")
+        summary = (f'<div class="review"><div class="rmeta">{model} · local summary</div>'
+                   f'<div class="rbody">{_esc(dep["summary_text"])}</div></div>')
     return (
         f'<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">{refresh}'
         f'<title>Deploy — {_esc(dep["id"])}</title>'
         f'<style>{staging_ui.CSS}{_DEPLOY_CSS}</style></head><body>'
         f'<div class="hdr"><h1>{_esc(dep.get("action", "?"))} '
-        f'<span class="badge {_esc(st)}">{_esc(st)}</span></h1>'
-        f'<div class="meta"><span>id {_esc(dep["id"])}</span>'
+        f'<span class="badge {_esc(st)}">{_esc(st)}</span>{tag}</h1>'
+        f'<div class="meta"><span>ID {_esc(dep["id"])}</span>'
         f'<span><a href="/deploys">← all deploys</a></span></div></div>'
         f'<dl class="kv">{"".join(kv)}</dl>'
+        f'{summary}'
         f'{rollback}'
         f'<h2 style="font-size:.85rem;margin:14px 0 8px;">Runner log{live}</h2>'
         f'{log_html}</body></html>'

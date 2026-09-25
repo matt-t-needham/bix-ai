@@ -17,7 +17,7 @@ This is not a 3-file project. Module map:
 | `config.py` | All tunables/env vars — `OLLAMA_HOST` is the single source for every Ollama host reference |
 | `strategy.py` | Pre-pass pipeline (Phase 3 shape): per oversized block (>6000 est. tokens) it losslessly reduces (ANSI strip + duplicate-line collapse), labels via heuristics (`logfile\|source\|json\|diff\|prose`, one Ollama call only when unsure), extracts salient lines **verbatim** by type (code does the slicing; the model never rewrites a byte), spills the original to `blobstore.py`, and replaces the block with `[router-blob v2 <hash>]` pointer + excerpt. Pure logic, `preprocess(body, ollama_chat) -> (new_body, stats)`, no imports from `main.py`. Ollama is used for *classification/ranking only* — never paraphrase. The v1 paraphrase pipeline is abolished; `[router-summary v1]` blocks are still recognised and skipped |
 | `tools.py` | Single tool registry: `TOOL_TABLE` defines each tool exactly once as `{name, description, input_schema, handler}`; `FS_TOOLS` (Anthropic shape) and `OLLAMA_TOOLS` (OpenAI fn shape) are both generated from it, filtered by `config.BIX_ROLE` (`fs_tools_for_role`/`ollama_tools_for_role`; the staging role loses `_MUTATING_TOOLS` = stage_write and `_PROD_ONLY_TOOLS` = check_staging/ask_staging, and `_execute_tool` refuses them at call time as defence in depth). `check_staging`/`ask_staging` query the staging twin over the docker network (`config.STAGING_ROUTER_URL`) to verify deployed self-changes. Add a tool = add one table entry |
-| `deploy.py` | Deploy queue: file-based handoff to the host-side runner (`bix-infra/scripts/deploy-runner.py`). The container only enqueues (`deploy-staging`/`promote`/`rollback`) and reads results — no docker socket, it never executes deploys. Atomic tmp+`os.replace` writes; queue/processing/results/logs under `config.DEPLOY_DIR`. `/deploys` UI routes live in main.py; **`/deploys/count` must stay declared before `/deploys/{dep_id}`** (same pitfall as `/staging/count`) |
+| `deploy.py` | Deploy queue: file-based handoff to the host-side runner (`bix-infra/scripts/deploy-runner.py`). The container only enqueues (`deploy-staging`/`promote`/`rollback`) and reads results — no docker socket, it never executes deploys. Atomic tmp+`os.replace` writes; queue/processing/results/logs under `config.DEPLOY_DIR`. Backs the `read_deploy`/`list_deploys` tools (deploy status + runner log by ID, both roles). `/deploys` UI routes live in main.py; **`/deploys/count` must stay declared before `/deploys/{dep_id}`** (same pitfall as `/staging/count`) |
 | `model_admin.py` | Ollama model management: free-text pulls validated by name regex + a registry manifest pre-check (typos 400 fast), NDJSON→SSE pull translation (`pull_progress`/`pull_done` events on `POST /models/ollama/pull`, wrapped in `with_keepalive`), delete, and the dynamic mode=local allowlist (`is_allowed_local_model` = any installed model, 30 s cached `/api/tags`; falls back to the static `_ALLOWED_OLLAMA_MODELS` when Ollama is down) |
 | `compact.py` | Conversation-tail compaction (api path). When narrative tokens (blob excerpts excluded) exceed `COMPACT_THRESHOLD_TOKENS`, turns older than the last `COMPACT_KEEP_TURNS` user turns fold into a `[router-compact v1]` user+assistant pair via one Ollama call; the tail stays byte-identical; blob-pointer hashes are re-listed inside the compact body. Compacted history rides the `history` event so the client adopts it (converges — the compact body accretes on re-growth, is never re-summarised). Pure logic, injected `ollama_chat`, fails open |
 | `fs_core.py` | Path security — `is_denied_path` (secrets), `is_write_denied_path` (scripts/CI/shell/container config), `is_critical_path` (bix-ai guardrail-surface files — a UI flag, not a deny) |
@@ -85,6 +85,7 @@ pytest itself never ships in the runtime image.
 | `status` | `{stage, message}` | checking / summarising / streaming (the `summarising` stage's message reads "Preparing context…" — it covers the whole pre-pass, not just model calls) |
 | `preprocess` | `{summarised, spilled, compacted, skipped, failed, preprocess_ms}` | fires after `strategy.preprocess` + `compact.compact`, before the model stream. `spilled` = blocks pointered to the blob store; `compacted` = 1 if the conversation tail was folded this request; `summarised` is always 0 now (kept for wire compatibility with v1). Note `compacted` is NOT in the `metrics` event — adding it there would drift the golden SSE fixtures |
 | `input_tokens` | `{count}` | fires on `message_start` (turn 0 only across a tool loop) |
+| `budget` | `{turn, max_turns, elapsed_s, max_seconds, tokens, max_tokens}` | fires at the start of every tool-loop turn (claude/ollama paths) — per-turn governor gauge, rendered next to the status label |
 | `delta` | `{text}` | streaming text chunk |
 | `tool_start` | `{index, name, id}` | tool call begins |
 | `tool_input` | `{index, partial_json}` | streaming tool input |
@@ -165,6 +166,15 @@ The UI uses the **Catppuccin Mocha** palette via CSS variables. Do not introduce
 
 Imported and adapted from the shared project standards:
 
+- **Fail gracefully; surface every failure; never patch over one — even temporarily.**
+  A limit breach or upstream failure must never masquerade as success (no clean
+  `done` after a truncated tool call) and should degrade the turn, not the whole
+  stream: report what happened, what already ran, and leave partial work visible.
+  Governor caps (`LOOP_MAX_TURNS`/`SECONDS`/`TOKENS`) are runaway backstops sized
+  so legitimate work never hits them; the per-turn `budget` SSE event exists so
+  limits are visible *before* they bite. "Temporarily" ignoring an error (a bare
+  `except: pass` to ship something, a TODO to surface it later) is how failures
+  get permanently invisible — surface it now or don't merge it.
 - **Never swallow errors silently.** Log via `log.error()` or `log.warning()`, then emit `sse("error", {"message": str(e)})` so the client knows. Don't return a 200 with a silent failure.
 - **Never hide preprocessing failures.** If `strategy.preprocess()` raises, log the error and forward the original body — don't silently drop messages.
 - **Never interpolate variables into log messages with `%s` and then use f-strings** — pick one style per call site. The codebase uses `log.info("msg key=%s", val)` style throughout; keep it consistent.

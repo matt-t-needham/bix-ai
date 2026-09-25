@@ -12,11 +12,10 @@ streaming.claude / streaming.ollama attributes exactly as before.
 import logging
 import time
 
+from config import LOOP_MAX_TURNS as MAX_TURNS
 from helpers import sse
 
 log = logging.getLogger("router")
-
-MAX_TURNS = 10
 
 
 def _metrics(token_fields: dict, elapsed_ms: int, ttft_ms: int | None,
@@ -46,6 +45,7 @@ async def run_tool_loop(
     start = clock()
     ttft_ms = None
     current_messages = list(messages)
+    tools_run: list[str] = []
 
     for turn in range(MAX_TURNS):
         elapsed_so_far = clock() - start
@@ -57,8 +57,18 @@ async def run_tool_loop(
                 provider.breach_token_fields(current_messages),
                 round(elapsed_so_far * 1000), ttft_ms, preprocess_ms, stats,
             ))
-            yield sse("error", {"message": "Loop budget exceeded (token or wall-clock limit) — stopping."})
+            msg = "Loop budget exceeded (token or wall-clock limit) — stopping."
+            if tools_run:
+                msg += f" Tools already executed: {', '.join(tools_run)}."
+            yield sse("error", {"message": msg})
             return
+
+        # Per-turn governor gauge: limits should be visible before they bite.
+        yield sse("budget", {
+            "turn": turn + 1, "max_turns": MAX_TURNS,
+            "elapsed_s": round(elapsed_so_far), "max_seconds": round(max_seconds),
+            "tokens": budget, "max_tokens": max_tokens_budget,
+        })
 
         log.info("tool_turn provider=%s turn=%d msgs=%d", provider.name, turn, len(current_messages))
         turn_end = None
@@ -78,6 +88,8 @@ async def run_tool_loop(
                     yield sse("tool_input", {"index": ev["index"], "partial_json": ev["partial_json"]})
                 elif kind == "tool_end":
                     yield sse("tool_end", {"index": ev["index"]})
+                elif kind == "working":
+                    yield sse("status", {"stage": "streaming", "message": ev["message"]})
                 elif kind == "provider_error":
                     yield sse("error", {"message": ev["message"]})
                     return
@@ -86,6 +98,22 @@ async def run_tool_loop(
         except Exception as e:
             log.error("upstream error provider=%s: %s", provider.name, e)
             yield sse("error", {"message": str(e)})
+            return
+
+        if (turn_end is not None and turn_end.get("truncated")
+                and turn_end["tool_calls"] and not turn_end["tool_use"]):
+            # Output cap hit mid-tool-call: the partial tool JSON already
+            # streamed to the UI, but the call can't run — surface a real
+            # error instead of a clean `done` that looks like an answer.
+            log.warning("turn truncated mid-tool-call provider=%s turn=%d tools=%s",
+                        provider.name, turn,
+                        ",".join(tc["name"] for tc in turn_end["tool_calls"]))
+            elapsed = clock() - start
+            yield sse("metrics", _metrics(
+                provider.final_token_fields(elapsed),
+                round(elapsed * 1000), ttft_ms, preprocess_ms, stats,
+            ))
+            yield sse("error", {"message": "Response hit the output-token limit mid-tool-call — the result is incomplete. Raise max_tokens or ask for a smaller change."})
             return
 
         if turn_end is None or not turn_end["tool_use"]:
@@ -106,7 +134,9 @@ async def run_tool_loop(
 
         results = []
         for tc in turn_end["tool_calls"]:
-            log.info("tool call name=%s path=%s", tc["name"], tc["input"].get("path", ""))
+            log.info("tool call name=%s path=%s", tc["name"],
+                     tc["input"].get("path") or tc["input"].get("target_path", ""))
+            tools_run.append(tc["name"])
             yield sse("status", {"stage": "checking", "message": f"Running {tc['name']}…"})
             t_tool = clock()
             result = await execute_tool(tc["name"], tc["input"])
@@ -121,4 +151,7 @@ async def run_tool_loop(
 
         yield sse("status", {"stage": "streaming", "message": provider.stream_status()})
 
-    yield sse("error", {"message": "Maximum tool call depth reached"})
+    msg = f"Maximum tool call depth reached ({MAX_TURNS} turns)."
+    if tools_run:
+        msg += f" Tools already executed: {', '.join(tools_run)}."
+    yield sse("error", {"message": msg})

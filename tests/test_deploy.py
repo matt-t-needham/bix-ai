@@ -176,3 +176,98 @@ def test_rollback_button_on_successful_promote(client, env):
     page = client.get(f"/deploys/{req['id']}").text
     assert "Roll back this promote" in page
     assert 'http-equiv="refresh"' not in page      # finished → no auto-refresh
+
+
+def test_summary_tag_and_text_rendered(client, env):
+    # Runner-written local-model summary fields surface in both views: the
+    # tag as a chip in the list and header, the description on the detail.
+    req = deploy.enqueue("deploy-staging")
+    (config.DEPLOY_DIR / "results").mkdir(parents=True, exist_ok=True)
+    (config.DEPLOY_DIR / "results" / f"{req['id']}.json").write_text(json.dumps({
+        "id": req["id"], "status": "failed", "exit_code": 1,
+        "summary_tag": "pytest gate failure",
+        "summary_text": "test_detail_escapes_content failed in the Docker test stage.",
+        "summary_model": "gemma4:26b",
+    }))
+    listing = client.get("/deploys").text
+    assert "pytest gate failure" in listing
+    detail = client.get(f"/deploys/{req['id']}").text
+    assert "pytest gate failure" in detail
+    assert "test_detail_escapes_content failed" in detail
+    assert "gemma4:26b · local summary" in detail
+
+
+def test_no_summary_renders_clean(client, env):
+    # Absent summary fields (Ollama down, old results) must not leave stray
+    # chips or an empty summary block.
+    req = deploy.enqueue("deploy-staging")
+    (config.DEPLOY_DIR / "results").mkdir(parents=True, exist_ok=True)
+    (config.DEPLOY_DIR / "results" / f"{req['id']}.json").write_text(
+        json.dumps({"id": req["id"], "status": "success"}))
+    detail = client.get(f"/deploys/{req['id']}").text
+    assert "local summary" not in detail
+    assert 'badge tag' not in detail
+
+
+def test_ids_are_full_length_uuids(env):
+    req = deploy.enqueue("deploy-staging")
+    assert len(req["id"]) == 32
+    rec = staging.create(str(env / "x.md"), "hi", "gemma4:26b")
+    assert len(rec["id"]) == 32
+
+
+def test_implemented_by_models_from_note_and_records(client, env):
+    rec = staging.create(str(env / "x.md"), "hi", "gemma4:26b")
+    staging.update_content(rec["id"], "hi2", "claude:claude-sonnet-4-6")
+    # staging page's deploy button passes the record via the note only
+    req = deploy.enqueue("deploy-staging", note=f"staging record {rec['id']}")
+    listing = client.get("/deploys").text
+    assert "implemented by gemma4:26b, claude-sonnet-4-6" in listing
+    assert f"ID {req['id']}" in listing
+    detail = client.get(f"/deploys/{req['id']}").text
+    assert "implemented by" in detail
+    assert "gemma4:26b, claude-sonnet-4-6" in detail
+    assert f"ID {req['id']}" in detail
+
+
+def test_stage_write_records_acting_model(env):
+    import asyncio
+    import re as _re
+    import tools
+    out = asyncio.run(tools._tool_stage_write({
+        "target_path": str(env / "y.md"), "content": "hi",
+        "_acting_model": "gemma4:26b",
+    }))
+    assert "Staged for review" in out
+    rec_id = _re.search(r"id=([0-9a-f]+)", out).group(1)
+    assert staging.get(rec_id)["proposed_by"] == "gemma4:26b"
+
+
+def test_read_deploy_tool(env):
+    import asyncio
+    import tools
+    req = deploy.enqueue("deploy-staging", note="staging record abc")
+    (config.DEPLOY_DIR / "results").mkdir(parents=True, exist_ok=True)
+    (config.DEPLOY_DIR / "results" / f"{req['id']}.json").write_text(json.dumps({
+        "id": req["id"], "status": "failed", "exit_code": 1,
+        "summary_tag": "pytest gate failure",
+    }))
+    (config.DEPLOY_DIR / "logs").mkdir(parents=True, exist_ok=True)
+    (config.DEPLOY_DIR / "logs" / f"{req['id']}.log").write_text(
+        "FAILED tests/test_x.py::test_y - AssertionError\n=== failed exit=1 ===")
+    out = asyncio.run(tools._tool_read_deploy({"deploy_id": req["id"]}))
+    assert "status: failed" in out
+    assert "pytest gate failure" in out
+    assert "FAILED tests/test_x.py::test_y" in out          # runner log tail included
+    # unique prefix resolves; unknown id doesn't
+    assert "status: failed" in asyncio.run(tools._tool_read_deploy({"deploy_id": req["id"][:8]}))
+    assert "No deploy found" in asyncio.run(tools._tool_read_deploy({"deploy_id": "ffffffff"}))
+
+
+def test_list_deploys_tool(env):
+    import asyncio
+    import tools
+    assert asyncio.run(tools._tool_list_deploys({})) == "No deploys."
+    req = deploy.enqueue("deploy-staging", note="hello")
+    out = asyncio.run(tools._tool_list_deploys({}))
+    assert req["id"] in out and "queued" in out and "hello" in out

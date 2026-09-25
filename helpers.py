@@ -73,6 +73,52 @@ class SSETextCollector:
             self.errors.append(str(parse_sse_data(block).get("message", "unknown error")))
 
 
+async def with_progress(gen, interval: float, *, label: str = "Local model"):
+    """User-visible heartbeat for slow backends (with_keepalive's sibling —
+    that one emits invisible SSE comments for Cloudflare; this one emits
+    `status` events the UI renders). When the inner stream is quiet longer
+    than `interval`, say so: on this host a local model can spend minutes in
+    prompt eval or mid-tool-JSON with zero output, which is otherwise
+    indistinguishable from a hang."""
+    aiter = gen.__aiter__()
+    next_task: asyncio.Task | None = None
+    sentinel = object()
+    start = time.monotonic()
+    last_output = None  # None until the inner stream produces anything
+
+    async def _safe_next() -> object:
+        try:
+            return await aiter.__anext__()
+        except StopAsyncIteration:
+            return sentinel
+
+    try:
+        while True:
+            if next_task is None:
+                next_task = asyncio.create_task(_safe_next())
+            try:
+                result = await asyncio.wait_for(asyncio.shield(next_task), timeout=interval)
+            except asyncio.TimeoutError:
+                if last_output is None:
+                    msg = f"{label} evaluating prompt… {round(time.monotonic() - start)}s, still working"
+                else:
+                    msg = f"{label} still working — quiet for {round(time.monotonic() - last_output)}s"
+                yield sse("status", {"stage": "streaming", "message": msg})
+                continue
+            next_task = None
+            if result is sentinel:
+                return
+            last_output = time.monotonic()
+            yield result
+    finally:
+        if next_task is not None and not next_task.done():
+            next_task.cancel()
+            try:
+                await next_task
+            except BaseException:
+                pass
+
+
 async def with_keepalive(gen, interval: float = 15.0):
     # Cloudflare Tunnel resets idle streams after ~100s, so emit a comment
     # heartbeat during long gaps (e.g. while a subprocess thinks between tool

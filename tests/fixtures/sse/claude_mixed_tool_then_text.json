@@ -8,6 +8,17 @@
       }
     },
     {
+      "event": "budget",
+      "data": {
+        "turn": 1,
+        "max_turns": 50,
+        "elapsed_s": 0,
+        "max_seconds": 1200,
+        "tokens": 0,
+        "max_tokens": 1000000
+      }
+    },
+    {
       "event": "input_tokens",
       "data": {
         "count": 12
@@ -67,6 +78,17 @@
       "data": {
         "stage": "streaming",
         "message": "Streaming from Claude\u2026"
+      }
+    },
+    {
+      "event": "budget",
+      "data": {
+        "turn": 2,
+        "max_turns": 50,
+        "elapsed_s": 0,
+        "max_seconds": 1200,
+        "tokens": 21,
+        "max_tokens": 1000000
       }
     },
     {

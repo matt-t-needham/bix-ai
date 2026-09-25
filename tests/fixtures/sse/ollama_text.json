@@ -8,6 +8,17 @@
       }
     },
     {
+      "event": "budget",
+      "data": {
+        "turn": 1,
+        "max_turns": 50,
+        "elapsed_s": 0,
+        "max_seconds": 1200,
+        "tokens": 702,
+        "max_tokens": 1000000
+      }
+    },
+    {
       "event": "delta",
       "data": {
         "text": "hi from local"

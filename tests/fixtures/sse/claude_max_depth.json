@@ -8,6 +8,17 @@
       }
     },
     {
+      "event": "budget",
+      "data": {
+        "turn": 1,
+        "max_turns": 10,
+        "elapsed_s": 0,
+        "max_seconds": 1200,
+        "tokens": 0,
+        "max_tokens": 1000000
+      }
+    },
+    {
       "event": "input_tokens",
       "data": {
         "count": 12
@@ -57,6 +68,17 @@
       }
     },
     {
+      "event": "budget",
+      "data": {
+        "turn": 2,
+        "max_turns": 10,
+        "elapsed_s": 0,
+        "max_seconds": 1200,
+        "tokens": 21,
+        "max_tokens": 1000000
+      }
+    },
+    {
       "event": "tool_start",
       "data": {
         "index": 0,
@@ -97,6 +119,17 @@
       "data": {
         "stage": "streaming",
         "message": "Streaming from Claude\u2026"
+      }
+    },
+    {
+      "event": "budget",
+      "data": {
+        "turn": 3,
+        "max_turns": 10,
+        "elapsed_s": 0,
+        "max_seconds": 1200,
+        "tokens": 42,
+        "max_tokens": 1000000
       }
     },
     {
@@ -143,6 +176,17 @@
       }
     },
     {
+      "event": "budget",
+      "data": {
+        "turn": 4,
+        "max_turns": 10,
+        "elapsed_s": 0,
+        "max_seconds": 1200,
+        "tokens": 63,
+        "max_tokens": 1000000
+      }
+    },
+    {
       "event": "tool_start",
       "data": {
         "index": 0,
@@ -183,6 +227,17 @@
       "data": {
         "stage": "streaming",
         "message": "Streaming from Claude\u2026"
+      }
+    },
+    {
+      "event": "budget",
+      "data": {
+        "turn": 5,
+        "max_turns": 10,
+        "elapsed_s": 0,
+        "max_seconds": 1200,
+        "tokens": 84,
+        "max_tokens": 1000000
       }
     },
     {
@@ -229,6 +284,17 @@
       }
     },
     {
+      "event": "budget",
+      "data": {
+        "turn": 6,
+        "max_turns": 10,
+        "elapsed_s": 0,
+        "max_seconds": 1200,
+        "tokens": 105,
+        "max_tokens": 1000000
+      }
+    },
+    {
       "event": "tool_start",
       "data": {
         "index": 0,
@@ -269,6 +335,17 @@
       "data": {
         "stage": "streaming",
         "message": "Streaming from Claude\u2026"
+      }
+    },
+    {
+      "event": "budget",
+      "data": {
+        "turn": 7,
+        "max_turns": 10,
+        "elapsed_s": 0,
+        "max_seconds": 1200,
+        "tokens": 126,
+        "max_tokens": 1000000
       }
     },
     {
@@ -315,6 +392,17 @@
       }
     },
     {
+      "event": "budget",
+      "data": {
+        "turn": 8,
+        "max_turns": 10,
+        "elapsed_s": 0,
+        "max_seconds": 1200,
+        "tokens": 147,
+        "max_tokens": 1000000
+      }
+    },
+    {
       "event": "tool_start",
       "data": {
         "index": 0,
@@ -358,6 +446,17 @@
       }
     },
     {
+      "event": "budget",
+      "data": {
+        "turn": 9,
+        "max_turns": 10,
+        "elapsed_s": 0,
+        "max_seconds": 1200,
+        "tokens": 168,
+        "max_tokens": 1000000
+      }
+    },
+    {
       "event": "tool_start",
       "data": {
         "index": 0,
@@ -398,6 +497,17 @@
       "data": {
         "stage": "streaming",
         "message": "Streaming from Claude\u2026"
+      }
+    },
+    {
+      "event": "budget",
+      "data": {
+        "turn": 10,
+        "max_turns": 10,
+        "elapsed_s": 0,
+        "max_seconds": 1200,
+        "tokens": 189,
+        "max_tokens": 1000000
       }
     },
     {
@@ -446,7 +556,7 @@
     {
       "event": "error",
       "data": {
-        "message": "Maximum tool call depth reached"
+        "message": "Maximum tool call depth reached (10 turns). Tools already executed: read_file, read_file, read_file, read_file, read_file, read_file, read_file, read_file, read_file, read_file."
       }
     }
   ],

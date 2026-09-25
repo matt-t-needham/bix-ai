@@ -19,6 +19,7 @@ from unittest.mock import patch
 import pytest
 
 from streaming import claude as claude_mod
+from streaming import loop as loop_mod
 from streaming import ollama as ollama_mod
 from tests.sse_harness import (
     FakeClient, FakeTime, claude_turn_lines, collect, normalise,
@@ -112,6 +113,20 @@ def _claude_tool_turn(name="read_file", tool_id="toolu_1", args='{"path": "a.txt
     ])
 
 
+def _claude_truncated_tool_turn():
+    """Tool call cut off by the output-token cap: stop_reason=max_tokens with
+    an unterminated input_json — must surface an error, never a clean done."""
+    return claude_turn_lines([
+        ("message_start", {"message": {"usage": {"input_tokens": 12}}}),
+        ("content_block_start", {"index": 0, "content_block": {"type": "text"}}),
+        ("content_block_delta", {"index": 0, "delta": {"type": "text_delta", "text": "Now I'll write the file. "}}),
+        ("content_block_stop", {"index": 0}),
+        ("content_block_start", {"index": 1, "content_block": {"type": "tool_use", "name": "stage_write", "id": "toolu_1"}}),
+        ("content_block_delta", {"index": 1, "delta": {"type": "input_json_delta", "partial_json": '{"target_path": "/home/matt/apps/bix-ai/st'}}),
+        ("message_delta", {"delta": {"stop_reason": "max_tokens"}, "usage": {"output_tokens": 4096}}),
+    ])
+
+
 def _ollama_text_turn(text="hi from local"):
     return ollama_turn_lines([
         {"choices": [{"delta": {"content": text}}]},
@@ -177,9 +192,15 @@ SCENARIOS = {
         [{"role": "user", "content": "go"}],
         extra_patches=(patch.object(claude_mod, "LOOP_MAX_TOKENS", 5),),
     ),
+    "claude_truncated_tool_call": lambda: _run_claude(
+        [_claude_truncated_tool_turn()],
+        [{"role": "user", "content": "implement the plan"}],
+    ),
     "claude_max_depth": lambda: _run_claude(
         [_claude_tool_turn(tool_id=f"toolu_{i}") for i in range(10)],
         [{"role": "user", "content": "loop forever"}],
+        # Pin the (config-tunable, default 25) cap so the golden stays small.
+        extra_patches=(patch.object(loop_mod, "MAX_TURNS", 10),),
     ),
     "claude_upstream_exception": lambda: _run_claude(
         [],

@@ -18,12 +18,17 @@ SUMMARY_LOCAL_MODEL  = os.environ.get("SUMMARY_LOCAL_MODEL", "gemma4:e2b")
 FS_ROOT              = Path(os.environ.get("FS_ROOT", "/home/matt")).resolve()
 DATA_DIR             = Path(os.environ.get("DATA_DIR", "/app/data"))
 _MAX_BODY_BYTES      = int(os.environ.get("MAX_BODY_BYTES", "1000000"))
-_MAX_TOKENS_CAP      = int(os.environ.get("MAX_TOKENS_CAP", "8192"))
+_MAX_TOKENS_CAP      = int(os.environ.get("MAX_TOKENS_CAP", "32000"))
 # Governor for the agentic tool loop (streaming/claude.py, streaming/ollama.py).
 # Iteration cap (10 turns) is hardcoded at each loop's `range(10)`; these two are
 # the remaining budgets — generous defaults so they only bite runaway loops.
-LOOP_MAX_TOKENS      = int(os.environ.get("LOOP_MAX_TOKENS", "500000"))
-LOOP_MAX_SECONDS     = float(os.environ.get("LOOP_MAX_SECONDS", "300"))
+LOOP_MAX_TOKENS      = int(os.environ.get("LOOP_MAX_TOKENS", "1000000"))
+LOOP_MAX_SECONDS     = float(os.environ.get("LOOP_MAX_SECONDS", "1200"))
+LOOP_MAX_TURNS       = int(os.environ.get("LOOP_MAX_TURNS", "50"))
+# Local models are slow on this host (long prompt eval, minutes-long tool-JSON
+# generation) — when the stream is quiet longer than this, emit a status
+# heartbeat so the UI can show "still working" instead of looking hung.
+PROGRESS_HEARTBEAT_SECONDS = float(os.environ.get("PROGRESS_HEARTBEAT_SECONDS", "5"))
 # Conversation-tail compaction (compact.py, api path). Triggers when the
 # narrative token estimate (blob-pointer excerpts excluded) exceeds the
 # threshold; the most recent COMPACT_KEEP_TURNS user turns stay verbatim.

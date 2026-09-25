@@ -15,7 +15,7 @@
         "elapsed_s": 0,
         "max_seconds": 1200,
         "tokens": 0,
-        "max_tokens": 5
+        "max_tokens": 1000000
       }
     },
     {
@@ -25,53 +25,31 @@
       }
     },
     {
+      "event": "delta",
+      "data": {
+        "text": "Now I'll write the file. "
+      }
+    },
+    {
       "event": "tool_start",
       "data": {
-        "index": 0,
-        "name": "read_file",
+        "index": 1,
+        "name": "stage_write",
         "id": "toolu_1"
       }
     },
     {
       "event": "tool_input",
       "data": {
-        "index": 0,
-        "partial_json": "{\"path\": \"a.txt\"}"
-      }
-    },
-    {
-      "event": "tool_end",
-      "data": {
-        "index": 0
-      }
-    },
-    {
-      "event": "status",
-      "data": {
-        "stage": "checking",
-        "message": "Running read_file\u2026"
-      }
-    },
-    {
-      "event": "tool_result",
-      "data": {
-        "tool_use_id": "toolu_1",
-        "content": "RESULT[read_file:{\"path\": \"a.txt\"}]",
-        "is_error": false
-      }
-    },
-    {
-      "event": "status",
-      "data": {
-        "stage": "streaming",
-        "message": "Streaming from Claude\u2026"
+        "index": 1,
+        "partial_json": "{\"target_path\": \"/home/matt/apps/bix-ai/st"
       }
     },
     {
       "event": "metrics",
       "data": {
         "input_tokens": 12,
-        "output_tokens": 9,
+        "output_tokens": 4096,
         "elapsed_ms": 0,
         "ttft_ms": 0,
         "preprocess_ms": 0,
@@ -85,7 +63,7 @@
     {
       "event": "error",
       "data": {
-        "message": "Loop budget exceeded (token or wall-clock limit) \u2014 stopping. Tools already executed: read_file."
+        "message": "Response hit the output-token limit mid-tool-call \u2014 the result is incomplete. Raise max_tokens or ask for a smaller change."
       }
     }
   ],

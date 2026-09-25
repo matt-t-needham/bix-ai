@@ -66,12 +66,15 @@ def test_reject_route(client):
 
 
 def test_detail_escapes_content(client):
-    # Staged content is untrusted — it must be HTML-escaped in the diff view.
+    # Staged content is untrusted — it must never reach the page as live HTML.
+    # It ships only inside the rec-data JSON blob with every "<" escaped to
+    # \\u003c (rendered client-side by escape-first renderMd), so raw content
+    # can never open or terminate a tag anywhere in the served body.
     c, root = client
     rec = staging.create(str(root / "x.md"), "<script>alert(1)</script>")
     body = c.get(f"/staging/{rec['id']}").text
     assert "<script>alert(1)</script>" not in body
-    assert "&lt;script&gt;" in body
+    assert "\\u003cscript>alert(1)\\u003c/script>" in body
 
 
 def test_review_route_persists_advisory(client, monkeypatch):
