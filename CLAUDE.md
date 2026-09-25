@@ -210,6 +210,10 @@ Imported and adapted from the shared project standards:
   started_at}`; the Dockerfile stamps `GIT_SHA`/`BUILT_AT` via build args **at
   the end of the runtime stage** — moving those ARGs earlier busts the pip/test
   layer cache on every deploy.
+- **Retired 2026-09-25:** self-update is off — prod mounts the apps tree `:ro`
+  and `bix-deploy-runner` is disabled, so approved writes land only in
+  `bix-infra/todos/` and `bix-infra/outbox/`; other targets stay pending (the
+  write fails and the record is kept). The flow below is historical.
 - **The flow**: stage_write on own source → human approves at `/staging`
   (applies to the staging clone only; critical guardrail files get a red
   banner) → human queues `deploy-staging` at `/deploys` → host runner builds

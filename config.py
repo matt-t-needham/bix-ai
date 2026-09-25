@@ -72,7 +72,7 @@ ROUTING_CHEAP_CLAUDE_MODEL = os.environ.get(
     "ROUTING_CHEAP_CLAUDE_MODEL", "claude-haiku-4-5-20251001")
 
 ENTRIES_PER_FILE  = 200
-CLAUDE_CREDS_PATH = Path("/home/matt/.claude/.credentials.json")
+CLAUDE_CREDS_PATH = Path(os.environ.get("CLAUDE_CONFIG_DIR", "/home/matt/.claude")) / ".credentials.json"
 ROUTING_LOG       = Path("logs") / "routing.ndjson"
 
 MEM_DIR     = DATA_DIR / "memories"
