@@ -1,0 +1,33 @@
+# omp config overlay for the bix-ai spike (passed via --config).
+# Goal: omp sees ONLY the host tools bix-ai registers over RPC, and nothing it
+# discovers from other agents' config on this machine.
+
+tools:
+  # Anything not explicitly allowed below needs approval; with --no-ui there is
+  # nobody to approve, so it fails closed. Host tools carry no approval tier, so
+  # they default to `exec` and must be allowed by name.
+  approvalMode: always-ask
+  approval:
+    list_directory: allow
+    read_file: allow
+    stage_write: allow        # spike stub — records only, never writes
+    list_log_sources: allow   # only used with --bix-tools
+    read_log: allow
+    recall_memories: allow
+    read_blob: allow
+    grep_blob: allow
+    list_steam_games: allow
+
+# Discovery sources: stop omp pulling MCP servers / skills / hooks / context
+# files from other agents' config. `claude` matters most — an explicit
+# CLAUDE_CONFIG_DIR (bix-ai's container sets one since f30ddfb) opts Claude's
+# user root in, which would hand omp the bix_mcp server and its tools.
+# Model providers are deliberately NOT listed: anthropic + ollama must stay.
+disabledProviders:
+  - claude
+  - codex
+  - gemini
+  - github
+  - opencode
+  - cursor
+  - agents-md

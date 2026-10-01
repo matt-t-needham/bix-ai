@@ -5,3 +5,4 @@ __pycache__/
 logs/
 data/
 TODO.txt
+spike/omp/results/

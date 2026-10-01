@@ -10,3 +10,5 @@ __pycache__
 # against it as a pre-deploy gate. pytest itself stays out of the runtime image.
 logs/
 data/
+# Throwaway experiments (PLAN-omp-spike.md) never ship in the image.
+spike/
