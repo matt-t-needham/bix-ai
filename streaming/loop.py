@@ -128,6 +128,13 @@ async def run_tool_loop(
                      provider.name, token_fields["input_tokens"],
                      token_fields["output_tokens"], ttft_ms or 0, round(elapsed * 1000))
             await provider.write_routing(ttft_ms or 0, round(elapsed * 1000))
+            # The final reply belongs in `history`: main.py stores this list as
+            # the conversation. An empty turn is left out — the Anthropic API
+            # rejects an assistant message with no content.
+            final = []
+            provider.append_assistant_turn(final)
+            if final[0]["content"]:
+                current_messages.append(final[0])
             yield sse("history", {"messages": provider.history_messages(current_messages)})
             yield sse("done", {})
             return

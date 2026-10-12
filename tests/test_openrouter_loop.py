@@ -93,7 +93,8 @@ def test_text_turn_reports_real_usage_and_cost(configured):
     (args, kwargs), = routing.calls
     assert args == ("openrouter", "qwen/qwen3-coder")
     assert kwargs["input_tokens"] == 120 and kwargs["output_tokens"] == 7
-    assert kwargs["est_cost_usd"] == pytest.approx((120 * 0.3 + 7 * 1.2) / 1e6)
+    # estimate_cost_usd rounds to whole micro-dollars, as helpers._est_cost_usd does
+    assert kwargs["est_cost_usd"] == round((120 * 0.3 + 7 * 1.2) / 1e6, 6)
 
 
 def test_request_carries_attribution_headers_and_usage_opt_in(configured):

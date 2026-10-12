@@ -14,7 +14,7 @@
         "max_turns": 50,
         "elapsed_s": 0,
         "max_seconds": 1200,
-        "tokens": 703,
+        "tokens": 528,
         "max_tokens": 1000000
       }
     },
@@ -110,7 +110,7 @@
         "max_turns": 50,
         "elapsed_s": 0,
         "max_seconds": 1200,
-        "tokens": 827,
+        "tokens": 651,
         "max_tokens": 1000000
       }
     },
@@ -180,6 +180,15 @@
                 "type": "tool_result",
                 "tool_use_id": "call_2",
                 "content": "RESULT[list_directory:{\"path\": \"/tmp\"}]"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "done"
               }
             ]
           }

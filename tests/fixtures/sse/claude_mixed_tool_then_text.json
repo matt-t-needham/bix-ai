@@ -146,6 +146,15 @@
                 "content": "RESULT[read_file:{\"path\": \"a.txt\"}]"
               }
             ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "done"
+              }
+            ]
           }
         ]
       }

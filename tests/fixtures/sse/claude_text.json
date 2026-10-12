@@ -52,6 +52,15 @@
           {
             "role": "user",
             "content": "hello"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "hello there"
+              }
+            ]
           }
         ]
       }

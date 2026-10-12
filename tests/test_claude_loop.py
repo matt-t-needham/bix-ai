@@ -159,7 +159,7 @@ def test_history_emitted_on_clean_single_turn_completion():
     events = _events(chunks)
     assert events.index("history") < events.index("done")
     history = _data_for(chunks, "history")[0]
-    assert history["messages"] == messages
+    assert history["messages"] == messages + [{"role": "assistant", "content": [{"type": "text", "text": "hi"}]}]
     assert "tool_result" not in events
     assert "error" not in events
 

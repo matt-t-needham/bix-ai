@@ -21,7 +21,7 @@
         "max_turns": 50,
         "elapsed_s": 0,
         "max_seconds": 1200,
-        "tokens": 702,
+        "tokens": 526,
         "max_tokens": 1000000
       }
     },
@@ -53,6 +53,15 @@
           {
             "role": "user",
             "content": "hello"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi from local"
+              }
+            ]
           }
         ]
       }

@@ -160,7 +160,8 @@ def test_history_strips_injected_system_message():
         _stop(patches)
 
     history = _data_for(chunks, "history")[0]["messages"]
-    assert history == messages  # injected OLLAMA_SYSTEM must not appear
+    # injected OLLAMA_SYSTEM must not appear; the final reply is appended
+    assert history == messages + [{"role": "assistant", "content": [{"type": "text", "text": "hi"}]}]
     events = _events(chunks)
     assert events.index("history") < events.index("done")
 
@@ -183,7 +184,8 @@ def test_history_keeps_preexisting_non_injected_system_message():
         _stop(patches)
 
     history = _data_for(chunks, "history")[0]["messages"]
-    assert history == messages  # untouched — this system message isn't ours to strip
+    # untouched — this system message isn't ours to strip
+    assert history == messages + [{"role": "assistant", "content": [{"type": "text", "text": "hi"}]}]
 
 
 def test_tool_turn_emits_tool_result_and_survives_in_history():
