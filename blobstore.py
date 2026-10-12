@@ -1,9 +1,9 @@
 """Content-addressed blob store for oversized artifacts spilled out of inbound
 context (PLAN-pi-tools.md Phase 2/3 — "retrieval beats compression").
 
-Stdlib-only by contract, mirroring staging.py/fs_core.py, so bix_mcp.py could
+Stdlib-only by contract, mirroring fs_core.py, so bix_mcp.py could
 import it without pulling in FastAPI/httpx. `config.DATA_DIR` is read at call
-time (not bound at import), same as FS_ROOT/STAGING_DIR, so tests can
+time (not bound at import), same as FS_ROOT, so tests can
 monkeypatch it.
 
 Layout: DATA_DIR/blobs/<sha256>.txt — one write-once file per unique content;

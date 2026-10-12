@@ -12,18 +12,9 @@ from identity import identity_system_prompt
 
 log = logging.getLogger("router")
 
-_TODO_SYSTEM = (
-    "You have a TODOs folder at /home/matt/apps/bix-infra/todos/ accessible via the write_file and read_file tools "
-    "(MCP server: bix). Use it to keep per-project plans and task lists — one .md file per project. "
-    "Read /home/matt/apps/bix-infra/todos/GUIDE.md for the file structure. "
-    "When asked to plan something, read the existing project file first, then write the updated version. "
-    "When asked about pending work, read the relevant file and summarise it."
-)
-
 _PRO_IDENTITY_PROMPT = identity_system_prompt(
-    tool_names=["list_directory", "read_file", "recall_memories", "write_file"],
-    aliases={"write_file": "stage_write"},
-    doc_topics=["staging", "memory", "modes"],
+    tool_names=["list_directory", "read_file", "recall_memories"],
+    doc_topics=["memory", "modes"],
 )
 
 
@@ -264,7 +255,7 @@ async def _stream_pro(
     })
     yield sse("status", {"stage": "streaming", "message": "Streaming via Claude Pro…"})
 
-    system_prompt = "\n\n".join([_PRO_IDENTITY_PROMPT, _TODO_SYSTEM])
+    system_prompt = _PRO_IDENTITY_PROMPT
 
     # Resuming a CLI session: the session already holds the full history
     # (including tool turns the text-only prompt replay would lose), so only

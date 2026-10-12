@@ -1,4 +1,4 @@
-"""SSE parse helpers + SSETextCollector (used by ask_staging)."""
+"""SSE parse helpers + SSETextCollector."""
 from helpers import SSETextCollector, parse_sse_data, parse_sse_event, sse
 
 

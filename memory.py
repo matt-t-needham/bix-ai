@@ -138,19 +138,6 @@ def _extract_tags(text: str) -> list[str]:
 
 # ── Summarization ─────────────────────────────────────────────────────────────
 
-async def _summarize(user_msg: str, assistant_msg: str, local_model: str) -> tuple[str, str]:
-    """Return (6-word title, source) using local Ollama."""
-    prompt = (
-        "Give a 6-word title for this exchange. No punctuation, no quotes.\n\n"
-        f"User: {user_msg[:400]}\nAssistant: {assistant_msg[:400]}"
-    )
-    try:
-        summary = await ollama_chat(local_model, [{"role": "user", "content": prompt}], timeout=30)
-        return summary.strip(), "local"
-    except Exception as e:
-        log.warning("local summarize failed: %s", e)
-        return "", "error"
-
 
 async def _generate_memory_summary(user_msg: str, assistant_msg: str) -> str:
     prompt = (
@@ -186,9 +173,10 @@ async def save_memory_entry(
         (str(m.get("content", "")) for m in reversed(messages) if m.get("role") == "assistant"), ""
     )
 
-    title, _ = await _summarize(user_msg, assistant_msg, OLLAMA_DEFAULT_MODEL)
-    if not title:
-        title = user_msg[:60]
+    # Title is the first line of the user's message — no model call. The
+    # per-turn title summariser was the single biggest hidden cost of a chat
+    # turn (see docs/request-pipeline.md §8).
+    title = (user_msg.strip().splitlines() or [""])[0][:60].strip() or "untitled"
 
     recent = _load_recent_memories(10)
     if any(r.get("title", "").lower() == title.lower() for r in recent):

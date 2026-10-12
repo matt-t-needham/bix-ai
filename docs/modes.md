@@ -13,9 +13,7 @@ difference below rather than guessing.
   to Claude only if the run raises an error (not merely a low-quality
   answer — that's a known, separate gap). Gets the full tool set.
 - **pro** — a `claude` CLI subprocess, talking over MCP instead of bix-ai's
-  own tool loop. Its tool set is deliberately smaller and named differently:
-  `list_directory`, `read_file`, `recall_memories`, and `write_file` (the MCP
-  name for `stage_write`). It does **not** have native file-editing tools
-  (Read/Edit) available — `--allowedTools` is restricted to `mcp__bix__*`. If
-  a file write is needed in this mode, `write_file` is the only way to do it;
-  there is no other tool that can create or edit files here.
+  own tool loop. Its tool set is deliberately smaller: `list_directory`,
+  `read_file` and `recall_memories`. It does **not** have native file-editing
+  tools (Read/Edit) available — `--allowedTools` is restricted to
+  `mcp__bix__*`. There is no tool that can create or edit files in any mode.

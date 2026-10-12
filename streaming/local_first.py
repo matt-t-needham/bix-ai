@@ -7,8 +7,7 @@ from streaming.ollama import _stream_ollama
 
 log = logging.getLogger("router")
 
-# Back-compat aliases — the parse helpers moved to helpers.py (Phase 5) so the
-# staging-verification tools can share them.
+# Back-compat aliases — the parse helpers moved to helpers.py (Phase 5).
 _parse_sse_event = parse_sse_event
 _parse_sse_data  = parse_sse_data
 

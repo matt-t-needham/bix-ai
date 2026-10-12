@@ -2,32 +2,33 @@
 
 ## Project overview
 
-A FastAPI service that acts as an efficient cross-platform task runner: it proxies
-Anthropic API calls, routes between local Ollama models and Claude, gives models an
-agentic tool loop (filesystem reads, gated writes, logs, memory, Steam library, TODOs),
-spills oversized context blocks to a content-addressed blob store (replacing them
-in-band with a verbatim excerpt + retrieval pointer), and serves a single-file
-dark-theme chat UI at `ai.bix.computer`.
+A FastAPI chat router: one mobile-first chat UI at `ai.bix.computer` in front of
+three providers — local Ollama models, Claude on the Pro subscription (via the
+`claude` CLI), and (PR 2, in progress) OpenRouter on a personal key. Models get a
+read-only agentic tool loop (filesystem reads, memory recall, blob retrieval);
+oversized pastes are spilled to a content-addressed blob store and replaced in-band
+with a verbatim excerpt + retrieval pointer.
 
-This is not a 3-file project. Module map:
+**Overhaul in progress (2026-10):** `PLAN-overhaul.md` is the plan and wins over
+this file where they disagree; `docs/request-pipeline.md` is the audit of what runs
+on one turn. The self-modification/staging/deploy machinery, Steam, log tools and
+the per-turn `/summarize` call were removed in PR 1 — don't reintroduce them.
+
+Module map:
 
 | Module | Role |
 |---|---|
-| `main.py` | FastAPI app — all routes, SSE streaming dispatch, system metrics, staging review UI routes |
+| `main.py` | FastAPI app — all routes (`/chat`, `/memory*`, `/models/ollama*`, `/system`, `/auth/status`, `/version`, `/routing`, `/blobs*`, `/v1/messages` proxy), SSE streaming dispatch |
 | `config.py` | All tunables/env vars — `OLLAMA_HOST` is the single source for every Ollama host reference |
 | `strategy.py` | Pre-pass pipeline (Phase 3 shape): per oversized block (>6000 est. tokens) it losslessly reduces (ANSI strip + duplicate-line collapse), labels via heuristics (`logfile\|source\|json\|diff\|prose`, one Ollama call only when unsure), extracts salient lines **verbatim** by type (code does the slicing; the model never rewrites a byte), spills the original to `blobstore.py`, and replaces the block with `[router-blob v2 <hash>]` pointer + excerpt. Pure logic, `preprocess(body, ollama_chat) -> (new_body, stats)`, no imports from `main.py`. Ollama is used for *classification/ranking only* — never paraphrase. The v1 paraphrase pipeline is abolished; `[router-summary v1]` blocks are still recognised and skipped |
-| `tools.py` | Single tool registry: `TOOL_TABLE` defines each tool exactly once as `{name, description, input_schema, handler}`; `FS_TOOLS` (Anthropic shape) and `OLLAMA_TOOLS` (OpenAI fn shape) are both generated from it, filtered by `config.BIX_ROLE` (`fs_tools_for_role`/`ollama_tools_for_role`; the staging role loses `_MUTATING_TOOLS` = stage_write and `_PROD_ONLY_TOOLS` = check_staging/ask_staging, and `_execute_tool` refuses them at call time as defence in depth). `check_staging`/`ask_staging` query the staging twin over the docker network (`config.STAGING_ROUTER_URL`) to verify deployed self-changes. Add a tool = add one table entry |
-| `deploy.py` | Deploy queue: file-based handoff to the host-side runner (`bix-infra/scripts/deploy-runner.py`). The container only enqueues (`deploy-staging`/`promote`/`rollback`) and reads results — no docker socket, it never executes deploys. Atomic tmp+`os.replace` writes; queue/processing/results/logs under `config.DEPLOY_DIR`. Backs the `read_deploy`/`list_deploys` tools (deploy status + runner log by ID, both roles). `/deploys` UI routes live in main.py; **`/deploys/count` must stay declared before `/deploys/{dep_id}`** (same pitfall as `/staging/count`) |
+| `tools.py` | Single tool registry: `TOOL_TABLE` defines each tool exactly once as `{name, description, input_schema, handler, brief}`; `FS_TOOLS` (Anthropic shape) and `OLLAMA_TOOLS` (OpenAI fn shape) are both generated from it. Five read-only tools: `list_directory`, `read_file`, `recall_memories`, `read_blob`, `grep_blob`. There is no write tool. Add a tool = add one table entry |
 | `model_admin.py` | Ollama model management: free-text pulls validated by name regex + a registry manifest pre-check (typos 400 fast), NDJSON→SSE pull translation (`pull_progress`/`pull_done` events on `POST /models/ollama/pull`, wrapped in `with_keepalive`), delete, and the dynamic mode=local allowlist (`is_allowed_local_model` = any installed model, 30 s cached `/api/tags`; falls back to the static `_ALLOWED_OLLAMA_MODELS` when Ollama is down) |
 | `compact.py` | Conversation-tail compaction (api path). When narrative tokens (blob excerpts excluded) exceed `COMPACT_THRESHOLD_TOKENS`, turns older than the last `COMPACT_KEEP_TURNS` user turns fold into a `[router-compact v1]` user+assistant pair via one Ollama call; the tail stays byte-identical; blob-pointer hashes are re-listed inside the compact body. Compacted history rides the `history` event so the client adopts it (converges — the compact body accretes on re-growth, is never re-summarised). Pure logic, injected `ollama_chat`, fails open |
-| `fs_core.py` | Path security — `is_denied_path` (secrets), `is_write_denied_path` (scripts/CI/shell/container config), `is_critical_path` (bix-ai guardrail-surface files — a UI flag, not a deny) |
-| `staging.py` | Gated writes: propose → human review → apply. Re-validates every guard at approve time. Self-changes (targets under `config.self_prod_tree()`) are redirected by `apply_path_for` to the `bix-ai-staging` clone at approve time — the rewritten path is re-validated from scratch and recorded in `applied_to`; the prod tree is only written by the host-side deploy runner on human-triggered promote. `current_source_path(record)` is what diffs/review context must read. Records also carry `critical`/`self_change` flags, quote-anchored reviewer `comments` (add/resolve) and a `revisions` history (`update_content`, pending-only, last 5 kept) — approve stays the only step that touches disk. Review routes live in `main.py` under `/staging…` |
-| `staging_ui.py` | All staging HTML rendering (list + tabbed Rendered/Raw/Diff detail page with selection-to-comment UI, model picker, Review/Revise buttons, "Chat about this" link) plus `build_chat_context` for `GET /staging/{id}/context`. Stdlib-only, same pattern as `routing_dash.py`; the record JSON embedded in the page has every `<` escaped to `\u003c` so untrusted content stays inert. `main.py`'s `/blobs` page reuses `staging_ui.CSS` |
-| `blobstore.py` | Content-addressed store for oversized artifacts spilled out of context (`put`/`get`/`grep`/`stat`, sha256-keyed, write-once, dedup). LRU eviction over `config.BLOB_STORE_MAX_BYTES`, pin/unpin protects blobs referenced by the in-flight request. Backs the `read_blob`/`grep_blob` tools. `strategy.py` spills oversized blocks into it automatically; `main.py`'s chat dispatcher pins every hash referenced by the in-flight request (`strategy.referenced_blob_hashes`) for the stream's lifetime. `/app/data` is a compose bind mount of `bix-ai/data`, so blobs persist across deploys. Housekeeping UI at `GET /blobs` (size-vs-cap bar, per-blob delete, purge-all) backed by `list_blobs`/`delete`/`purge_unpinned` — all pin-aware under the same lock as eviction |
-| `memory.py` | Memory persistence (`/memory` routes, `recall_memories` tool); conversations under `DATA_DIR/convos` |
-| `bix_mcp.py` | MCP server exposed to the `claude` CLI subprocess for mode="pro" |
-| `steam.py`, `logtools.py`, `todos.py` | Backing implementations for the `list_steam_games`, `list_log_sources`/`read_log`, and `read_todos` tools |
-| `helpers.py` | SSE helpers (`sse()`, `with_keepalive`, `parse_sse_event`/`parse_sse_data`, `SSETextCollector` — the chunk-boundary-safe delta/error accumulator behind `ask_staging`), routing-log writer, Ollama chat helper |
+| `fs_core.py` | Read-only path security — `is_denied_path` (secrets), `list_directory`, `read_file`. Stdlib-only, shared with `bix_mcp.py` |
+| `blobstore.py` | Content-addressed store for oversized artifacts spilled out of context (`put`/`get`/`grep`/`stat`, sha256-keyed, write-once, dedup). LRU eviction over `config.BLOB_STORE_MAX_BYTES`, pin/unpin protects blobs referenced by the in-flight request. Backs the `read_blob`/`grep_blob` tools. `strategy.py` spills oversized blocks into it automatically; `main.py`'s chat dispatcher pins every hash referenced by the in-flight request (`strategy.referenced_blob_hashes`) for the stream's lifetime. `/app/data` is a compose bind mount of `bix-ai/data`, so blobs persist across deploys. Housekeeping UI at `GET /blobs` (styled by `main._PAGE_CSS`) backed by `list_blobs`/`delete`/`purge_unpinned` — all pin-aware under the same lock as eviction |
+| `memory.py` | Memory persistence (`/memory` routes, `recall_memories` tool); conversations under `DATA_DIR/convos`. `save_memory_entry` still fires from the UI after every `done` and makes one local-model call for the summary — PR 2 makes this per-conversation and explicit |
+| `bix_mcp.py` | Stdlib-only MCP server exposed to the `claude` CLI subprocess for mode="pro" (`list_directory`, `read_file`, `recall_memories`) |
+| `helpers.py` | SSE helpers (`sse()`, `with_keepalive`, `parse_sse_event`/`parse_sse_data`, `SSETextCollector` — a chunk-boundary-safe delta/error accumulator for consuming our own stream), routing-log writer, Ollama chat helper |
 | `streaming/loop.py` | **The one governed agentic loop** (`run_tool_loop`): turn cap (10), token + wall-clock budgets, tool dispatch, tool_result/metrics/history/done SSE emission, routing-log write. Takes a provider + injected `execute_tool`/`clock`/budget args (resolved from the adapter module's globals at call time, so tests patch the adapter as before). Shared by `mode="api"`, `mode="local"`, and `mode="auto"`'s local leg — `mode` only picks the backend + escalation policy |
 | `streaming/providers.py` | `AnthropicProvider` / `OllamaProvider` — translate each backend's wire protocol to normalised events (`text_delta`, `tool_start/…`, `turn_end`, `provider_error`) and own provider-native message shapes (append_assistant_turn / append_tool_results / history_messages) and token accounting (real usage vs chars/4 estimate). `OllamaProvider` additionally carries a guardrail layer — rescue-parsing + bounded retry-with-nudge for garbled tool-call attempts, using forge-guardrails' standalone `rescue_tool_call`/`ErrorTracker`/`retry_nudge` (not `WorkflowRunner`) — configurable via `on_exhausted` ("best_effort" for mode=local, "escalate" for mode=auto) |
 | `streaming/claude.py` | Anthropic adapter: memory injection + pre-pass, then delegates to `run_tool_loop` with an `AnthropicProvider` |
@@ -36,17 +37,15 @@ This is not a 3-file project. Module map:
 | `streaming/local_first.py` | mode="auto" orchestration — calls `routing.decide` first; claude-routed requests skip the local attempt (running on the decision's `claude_model` downshift when hinted — routing.ndjson records the model that actually ran, reason gets `· downshift`), local-routed call `_stream_ollama` (same pipeline mode=local uses) with `on_exhausted="escalate"`, failing over to `_stream_claude` on an unrecoverable error (`fallback_triggered` clears partial UI output). Every decision lands in `routing.ndjson` with a `reason` field (non-auto paths log `forced:<mode>`) plus `est_cost_usd` from `config.MODEL_COSTS` (advisory; keep in sync with the UI's `MODEL_RATES`) |
 | `streaming/pro.py` | mode="pro" — drives the `claude` CLI subprocess over MCP. Keeps tool-turn history across requests via CLI sessions: emits `pro_session` SSE with the run's session id; the client echoes it back as `session_id` on the next `/chat` and the server runs `claude --resume <id>` with only the newest user message (falls back to a fresh full-history run when the session is gone; "No conversation found" arrives via the result event's `errors` array) |
 | `routing_dash.py` | Routing dashboard (`GET /routing` in main.py) — parses `routing.ndjson` (+ `.1` rotation) into local-vs-Claude split, daily estimated spend, and per-model / per-mode / per-rule tables. Pure logic + HTML render, stdlib-only |
-| `static/index.html` | Single-file chat UI. No build step. Vanilla JS + CSS. Keeps `textSegments` (render) separate from `convHistory` (request payload). Opening `/?staged=<id>` (from a staging page's "Chat about this") fetches that record's context and merges it into the first message the user sends |
+| `static/index.html` | Single-file, mobile-first chat UI. No build step. Vanilla JS + CSS. `PROVIDERS` drives the model-picker sheet (add OpenRouter there); the stats drawer is a full-screen sheet under 900 px and a side panel above. Keeps `textSegments` (render) separate from `convHistory` (request payload). Prefs in `localStorage` (`bixai-prefs`). It never calls `/summarize` (gone) and never sends `mode=auto` — the UI exposes Local (`local`) and Claude (`pro`, `api` once the quota banner is used) |
 
 Four `mode` values on `POST /chat`: `local` (direct to Ollama), `api` (direct to
-Claude), `auto` (routes local vs Claude up front, then runs the same local pipeline
-as `mode=local` with escalation to Claude on an unrecoverable error), and everything
-else falls through to `pro` (subprocess `claude` CLI with MCP tools).
+Claude, per-token), `auto` (routes local vs Claude up front, then runs the same local
+pipeline as `mode=local` with escalation to Claude on an unrecoverable error — still
+served, no longer offered by the UI; PR 2 decides its fate), and everything else
+falls through to `pro` (subprocess `claude` CLI with MCP tools; subscription billing).
 
-See `PLAN-pi-tools.md` for the active roadmap and the gaps it's closing (tool-turn
-history currently doesn't survive across requests; artifact compression is lossy;
-no blob store yet). Trust that plan over this file if they ever disagree — re-derive
-this file from the code, the plan says so explicitly.
+`PLAN-pi-tools.md` is the completed previous roadmap (Phases 0–7), kept for history.
 
 ## How to run
 
@@ -103,6 +102,13 @@ pytest itself never ships in the runtime image.
 The UI JS handles all of these. Do not reorder or rename without updating both sides.
 
 ## Frontend — design standards
+
+**Mobile first.** Design at 390 px, then let it widen; this is the convention for
+every bix.computer site. Rules the chat UI follows and new pages should too:
+`100dvh` + `overflow: hidden` on body with scrolling inside the content region;
+tap targets ≥ 44 px (`--tap`); inputs at `font-size: 16px` so iOS doesn't zoom;
+`env(safe-area-inset-*)` on anything pinned to an edge; one breakpoint at 900 px
+for a side panel, below it sheets not sidebars; no horizontal page scroll at 360 px.
 
 The UI uses the **Catppuccin Mocha** palette via CSS variables. Do not introduce new colours or override the palette for one-off styling; use the existing variables:
 
@@ -182,7 +188,10 @@ Imported and adapted from the shared project standards:
 - **httpx only.** All outbound HTTP (Anthropic, Ollama) uses `httpx.AsyncClient`. Don't add `requests` or `aiohttp`.
 - **Don't catch exceptions broadly then continue as if nothing happened.** The `except Exception: pass` pattern in `system_metrics()` is intentional (GPU stats are best-effort). Elsewhere, handle or re-raise with context.
 - **Strategy is pure logic.** `strategy.py` takes a body dict and an `ollama_chat` callable — it has no imports from `main.py`. Importing leaf modules like `config.py` is fine; keep it decoupled from `main.py` and the FastAPI app so it stays unit-testable in isolation.
-- **All disk writes go through `staging.py`.** Never bypass the propose → review → apply flow, never auto-apply. `is_write_denied_path` protections (secrets, shell scripts, container/CI config, `scripts/`/`.github/`) must never be weakened. Writes to bix-ai's own source are allowed to be *staged*, but approve applies them only to the `bix-ai-staging` clone — the containment invariant is: **this process never writes the prod tree**; promotion to prod happens only via the human-gated host-side deploy runner, which independently re-validates every record. Don't weaken the approve-time redirect or its re-validation.
+- **There is no write path.** bix-ai never writes to the mounted tree — not from a
+  tool, not from a route. `fs_core.is_denied_path` (secrets) must never be weakened.
+  The only disk writes are the service's own data under `DATA_DIR` (memories,
+  conversations, blobs) and `logs/`.
 - **One knob per external host.** Ollama's host is `config.OLLAMA_HOST` everywhere — don't reintroduce a hardcoded `host.docker.internal` at a new call site; derive from `OLLAMA_HOST`/`OLLAMA_URL`.
 
 ## Gotchas
@@ -199,36 +208,16 @@ Imported and adapted from the shared project standards:
 - **`gemma4:e2b` fails to load on this host** (llama runner exit status 2, any prompt size, even with nothing else resident — broken since the Vulkan backend switch). It is still the *code default* for `SUMMARY_LOCAL_MODEL`, so anything using the local summariser (pre-pass classify/salience fallback, conversation compaction, log review) silently fails open unless `SUMMARY_LOCAL_MODEL` is overridden. The compose file sets `SUMMARY_LOCAL_MODEL=gemma4:26b` for the container; export it yourself for dev runs. Fix or re-pull e2b to get the fast summariser back.
 - **Ollama unloads models** after ~5 minutes idle. The GPU section in the sidebar shows "idle" when this happens — that's expected.
 - **SSE golden fixtures:** `tests/fixtures/sse/*.json` pin the exact event sequences the claude/ollama loops emit (recorded pre-Phase-4-refactor). If `tests/test_sse_fixtures.py` fails, the SSE contract drifted — that's usually a bug, not a fixture-refresh situation. Only regenerate (`RECORD_SSE=1 pytest tests/test_sse_fixtures.py`) when the change is intended, and update the UI to match.
-- **Tests:** `cd bix-ai && pytest -q` — 18 test files under `tests/`, 161 tests as of Phase 6. Fully offline: all httpx clients and `ollama_chat` callables are faked, so the suite never hits Anthropic or Ollama (no token cost; ~0.5s runtime). A `.venv/` exists in `bix-ai/` (gitignored) with requirements + pytest installed — use `.venv/bin/python -m pytest -q` for local runs; the system Python has neither httpx nor fastapi. Strategy fixtures live under `tests/fixtures/` (regenerable — a ~4k-line logfile with one buried ERROR+traceback, a big source file, a huge JSON). `config.FS_ROOT`/`STAGING_DIR` are read at call time specifically so tests can monkeypatch them — keep that property. `pytest` is not in `requirements.txt` (it's installed only in the Docker test stage); install it separately for local runs.
+- **Tests:** `cd bix-ai && pytest -q` — 18 test files under `tests/`. Fully offline: all httpx clients and `ollama_chat` callables are faked, so the suite never hits Anthropic or Ollama (no token cost; ~0.5s runtime). A `.venv/` exists in `bix-ai/` (gitignored) with requirements + pytest installed — use `.venv/bin/python -m pytest -q` for local runs; the system Python has neither httpx nor fastapi. Strategy fixtures live under `tests/fixtures/` (regenerable — a ~4k-line logfile with one buried ERROR+traceback, a big source file, a huge JSON). `config.FS_ROOT`/`STAGING_DIR` are read at call time specifically so tests can monkeypatch them — keep that property. `pytest` is not in `requirements.txt` (it's installed only in the Docker test stage); install it separately for local runs.
 
-## Self-modification / staging deploys
+## Model management events
 
-- **Two roles, one codebase.** `config.BIX_ROLE` — `prod` (the normal container)
-  vs `staging` (a read-only twin on host port 3015 built from the
-  `bix-ai-staging` clone). Staging loses mutating tools + routes (405) and has
-  `FS_ROOT` mounted `:ro`. `GET /version` reports `{role, git_sha, built_at,
-  started_at}`; the Dockerfile stamps `GIT_SHA`/`BUILT_AT` via build args **at
-  the end of the runtime stage** — moving those ARGs earlier busts the pip/test
-  layer cache on every deploy.
-- **Retired 2026-09-25:** self-update is off — prod mounts the apps tree `:ro`
-  and `bix-deploy-runner` is disabled, so approved writes land only in
-  `bix-infra/todos/` and `bix-infra/outbox/`; other targets stay pending (the
-  write fails and the record is kept). The flow below is historical.
-- **The flow**: stage_write on own source → human approves at `/staging`
-  (applies to the staging clone only; critical guardrail files get a red
-  banner) → human queues `deploy-staging` at `/deploys` → host runner builds
-  and runs the staging container (pytest gate catches broken changes; output
-  verbatim in the deploy log) → prod verifies via `check_staging`/`ask_staging`
-  → human queues `promote` → runner independently re-validates records, writes
-  the prod tree, git-commits, rebuilds. `rollback` reverts the last prod
-  commit. Host setup: `bix-infra/setup-docs/self-mod-staging-runbook.md`.
-- **`_MAX_CONTENT_BYTES` (200 KB) caps staged files.** `static/index.html` is
-  the biggest self-target (~70 KB and growing) — if it ever approaches the cap,
-  raise the cap deliberately rather than splitting the file.
-- **Model management events** (`POST /models/ollama/pull` only, not `/chat`):
-  `pull_progress {status, digest?, total?, completed?}`, `pull_done {name}`,
-  `error`. Ollama's pull stream has long quiet phases — keep the
-  `with_keepalive` wrapper or Cloudflare kills the stream at ~100 s idle.
+`POST /models/ollama/pull` only (not `/chat`): `pull_progress {status, digest?,
+total?, completed?}`, `pull_done {name}`, `error`. Ollama's pull stream has long
+quiet phases — keep the `with_keepalive` wrapper or Cloudflare kills the stream
+at ~100 s idle. `GET /version` reports `{git_sha, built_at, started_at}`; the
+Dockerfile stamps `GIT_SHA`/`BUILT_AT` via build args **at the end of the runtime
+stage** — moving those ARGs earlier busts the pip/test layer cache on every build.
 
 ## When Claude makes a repeat mistake
 

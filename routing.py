@@ -126,7 +126,7 @@ def _cheap_model_if_no_intent(messages: list) -> str | None:
     config.ROUTING_CHEAP_CLAUDE_MODEL unless *any* turn in the conversation
     (not just the last) shows code/prose/multi-step intent — a mid-task "yes
     do that" must not demote an ongoing coding conversation. Read at call time
-    so tests can monkeypatch config (same pattern as FS_ROOT/STAGING_DIR)."""
+    so tests can monkeypatch config (same pattern as FS_ROOT)."""
     cheap = config.ROUTING_CHEAP_CLAUDE_MODEL
     if not cheap:
         return None
