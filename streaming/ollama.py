@@ -10,33 +10,27 @@ import time
 import httpx
 
 import strategy
-from config import LOOP_MAX_SECONDS, LOOP_MAX_TOKENS, OLLAMA_TOOL_MODEL, PROGRESS_HEARTBEAT_SECONDS
+from config import LOOP_MAX_SECONDS, LOOP_MAX_TOKENS, PROGRESS_HEARTBEAT_SECONDS
 from helpers import _agg, _write_routing_event, ollama_chat, sse, with_progress
 from identity import identity_system_prompt
 from streaming.loop import run_tool_loop
 from streaming.providers import OllamaProvider
-from tools import OLLAMA_TOOLS, _execute_tool
+from tools import OLLAMA_TOOLS, _execute_tool, with_actor
 
 log = logging.getLogger("router")
 
 OLLAMA_SYSTEM = identity_system_prompt(
     tool_names=[t["function"]["name"] for t in OLLAMA_TOOLS],
-    doc_topics=["memory", "blobs", "modes"],
+    doc_topics=["memory", "blobs", "modes", "workspace"],
 )
 
 
 async def _stream_ollama(
     messages: list, model: str, mode: str = "local",
-    tool_offload: bool = False, skip_preprocess: bool = False,
+    skip_preprocess: bool = False,
     route_reason: str = "", on_exhausted: str = "best_effort",
 ):
     _agg["requests"] += 1
-    if tool_offload and model != OLLAMA_TOOL_MODEL:
-        original = model
-        model = OLLAMA_TOOL_MODEL
-        log.info("ollama tool_offload from=%s to=%s", original, model)
-        yield sse("model_swap", {"from": original, "to": model})
-
     stats         = {"summarised": 0, "skipped": 0, "failed": 0, "spilled": 0}
     preprocess_ms = 0
     current_messages = list(messages)
@@ -99,7 +93,7 @@ async def _stream_ollama(
         run_tool_loop(
             provider, current_messages,
             # Late-bound module-global lookup (tests patch _execute_tool).
-            execute_tool=lambda n, i: _execute_tool(n, i),
+            execute_tool=lambda n, i: _execute_tool(n, with_actor(n, i, f"{mode}:{model}")),
             max_tokens_budget=LOOP_MAX_TOKENS, max_seconds=LOOP_MAX_SECONDS,
             stats=stats,
             preprocess_ms=preprocess_ms,

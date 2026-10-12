@@ -225,11 +225,6 @@ SCENARIOS = {
         [{"role": "user", "content": "hello"}],
         client_kwargs={"status_code": 500, "body": b'{"error": "model not found"}'},
     ),
-    "ollama_model_swap_tool_offload": lambda: _run_ollama(
-        [_ollama_text_turn()],
-        [{"role": "user", "content": "hello"}],
-        tool_offload=True,
-    ),
 }
 
 

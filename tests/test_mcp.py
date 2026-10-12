@@ -65,7 +65,8 @@ def test_tools_list():
         _init(proc)
         resp = _send(proc, {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
         names = {t["name"] for t in resp["result"]["tools"]}
-        assert names == {"list_directory", "read_file", "recall_memories"}
+        assert names == {"list_directory", "read_file", "recall_memories",
+                         "add_todo", "add_plan", "complete_todo", "write_outbox"}
     finally:
         proc.terminate()
 
@@ -127,3 +128,45 @@ def test_list_directory_valid():
             assert not resp["result"].get("isError")
         finally:
             proc.terminate()
+
+
+# ── Workspace writes ──────────────────────────────────────────────────────────
+
+def test_write_tool_schemas_match_the_tool_table():
+    """bix_mcp hand-writes its definitions (it can't import tools.py); they
+    must stay identical to TOOL_TABLE's so pro mode offers the same tools."""
+    import bix_mcp
+    import tools
+    mcp = {t["name"]: t for t in bix_mcp.TOOL_DEFS if t["name"] in tools.WRITE_TOOLS}
+    table = {t["name"]: t for t in tools.TOOL_TABLE if t["name"] in tools.WRITE_TOOLS}
+    assert set(mcp) == set(table) == tools.WRITE_TOOLS
+    for name, t in table.items():
+        assert mcp[name]["description"] == t["description"], name
+        assert mcp[name]["inputSchema"] == t["input_schema"], name
+
+
+def test_mcp_write_tools_tag_with_bix_actor(tmp_path):
+    todos, outbox = tmp_path / "todos", tmp_path / "outbox"
+    todos.mkdir()
+    outbox.mkdir()
+    env_extra = {"TODOS_DIR": str(todos), "OUTBOX_DIR": str(outbox), "BIX_ACTOR": "pro:claude-opus"}
+    os.environ.update(env_extra)
+    try:
+        proc = _spawn()
+    finally:
+        for k in env_extra:
+            del os.environ[k]
+    try:
+        _init(proc)
+        resp = _send(proc, {"jsonrpc": "2.0", "id": 9, "method": "tools/call", "params": {
+            "name": "add_todo", "arguments": {"project": "infra", "task": "From pro"}}})
+        assert "isError" not in resp["result"], resp
+        assert "**Added by:** ai.Bix (pro:claude-opus)" in (todos / "infra.md").read_text()
+
+        resp = _send(proc, {"jsonrpc": "2.0", "id": 10, "method": "tools/call", "params": {
+            "name": "write_outbox", "arguments": {"name": "../escape.md", "content": "x"}}})
+        assert resp["result"]["isError"] is True
+        assert resp["result"]["content"][0]["text"].startswith("Not written:")
+        assert not (tmp_path / "escape.md").exists()
+    finally:
+        proc.terminate()

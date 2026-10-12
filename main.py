@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 import psutil
 from fastapi import FastAPI, Request
+from fastapi.staticfiles import StaticFiles
 from fastapi.responses import (
     FileResponse, JSONResponse, StreamingResponse, RedirectResponse, Response,
 )
@@ -74,7 +75,6 @@ class ChatRequest(BaseModel):
     model:           str = DEFAULT_MODEL
     max_tokens:      int = _MAX_TOKENS_CAP
     mode:            str = "local"
-    tool_offload:    bool = False
     # mode="pro" only: claude-CLI session to resume (from the pro_session SSE
     # event). Preserves tool turns across requests; empty = fresh session.
     # With a conversation_id the server remembers it too.
@@ -447,6 +447,12 @@ async def index():
     return FileResponse("static/index.html")
 
 
+# Pinned third-party JS/CSS/fonts (Markdown, sanitiser, math) — see
+# static/vendor/README.md. Only this directory is served, not static/ itself.
+app.mount("/static/vendor", StaticFiles(directory=Path(__file__).parent / "static" / "vendor"),
+          name="vendor")
+
+
 # ── Conversations ─────────────────────────────────────────────────────────────
 
 @app.get("/conversations")
@@ -561,7 +567,6 @@ async def chat(request: Request):
     model        = body.model
     max_tokens   = min(body.max_tokens, _MAX_TOKENS_CAP)
     mode         = body.mode
-    tool_offload = body.tool_offload
 
     if mode in ("api", "pro") and model not in _ALLOWED_CLAUDE_MODELS:
         return _json_error(400, f"Model not permitted: {model}")
@@ -636,7 +641,7 @@ async def chat(request: Request):
         error_msg = ""
         try:
             if mode == "local":
-                gen = _stream_ollama(messages, model, mode=mode, tool_offload=tool_offload)
+                gen = _stream_ollama(messages, model, mode=mode)
             elif mode == "api":
                 gen = _stream_claude(messages, model, max_tokens, skip_preprocess=False, mode=mode)
             elif mode == "openrouter":

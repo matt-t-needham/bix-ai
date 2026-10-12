@@ -116,7 +116,7 @@
       overflow-y: auto;
       -webkit-overflow-scrolling: touch;
       position: relative;
-      padding: 16px 0 8px;
+      padding: 16px 0 16px;
     }
     .msgs-inner {
       width: 100%;
@@ -160,12 +160,6 @@
     .thinking { margin: 0 0 8px; width: fit-content; max-width: 100%; }
     .thinking .sub-bubble-name { color: var(--subtext); }
     .ind-arrow { color: var(--surface1); margin: 0 5px; }
-    .switch-marker {
-      width: fit-content; max-width: 100%;
-      font-size: .68rem; color: var(--subtext);
-      background: var(--surface0); border: 1px solid var(--surface1);
-      border-radius: 10px; padding: 2px 10px; margin: 8px 0;
-    }
     .bubble {
       padding: 10px 14px;
       border-radius: 16px;
@@ -196,6 +190,20 @@
     .bubble pre code { font-size: inherit; }
     .bubble strong { font-weight: 600; }
     .bubble em { font-style: italic; }
+    .bubble h1, .bubble h2, .bubble h3, .bubble h4 { font-weight: 600; line-height: 1.3; margin: .9em 0 .4em; }
+    .bubble h1 { font-size: 1.2em; } .bubble h2 { font-size: 1.1em; } .bubble h3, .bubble h4 { font-size: 1em; }
+    .bubble > :first-child { margin-top: 0; }
+    .bubble ul, .bubble ol { margin: 0 0 .55em; padding-left: 1.4em; }
+    .bubble li { margin: .15em 0; }
+    .bubble li > p { margin: 0; }
+    .bubble a { color: var(--blue); text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; }
+    .bubble blockquote { margin: 0 0 .55em; padding-left: .8em; border-left: 2px solid var(--surface1); color: var(--subtext); }
+    .bubble hr { border: 0; border-top: 1px solid var(--surface1); margin: .8em 0; }
+    .bubble table { display: block; overflow-x: auto; border-collapse: collapse; margin: 0 0 .55em; font-size: .92em; font-variant-numeric: tabular-nums; }
+    .bubble th, .bubble td { border: 1px solid var(--surface1); padding: 4px 8px; text-align: left; }
+    .bubble th { font-weight: 600; }
+    .bubble .katex-display { overflow-x: auto; overflow-y: hidden; margin: .4em 0 .6em; }
+    .bubble .math-pending { font-family: ui-monospace, 'Cascadia Code', 'Fira Code', Menlo, monospace; font-size: .88em; color: var(--subtext); }
     .meta {
       font-size: .7rem;
       color: var(--subtext);
@@ -397,17 +405,20 @@
       border-top: 1px solid var(--surface1);
       border-radius: 16px 16px 0 0;
       transform: translateY(100%);
-      transition: transform .25s ease;
+      /* Closed = hidden, not just moved/faded: an opacity-0 sheet still takes
+         clicks and Tab focus. visibility flips after the closing animation. */
+      visibility: hidden;
+      transition: transform .25s ease, visibility 0s .25s;
       z-index: 50;
       display: flex; flex-direction: column;
       padding-bottom: var(--sab);
     }
-    .sheet.open { transform: translateY(0); }
+    .sheet.open { transform: translateY(0); visibility: visible; transition: transform .25s ease, visibility 0s; }
     @media (min-width: 600px) {
       .sheet { left: 50%; right: auto; bottom: 50%; width: 420px; max-height: 70vh;
                transform: translate(-50%, 60%); opacity: 0; border-radius: 16px; border: 1px solid var(--surface1);
-               transition: transform .2s, opacity .2s; padding-bottom: 0; }
-      .sheet.open { transform: translate(-50%, 50%); opacity: 1; }
+               transition: transform .2s, opacity .2s, visibility 0s .2s; padding-bottom: 0; }
+      .sheet.open { transform: translate(-50%, 50%); opacity: 1; transition: transform .2s, opacity .2s, visibility 0s; }
     }
     .sheet-hdr {
       display: flex; align-items: center; justify-content: space-between;
@@ -445,10 +456,6 @@
     .spend-line { display: flex; justify-content: space-between; font-size: .76rem; color: var(--subtext); padding: 4px 10px; font-variant-numeric: tabular-nums; }
     .spend-line .sv { color: var(--text); }
     .sheet-note { font-size: .74rem; color: var(--subtext); padding: 4px 10px 8px; line-height: 1.5; }
-    .sheet-toggle {
-      display: flex; align-items: center; justify-content: space-between; gap: 10px;
-      min-height: var(--tap); padding: 6px 10px; font-size: .8rem; color: var(--subtext);
-    }
     .toggle-btn {
       font-size: .72rem; padding: 6px 12px; min-height: 32px; border-radius: 16px;
       border: 1px solid var(--surface1); color: var(--subtext);
@@ -463,11 +470,14 @@
       z-index: 50;
       background: var(--surface0);
       transform: translateY(100%);
-      transition: transform .25s ease;
+      /* Off-screen isn't enough: Tab would still reach its controls. Same
+         delayed visibility flip as .sheet. */
+      visibility: hidden;
+      transition: transform .25s ease, visibility 0s .25s;
       display: flex; flex-direction: column;
       padding-top: var(--sat);
     }
-    #drawer.open { transform: translateY(0); }
+    #drawer.open { transform: translateY(0); visibility: visible; transition: transform .25s ease, visibility 0s; }
     @media (min-width: 900px) {
       #drawer {
         inset: 0 0 0 auto;
@@ -654,7 +664,6 @@
           <span class="caret">▼</span>
         </button>
         <span class="chip-tag" id="api-mode-badge" title="Using API credits (Pro quota reached)">API credits</span>
-        <span class="chip-tag" id="offload-badge" title="Tool calls are offloaded to the tool model">tools → qwen</span>
       </div>
       <div class="input-row">
         <textarea id="input" placeholder="Message…" rows="1" enterkeyhint="send"></textarea>
@@ -809,6 +818,8 @@
   </div>
 </aside>
 
+<script src="/static/vendor/marked/marked.min.js"></script>
+<script src="/static/vendor/dompurify/purify.min.js"></script>
 <script>
 // ── Providers ─────────────────────────────────────────────────────────────────
 // One entry per provider the picker shows. `mode` is what POST /chat gets.
@@ -826,7 +837,6 @@ const CLAUDE_MODELS = [
 const LOCAL_FALLBACK = [
   { name: 'gemma4:26b' }, { name: 'qwen3.5:9b' }, { name: 'gemma4:e2b' },
 ];
-const TOOL_MODEL = 'qwen3.5:9b';
 
 // Advisory USD per 1M tokens [input, output] — keep in sync with
 // config.py MODEL_COSTS (source: platform.claude.com pricing, 2026-07).
@@ -854,7 +864,6 @@ let memLoaded    = false;
 let memShowAll   = false;
 let forceApi     = false;   // set to true when Pro quota is exhausted
 let lastUserMsg  = '';      // stored for quota retry
-let toolOffload  = false;
 let proSessionId = null;    // claude-CLI session (pro mode) — keeps tool turns across requests
 let localModels  = LOCAL_FALLBACK;
 let modelsLoaded = false, modelPulling = false;
@@ -871,11 +880,10 @@ function loadPrefs() {
     if (p.localModel) localModel = p.localModel;
     if (p.openrouterModel) openrouterModel = p.openrouterModel;
     if (p.conversationId) conversationId = p.conversationId;
-    if (typeof p.toolOffload === 'boolean') toolOffload = p.toolOffload;
   } catch {}
 }
 function savePrefs() {
-  try { localStorage.setItem(PREF_KEY, JSON.stringify({ provider, model, localModel, openrouterModel, toolOffload, conversationId })); } catch {}
+  try { localStorage.setItem(PREF_KEY, JSON.stringify({ provider, model, localModel, openrouterModel, conversationId })); } catch {}
 }
 
 // ── DOM ───────────────────────────────────────────────────────────────────────
@@ -977,8 +985,6 @@ function renderChip() {
   $('chip-provider').textContent = p.label;
   $('chip-model').textContent = shortModel(model);
   $('api-mode-badge').classList.toggle('visible', p.id === 'claude' && forceApi);
-  $('offload-badge').classList.toggle('visible', p.isLocal && toolOffload && model !== TOOL_MODEL);
-  $('offload-badge').classList.toggle('on', toolOffload);
 }
 
 function selectModel(provId, modelId) {
@@ -1006,10 +1012,6 @@ function renderSheet() {
         parts.push(`<button class="sheet-row local${active ? ' active' : ''}" data-provider="local" data-model="${escHtml(m.name)}">
           <span class="rcheck">✓</span><span class="rname">${escHtml(m.name)}</span><span class="rsub">${sub}</span></button>`);
       }
-      parts.push(`<div class="sheet-toggle">
-        <span>Offload tool calls to ${TOOL_MODEL}<br><span style="font-size:.7rem">for models that garble tool JSON</span></span>
-        <button class="toggle-btn${toolOffload ? ' on' : ''}" id="tool-offload-btn">${toolOffload ? 'on' : 'off'}</button>
-      </div>`);
     } else if (p.id === 'claude') {
       for (const m of CLAUDE_MODELS) {
         const active = provider === 'claude' && model === m.id;
@@ -1053,8 +1055,6 @@ function renderSheet() {
     selectModel(b.dataset.provider, b.dataset.model);
     closeSheet();
   }));
-  const tb = $('tool-offload-btn');
-  if (tb) tb.addEventListener('click', () => { toolOffload = !toolOffload; savePrefs(); renderChip(); renderSheet(); });
   const bp = $('back-to-pro');
   if (bp) bp.addEventListener('click', () => { forceApi = false; renderChip(); renderSheet(); });
   const si = $('or-search');
@@ -1232,17 +1232,86 @@ document.addEventListener('visibilitychange', () => {
   else if (drawer.classList.contains('open')) startSysPoll();
 });
 
-// ── Markdown ──────────────────────────────────────────────────────────────────
+// ── Markdown + math ───────────────────────────────────────────────────────────
+// marked renders, DOMPurify sanitises (model output is untrusted and marked
+// passes raw HTML through), then math is put back. Math is pulled out first so
+// marked can't mangle it (underscores, backslashes), skipping code. KaTeX is
+// ~300 KB, so it's loaded only when a message has math: until then the math
+// shows as source in .math-pending spans, which ensureKatex() typesets once
+// loaded. Inline $…$ needs something LaTeX-like inside, so "$5 or $10" stays text.
+marked.setOptions({ gfm: true, breaks: true });
+DOMPurify.addHook('afterSanitizeAttributes', node => {
+  if (node.tagName === 'A') { node.setAttribute('target', '_blank'); node.setAttribute('rel', 'noopener noreferrer'); }
+});
+
+const MATH_RE = /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)|(?<![\\$\w])\$(?=\S)([^$\n]+?)(?<=\S)\$(?![\w$])/g;
+const LOOKS_TEX = /\\[a-zA-Z]+|[\^_{}]|^[a-zA-Z]$/;
+
+function extractMath(text) {
+  const math = [];
+  // Split out fenced and inline code; only the even (non-code) parts get math.
+  const parts = text.split(/(```[\s\S]*?(?:```|$)|`[^`\n]+`)/);
+  const out = parts.map((part, i) => i % 2 ? part : part.replace(MATH_RE, (whole, d1, d2, i1, i2) => {
+    const tex = d1 ?? d2 ?? i1 ?? i2;
+    const display = d1 != null || d2 != null;
+    if (!display && !LOOKS_TEX.test(tex.trim())) return whole;
+    math.push({ tex: tex.trim(), display });
+    return `@@BIXMATH${math.length - 1}@@`;
+  }));
+  return { text: out.join(''), math };
+}
+
+function mathHtml({ tex, display }) {
+  if (window.katex) {
+    return katex.renderToString(tex, { displayMode: display, throwOnError: false, trust: false });
+  }
+  const src = display ? `$$${tex}$$` : `$${tex}$`;
+  return `<span class="math-pending" data-tex="${escHtml(tex)}" data-display="${display ? 1 : 0}">${escHtml(src)}</span>`;
+}
+
+let katexLoading = null;
+function ensureKatex() {
+  if (window.katex) return Promise.resolve();
+  if (!katexLoading) {
+    katexLoading = new Promise((resolve, reject) => {
+      const css = document.createElement('link');
+      css.rel = 'stylesheet'; css.href = '/static/vendor/katex/katex.min.css';
+      document.head.appendChild(css);
+      const js = document.createElement('script');
+      js.src = '/static/vendor/katex/katex.min.js';
+      js.onload = resolve;
+      js.onerror = () => { katexLoading = null; reject(new Error('KaTeX failed to load')); };
+      document.head.appendChild(js);
+    });
+  }
+  return katexLoading;
+}
+
+function typesetPending() {
+  ensureKatex().then(() => {
+    document.querySelectorAll('.math-pending').forEach(el => {
+      const html = mathHtml({ tex: el.dataset.tex, display: el.dataset.display === '1' });
+      const tmp = document.createElement('span');
+      tmp.innerHTML = DOMPurify.sanitize(html);
+      el.replaceWith(...tmp.childNodes);
+    });
+  }).catch(err => {
+    // Math stays readable as source; say why rather than failing silently.
+    console.error(err);
+    document.querySelectorAll('.math-pending').forEach(el => { el.title = 'Math rendering unavailable: ' + err.message; });
+  });
+}
+
 function renderMd(text) {
-  let s = escHtml(text);
-  s = s.replace(/```(?:\w*)\n([\s\S]*?)```/g, (_,c) => `<pre><code>${c.trimEnd()}</code></pre>`);
-  s = s.replace(/`([^`\n]+)`/g, '<code>$1</code>');
-  s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  s = s.replace(/\*(.+?)\*/g,   '<em>$1</em>');
-  s = s.split(/\n{2,}/).map(chunk =>
-    chunk.startsWith('<pre') ? chunk : `<p>${chunk.replace(/\n/g,'<br>')}</p>`
-  ).join('');
-  return s;
+  const { text: body, math } = extractMath(text);
+  let html = DOMPurify.sanitize(marked.parse(body));
+  if (math.length) {
+    // Sanitise again: math lands after the first pass, and a placeholder can
+    // sit anywhere marked put it (even inside an attribute).
+    html = DOMPurify.sanitize(html.replace(/@@BIXMATH(\d+)@@/g, (_, n) => mathHtml(math[+n])));
+    if (!window.katex) queueMicrotask(typesetPending);
+  }
+  return html;
 }
 
 // ── Bubbles ───────────────────────────────────────────────────────────────────
@@ -1613,7 +1682,7 @@ function renderChats() {
   }
 }
 function clearMessages() {
-  msgsIn.querySelectorAll('.msg, .switch-marker').forEach(el => el.remove());
+  msgsIn.querySelectorAll('.msg').forEach(el => el.remove());
   if (emptyState) emptyState.style.display = '';
 }
 function newChat() {
@@ -1746,7 +1815,6 @@ async function send() {
   let toolGroupEl     = null;
   let pendingTools    = 0;
   let totalTools      = 0;
-  let modelSwap       = null;
   let thinkingEl      = null;
   let thinkingText    = '';
   const toolBubbles     = {};
@@ -1755,19 +1823,6 @@ async function send() {
   let currentTextNode = document.createTextNode('');
   bubble.appendChild(currentTextNode);
 
-  // Inline marker at a model transition (offload / escalation), then continue
-  // text into a fresh node. Stored as a segment so the markdown rebuild keeps it.
-  function addSwitch(labelText) {
-    const marker = document.createElement('div');
-    marker.className = 'switch-marker';
-    marker.textContent = labelText;
-    bubble.appendChild(marker);
-    textSegments.push({ type: 'transition', html: `<div class="switch-marker">${escHtml(labelText)}</div>` });
-    const node = document.createTextNode('');
-    bubble.appendChild(node);
-    currentTextNode = node;
-    textSegments.push({ type: 'text', content: '' });
-  }
 
   reqSeq++;
   currentReq = {
@@ -1790,7 +1845,7 @@ async function send() {
       body: JSON.stringify({
         messages: [{ role: 'user', content: text }],
         conversation_id: conversationId || 'new',
-        model, mode, tool_offload: isLocal && toolOffload,
+        model, mode,
         session_id: mode === 'pro' ? (proSessionId || '') : '',
       }),
       signal: abortCtrl.signal,
@@ -1807,14 +1862,7 @@ async function send() {
     }
 
     for await (const [evType, data] of readSse(res)) {
-      if (evType === 'model_swap') {
-        modelSwap = data;
-        setStatus('checking', `↳ ${data.to} (tool-capable)`);
-        pushModel(modelsUsed, data.to, true);
-        renderIndicator(wrap, modelsUsed);
-        addSwitch(`⚙ offloaded to ${friendlyModel(data.to)} for tools`);
-
-      } else if (evType === 'status') {
+      if (evType === 'status') {
         setStatus(data.stage, data.message);
 
       } else if (evType === 'budget') {
@@ -1858,7 +1906,6 @@ async function send() {
         let html = '';
         for (const seg of textSegments) {
           if (seg.type === 'text' && seg.content) html += renderMd(seg.content);
-          else if (seg.type === 'transition') html += seg.html;
         }
         bubble.innerHTML = html;
         if (thinkingEl) {
@@ -1901,7 +1948,7 @@ async function send() {
           wrap.appendChild(toolGroupEl);
         }
         toolGroupEl.querySelector('.tool-group-label').textContent =
-          `⚙ ${totalTools} tool call${totalTools > 1 ? 's' : ''}${modelSwap ? ` · ${modelSwap.to}` : ''}`;
+          `⚙ ${totalTools} tool call${totalTools > 1 ? 's' : ''}`;
 
         const sb  = document.createElement('div');  sb.className = 'sub-bubble';
         const hdr = document.createElement('div');  hdr.className = 'sub-bubble-hdr';

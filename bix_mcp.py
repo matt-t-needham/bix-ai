@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """Stdio MCP server for bix-ai (mode="pro"). Exposes the read-only filesystem
-+ memory tools with a path policy. Stdlib-only — it runs inside the `claude`
-CLI subprocess, not the FastAPI app."""
++ memory tools with a path policy, plus the workspace writes (todos/ and
+outbox/, via workspace.py). Stdlib-only — it runs inside the `claude` CLI
+subprocess, not the FastAPI app. BIX_ACTOR (set per run by streaming/pro.py)
+names the model in each write's tag; the write tools' schemas mirror
+tools.TOOL_TABLE (tests/test_mcp.py keeps them in step)."""
 import json
 import os
 import pathlib
 import sys
 
+import workspace
 from fs_core import is_denied_path, list_directory, read_file
 
 READ_ROOTS  = [pathlib.Path(p).resolve() for p in os.environ.get("MCP_READ_PATHS",  "/home/matt/apps").split(":") if p]
@@ -67,7 +71,133 @@ TOOL_DEFS = [
             "required": ["query"],
         },
     },
+    {
+        "name": "add_todo",
+        "description": "Add a pending task to a project's todo list (bix-infra/todos/<project>.md). Only when the user asks you to note, track or remember a task. Appends to the Pending section; never edits existing entries.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Todo file name without .md, e.g. 'bix-ai', 'infra', 'rageagain_channel'. A new name creates that project's file."
+                },
+                "task": {
+                    "type": "string",
+                    "description": "One-line task title (max 200 chars)."
+                },
+                "why": {
+                    "type": "string",
+                    "description": "Motivation or context (optional)."
+                },
+                "notes": {
+                    "type": "string",
+                    "description": "Constraints, gotchas, prior decisions (optional)."
+                }
+            },
+            "required": [
+                "project",
+                "task"
+            ]
+        }
+    },
+    {
+        "name": "add_plan",
+        "description": "Add an implementation plan to a project's todo file (its Plans section). Only when the user asks you to write a plan down. Steps should be specific enough to carry out in a later session without re-explanation.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Todo file name without .md, e.g. 'bix-ai', 'infra', 'rageagain_channel'. A new name creates that project's file."
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Plan title."
+                },
+                "goal": {
+                    "type": "string",
+                    "description": "One-line summary of what it achieves."
+                },
+                "steps": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "Ordered steps, one string each (max 30)."
+                },
+                "effort": {
+                    "type": "string",
+                    "enum": [
+                        "small",
+                        "medium",
+                        "large"
+                    ],
+                    "description": "small = under an hour, medium = half a day, large = several sessions."
+                }
+            },
+            "required": [
+                "project",
+                "title",
+                "goal",
+                "steps"
+            ]
+        }
+    },
+    {
+        "name": "complete_todo",
+        "description": "Mark one pending task done: moves it from Pending to Done with today's date. Only when the user says the work is finished. `match` is a distinctive piece of the task's title; if it matches more than one open task, nothing changes and you get the candidates back.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Todo file name without .md, e.g. 'bix-ai', 'infra', 'rageagain_channel'. A new name creates that project's file."
+                },
+                "match": {
+                    "type": "string",
+                    "description": "Text that appears in exactly one open task's title."
+                }
+            },
+            "required": [
+                "project",
+                "match"
+            ]
+        }
+    },
+    {
+        "name": "write_outbox",
+        "description": "Save a draft (note, write-up, blog draft, plan) for Matt to pick up, as bix-infra/outbox/<name>. Creates the file or overwrites one of the same name. Only when the user asks for something to be saved or written out.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Plain file name ending in .md or .txt, e.g. 'blog-draft.md'."
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Full file content (max 100 KB)."
+                }
+            },
+            "required": [
+                "name",
+                "content"
+            ]
+        }
+    },
 ]
+
+_WORKSPACE = {
+    "add_todo": lambda a, actor: workspace.add_todo(
+        a.get("project", ""), a.get("task", ""), a.get("why", ""), a.get("notes", ""), actor=actor),
+    "add_plan": lambda a, actor: workspace.add_plan(
+        a.get("project", ""), a.get("title", ""), a.get("goal", ""), a.get("steps", []),
+        a.get("effort", ""), actor=actor),
+    "complete_todo": lambda a, actor: workspace.complete_todo(
+        a.get("project", ""), a.get("match", ""), actor=actor),
+    "write_outbox": lambda a, actor: workspace.write_outbox(
+        a.get("name", ""), a.get("content", ""), actor=actor),
+}
 
 
 def _execute(name: str, args: dict) -> dict:
@@ -132,6 +262,13 @@ def _execute(name: str, args: dict) -> dict:
             results.append(f"[{date}] {title}\n{summary}" if summary else f"[{date}] {title}")
         return _tool_ok("\n\n".join(results))
 
+    elif name in _WORKSPACE:
+        try:
+            return _tool_ok(_WORKSPACE[name](args, os.environ.get("BIX_ACTOR", "pro")))
+        except workspace.WorkspaceError as e:
+            return _tool_error(f"Not written: {e}")
+        except OSError as e:
+            return _tool_error(f"Not written — the write failed: {e}")
 
     return _tool_error(f"Unknown tool: {name}")
 

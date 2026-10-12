@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import time
+from pathlib import Path
 
 import strategy
 
@@ -13,9 +14,20 @@ from identity import identity_system_prompt
 log = logging.getLogger("router")
 
 _PRO_IDENTITY_PROMPT = identity_system_prompt(
-    tool_names=["list_directory", "read_file", "recall_memories"],
-    doc_topics=["memory", "modes"],
+    tool_names=["list_directory", "read_file", "recall_memories",
+                "add_todo", "add_plan", "complete_todo", "write_outbox"],
+    doc_topics=["memory", "modes", "workspace"],
 )
+
+MCP_CONFIG_PATH = Path(__file__).resolve().parent.parent / "mcp.json"
+
+
+def _mcp_config(model: str) -> str:
+    """mcp.json with BIX_ACTOR set for this run, passed to the CLI inline, so
+    the MCP server can tag workspace writes with the model making them."""
+    cfg = json.loads(MCP_CONFIG_PATH.read_text())
+    cfg["mcpServers"]["bix"].setdefault("env", {})["BIX_ACTOR"] = f"pro:{model}"
+    return json.dumps(cfg)
 
 
 class _SessionGone(Exception):
@@ -60,7 +72,7 @@ async def _run_claude_once(
         "--output-format", "stream-json",
         "--verbose",
         "--system-prompt", system_prompt,
-        "--mcp-config", "/app/mcp.json",
+        "--mcp-config", _mcp_config(model),
         "--allowedTools", "mcp__bix__*",
         "--model", model,
     ]

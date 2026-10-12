@@ -13,7 +13,7 @@ from helpers import _agg, _write_routing_event, ollama_chat, sse
 from identity import identity_system_prompt
 from streaming.loop import run_tool_loop
 from streaming.providers import AnthropicProvider
-from tools import FS_TOOLS, _execute_tool
+from tools import FS_TOOLS, _execute_tool, with_actor
 
 log = logging.getLogger("router")
 
@@ -21,7 +21,7 @@ log = logging.getLogger("router")
 # descriptions on the wire, so one-liners would be pure duplication.
 _IDENTITY_PROMPT = identity_system_prompt(
     tool_names=[],
-    doc_topics=["memory", "blobs", "modes"],
+    doc_topics=["memory", "blobs", "modes", "workspace"],
 )
 
 
@@ -90,7 +90,7 @@ async def _stream_claude(
     async for event in run_tool_loop(
         provider, req_body["messages"],
         # Late-bound module-global lookup (tests patch _execute_tool).
-        execute_tool=lambda n, i: _execute_tool(n, i),
+        execute_tool=lambda n, i: _execute_tool(n, with_actor(n, i, f"{mode}:{model}")),
         max_tokens_budget=LOOP_MAX_TOKENS, max_seconds=LOOP_MAX_SECONDS,
         stats=stats, preprocess_ms=preprocess_ms,
         clock=time.monotonic,

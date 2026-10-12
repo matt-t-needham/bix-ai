@@ -17,13 +17,13 @@ from helpers import _agg, _write_routing_event, ollama_chat, sse
 from identity import identity_system_prompt
 from streaming.loop import run_tool_loop
 from streaming.providers import OpenRouterProvider
-from tools import OLLAMA_TOOLS, _execute_tool
+from tools import OLLAMA_TOOLS, _execute_tool, with_actor
 
 log = logging.getLogger("router")
 
 OPENROUTER_SYSTEM = identity_system_prompt(
     tool_names=[t["function"]["name"] for t in OLLAMA_TOOLS],
-    doc_topics=["memory", "blobs", "modes"],
+    doc_topics=["memory", "blobs", "modes", "workspace"],
 )
 
 
@@ -108,7 +108,7 @@ async def _stream_openrouter(messages: list, model: str, mode: str = "openrouter
     )
     async for event in run_tool_loop(
         provider, current_messages,
-        execute_tool=lambda n, i: _execute_tool(n, i),
+        execute_tool=lambda n, i: _execute_tool(n, with_actor(n, i, f"{mode}:{model}")),
         max_tokens_budget=LOOP_MAX_TOKENS, max_seconds=LOOP_MAX_SECONDS,
         stats=stats, preprocess_ms=preprocess_ms,
         clock=time.monotonic,

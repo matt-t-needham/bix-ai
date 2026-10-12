@@ -13,7 +13,6 @@ ANTHROPIC_API_KEY    = os.environ.get("ANTHROPIC_API_KEY", "")
 BIX_PROXY_SECRET     = os.environ.get("BIX_PROXY_SECRET", "")
 DEFAULT_MODEL        = os.environ.get("DEFAULT_MODEL", "claude-sonnet-4-5")
 OLLAMA_DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "gemma4:26b")
-OLLAMA_TOOL_MODEL    = os.environ.get("OLLAMA_TOOL_MODEL", "qwen3.5:9b")
 SUMMARY_LOCAL_MODEL  = os.environ.get("SUMMARY_LOCAL_MODEL", "gemma4:e2b")
 FS_ROOT              = Path(os.environ.get("FS_ROOT", "/home/matt")).resolve()
 DATA_DIR             = Path(os.environ.get("DATA_DIR", "/app/data"))
@@ -56,7 +55,6 @@ _ALLOWED_CLAUDE_MODELS = {
 }
 _ALLOWED_OLLAMA_MODELS = {
     OLLAMA_DEFAULT_MODEL,
-    OLLAMA_TOOL_MODEL,
     SUMMARY_LOCAL_MODEL,   # summariser used by strategy.py
     "gemma4:26b",
     "qwen3.5:9b",

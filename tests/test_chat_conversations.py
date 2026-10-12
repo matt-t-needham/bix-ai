@@ -54,7 +54,7 @@ def _events(text: str) -> list[tuple[str, dict]]:
 
 def _fake_local(reply: str, tool: bool = False):
     """Stands in for _stream_ollama: echoes the sent messages back on `history`."""
-    async def gen(messages, model, mode="local", tool_offload=False, **kw):
+    async def gen(messages, model, mode="local", **kw):
         yield sse("status", {"stage": "streaming", "message": "x"})
         yield sse("delta", {"text": reply})
         hist = list(messages)
@@ -201,3 +201,65 @@ def test_openrouter_mode_requires_config_and_valid_id(env, client, monkeypatch):
     r = client.post("/chat", json={"messages": [{"role": "user", "content": "x"}],
                                    "model": "openrouter/auto", "mode": "openrouter"})
     assert r.status_code == 400
+
+
+def test_real_loop_round_trip_keeps_the_reply(env, client, monkeypatch):
+    """The fakes above stand in for the whole adapter; this runs the real
+    _stream_ollama + run_tool_loop (only Ollama's HTTP is faked), so the
+    stored record is what the loop's `history` actually carries. It once
+    held only the user turn: the final reply never reached `history`."""
+    from unittest.mock import patch
+
+    from streaming import ollama as ollama_mod
+    from tests.sse_harness import FakeClient, ollama_turn_lines
+
+    class RecordingClient(FakeClient):
+        def __init__(self, turns):
+            super().__init__(turns)
+            self.sent = []
+
+        def stream(self, method, url, **kwargs):
+            self.sent.append(kwargs.get("json", {}).get("messages", []))
+            return super().stream(method, url, **kwargs)
+
+    def text(t):
+        return ollama_turn_lines([{"choices": [{"delta": {"content": t}}]},
+                                  {"choices": [{"delta": {}, "finish_reason": "stop"}]}])
+    tool_turn = ollama_turn_lines([
+        {"choices": [{"delta": {"tool_calls": [{
+            "index": 0, "id": "call_1",
+            "function": {"name": "read_file", "arguments": '{"path": "/x"}'}}]}}]},
+        {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]},
+    ])
+    fake = RecordingClient([tool_turn, text("first answer"), text("second answer")])
+
+    async def fake_tool(name, tool_input):
+        return "file contents"
+
+    async def no_routing(*a, **k):
+        pass
+
+    with patch.object(ollama_mod.httpx, "AsyncClient", lambda **kw: fake), \
+         patch.object(ollama_mod, "_execute_tool", fake_tool), \
+         patch.object(ollama_mod, "_write_routing_event", no_routing):
+        events = _post(client, {"messages": [{"role": "user", "content": "read /x"}],
+                                "conversation_id": "new", "model": "gemma4:26b", "mode": "local"})
+        assert [e for e, _ in events][-1] == "done"
+        conv_id = events[0][1]["id"]
+        rec = conversations.get(conv_id)
+        assert [m["role"] for m in rec["messages"]] == ["user", "assistant", "user", "assistant"]
+        assert rec["messages"][1]["content"][0]["type"] == "tool_use"
+        assert rec["messages"][2]["content"][0]["type"] == "tool_result"
+        assert rec["messages"][-1]["content"] == [{"type": "text", "text": "first answer"}]
+
+        _post(client, {"messages": [{"role": "user", "content": "and then?"}],
+                       "conversation_id": conv_id, "model": "gemma4:26b", "mode": "local"})
+
+    # Turn two went up with turn one's answer in it, after the system prompt.
+    sent = [m for m in fake.sent[-1] if m["role"] != "system"]
+    assert [m["role"] for m in sent] == ["user", "assistant", "tool", "assistant", "user"]
+    assert sent[3]["content"] == "first answer"
+    assert sent[-1]["content"] == "and then?"
+    rec = conversations.get(conv_id)
+    assert [m["role"] for m in rec["messages"]] == ["user", "assistant", "user", "assistant", "user", "assistant"]
+    assert rec["messages"][-1]["content"] == [{"type": "text", "text": "second answer"}]
