@@ -161,6 +161,23 @@ async def with_keepalive(gen, interval: float = 15.0):
             pass
 
 
+async def anthropic_text(model: str, messages: list, system: str = "",
+                         max_tokens: int = 1024, timeout: float = 120.0) -> str:
+    """One non-streaming Anthropic call; returns the joined text or raises."""
+    from config import ANTHROPIC_URL  # local import: keeps the module's top lean
+    body = {"model": model, "max_tokens": max_tokens, "messages": messages}
+    if system:
+        body["system"] = system
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        r = await client.post(ANTHROPIC_URL, json=body, headers={
+            "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        })
+        r.raise_for_status()
+        return "".join(b.get("text", "") for b in r.json().get("content", [])
+                       if b.get("type") == "text")
+
+
 async def ollama_chat(model: str, messages: list, timeout: float = 120.0) -> str:
     async with httpx.AsyncClient(timeout=timeout) as client:
         r = await client.post(OLLAMA_URL, json={
@@ -184,13 +201,17 @@ async def _write_routing_event(
     ttft_ms: int = 0, elapsed_ms: int = 0,
     guardrail_rescues: int = 0, guardrail_retries: int = 0,
     guardrail_exhausted: bool = False,
+    est_cost_usd: float | None = None,
 ) -> None:
+    # est_cost_usd: pass the real figure when the provider knows its prices
+    # (OpenRouter); otherwise it's derived from config.MODEL_COSTS (Claude).
     record = json.dumps({
         "ts":                  datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "mode":                mode,
         "model":               model,
         "reason":              reason,
-        "est_cost_usd":        _est_cost_usd(model, input_tokens, output_tokens),
+        "est_cost_usd":        _est_cost_usd(model, input_tokens, output_tokens)
+                               if est_cost_usd is None else round(est_cost_usd, 6),
         "summarised":          summarised,
         "preprocess_ms":       preprocess_ms,
         "input_tokens":        input_tokens,

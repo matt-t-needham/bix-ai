@@ -29,11 +29,26 @@ LOOP_MAX_TURNS       = int(os.environ.get("LOOP_MAX_TURNS", "50"))
 # generation) — when the stream is quiet longer than this, emit a status
 # heartbeat so the UI can show "still working" instead of looking hung.
 PROGRESS_HEARTBEAT_SECONDS = float(os.environ.get("PROGRESS_HEARTBEAT_SECONDS", "5"))
-# Conversation-tail compaction (compact.py, api path). Triggers when the
-# narrative token estimate (blob-pointer excerpts excluded) exceeds the
-# threshold; the most recent COMPACT_KEEP_TURNS user turns stay verbatim.
-COMPACT_THRESHOLD_TOKENS = int(os.environ.get("COMPACT_THRESHOLD_TOKENS", "20000"))
-COMPACT_KEEP_TURNS       = int(os.environ.get("COMPACT_KEEP_TURNS", "3"))
+# Server-owned conversations (conversations.py + context.py). Per-provider
+# budget for how much history rides along with a turn, in estimated tokens;
+# older turns fold into a rolling summary kept on the conversation record.
+CONTEXT_BUDGET_LOCAL      = int(os.environ.get("CONTEXT_BUDGET_LOCAL", "8000"))
+CONTEXT_BUDGET_OPENROUTER = int(os.environ.get("CONTEXT_BUDGET_OPENROUTER", "24000"))
+CONTEXT_BUDGET_CLAUDE     = int(os.environ.get("CONTEXT_BUDGET_CLAUDE", "40000"))
+CONTEXT_SUMMARY_WORDS     = int(os.environ.get("CONTEXT_SUMMARY_WORDS", "300"))
+
+# OpenRouter (pay-as-you-go, personal key). The key never reaches the browser.
+OPENROUTER_API_KEY   = os.environ.get("OPENROUTER_API_KEY", "")
+OPENROUTER_HOST      = os.environ.get("OPENROUTER_HOST", "https://openrouter.ai")
+OPENROUTER_URL       = f"{OPENROUTER_HOST}/api/v1/chat/completions"
+OPENROUTER_REFERER   = os.environ.get("OPENROUTER_REFERER", "https://ai.bix.computer")
+OPENROUTER_TITLE     = os.environ.get("OPENROUTER_TITLE", "bix-ai")
+OPENROUTER_DEFAULT_MODEL = os.environ.get("OPENROUTER_DEFAULT_MODEL", "qwen/qwen3-coder")
+# Spend caps enforced server-side before every OpenRouter call (USD). The
+# per-request figure is an estimate from the model's listed prices and the
+# request size; the daily figure sums routing.ndjson for today (UTC).
+OPENROUTER_MAX_USD_PER_REQUEST = float(os.environ.get("OPENROUTER_MAX_USD_PER_REQUEST", "0.50"))
+OPENROUTER_MAX_USD_PER_DAY     = float(os.environ.get("OPENROUTER_MAX_USD_PER_DAY", "5.00"))
 _ALLOWED_CLAUDE_MODELS = {
     "claude-haiku-4-5-20251001",
     "claude-sonnet-4-5", "claude-sonnet-4-6",
@@ -68,7 +83,8 @@ CLAUDE_CREDS_PATH = Path(os.environ.get("CLAUDE_CONFIG_DIR", "/home/matt/.claude
 ROUTING_LOG       = Path("logs") / "routing.ndjson"
 
 MEM_DIR     = DATA_DIR / "memories"
-CONV_DIR    = DATA_DIR / "convos"
+CONV_DIR    = DATA_DIR / "convos"           # memory-save snapshots (memory.py)
+CONVERSATIONS_DIR = DATA_DIR / "conversations"   # live server-owned chats (conversations.py)
 
 # ── Build identity (GET /version) ─────────────────────────────────────────────
 # Stamped by the Dockerfile via --build-arg at image build; "unknown" for dev runs.

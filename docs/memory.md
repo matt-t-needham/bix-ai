@@ -1,7 +1,9 @@
 # Memory
 
 Memory is tool-based only — no mode ambiently injects past-session summaries
-into your context anymore. Ambient injection used to exist for `api`/`pro`,
+into your context anymore. Entries are created only when the user presses
+"Remember this chat" (nothing is saved in the background), so the store holds
+conversations the user chose to keep, one entry per conversation. Ambient injection used to exist for `api`/`pro`,
 but it caused a real, confirmed failure: an unrelated question would get
 answered as if it were a continuation of whatever the last few conversations
 happened to be about, because ambient context reads as "the current task" even
