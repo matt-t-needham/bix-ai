@@ -1,7 +1,7 @@
 """Unit tests for blobstore.py — pure logic, stdlib-only, no Claude/Ollama.
 
-DATA_DIR is pointed at tmp_path via monkeypatch, mirroring test_staging.py's
-FS_ROOT/STAGING_DIR pattern, so blobstore.py's call-time `config.DATA_DIR`
+DATA_DIR is pointed at tmp_path via monkeypatch, mirroring test_tools_blob.py's
+FS_ROOT pattern, so blobstore.py's call-time `config.DATA_DIR`
 read stays testable.
 """
 import os

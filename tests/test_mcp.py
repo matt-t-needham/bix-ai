@@ -65,7 +65,7 @@ def test_tools_list():
         _init(proc)
         resp = _send(proc, {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
         names = {t["name"] for t in resp["result"]["tools"]}
-        assert names == {"list_directory", "read_file", "recall_memories", "write_file"}
+        assert names == {"list_directory", "read_file", "recall_memories"}
     finally:
         proc.terminate()
 
@@ -125,67 +125,5 @@ def test_list_directory_valid():
             assert "a.txt" in text
             assert "subdir" in text
             assert not resp["result"].get("isError")
-        finally:
-            proc.terminate()
-
-
-# ── Test 6: write_file — stages, does not write live ─────────────────────────
-
-def test_write_file_stages():
-    with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as data:
-        target = Path(root) / "out.txt"
-        proc = _spawn(read_paths=root, fs_root=root, data_dir=data)
-        try:
-            _init(proc)
-            resp = _send(proc, {
-                "jsonrpc": "2.0", "id": 6, "method": "tools/call",
-                "params": {"name": "write_file", "arguments": {"path": str(target), "content": "written!"}},
-            })
-            assert not resp["result"].get("isError")
-            assert "Staged" in resp["result"]["content"][0]["text"]
-            assert not target.exists()                                   # NOT written live
-            assert list((Path(data) / "staging").glob("*.json"))         # record persisted
-        finally:
-            proc.terminate()
-
-
-# ── Test 7: write_file — outside FS_ROOT is refused ──────────────────────────
-
-def test_write_file_outside_root_denied():
-    with tempfile.TemporaryDirectory() as root, \
-         tempfile.TemporaryDirectory() as outside, \
-         tempfile.TemporaryDirectory() as data:
-        proc = _spawn(fs_root=root, data_dir=data)
-        try:
-            _init(proc)
-            resp = _send(proc, {
-                "jsonrpc": "2.0", "id": 7, "method": "tools/call",
-                "params": {
-                    "name": "write_file",
-                    "arguments": {"path": str(Path(outside) / "bad.txt"), "content": "oops"},
-                },
-            })
-            assert resp["result"].get("isError") is True
-            assert "outside the allowed root" in resp["result"]["content"][0]["text"]
-            assert not (Path(outside) / "bad.txt").exists()
-        finally:
-            proc.terminate()
-
-
-# ── Test 8: write_file — guardrail path (shell script) is refused ────────────
-
-def test_write_file_guardrail_denied():
-    with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as data:
-        target = Path(root) / "deploy.sh"
-        proc = _spawn(fs_root=root, data_dir=data)
-        try:
-            _init(proc)
-            resp = _send(proc, {
-                "jsonrpc": "2.0", "id": 8, "method": "tools/call",
-                "params": {"name": "write_file", "arguments": {"path": str(target), "content": "rm -rf /"}},
-            })
-            assert resp["result"].get("isError") is True
-            assert "guardrail" in resp["result"]["content"][0]["text"]
-            assert not target.exists()
         finally:
             proc.terminate()

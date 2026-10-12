@@ -63,51 +63,19 @@ MODEL_COSTS = {
     "claude-opus-4-7":           (5.00, 25.00),
 }
 
-# Cost tiering for mode="auto" (routing.py). Requests that reach Claude purely
-# on *size* grounds (long request / large context, with no code/prose/multi-step
-# intent anywhere in the conversation) are downshifted to this cheaper Claude
-# model instead of the user-selected one. Must stay in _ALLOWED_CLAUDE_MODELS
-# and MODEL_COSTS. Empty string disables the downshift.
-ROUTING_CHEAP_CLAUDE_MODEL = os.environ.get(
-    "ROUTING_CHEAP_CLAUDE_MODEL", "claude-haiku-4-5-20251001")
-
 ENTRIES_PER_FILE  = 200
 CLAUDE_CREDS_PATH = Path(os.environ.get("CLAUDE_CONFIG_DIR", "/home/matt/.claude")) / ".credentials.json"
 ROUTING_LOG       = Path("logs") / "routing.ndjson"
 
 MEM_DIR     = DATA_DIR / "memories"
 CONV_DIR    = DATA_DIR / "convos"
-STAGING_DIR = DATA_DIR / "staging"
-DEPLOY_DIR  = DATA_DIR / "deploy"
 
-# ── Role / build identity (self-mod + staging deploys) ────────────────────────
-# BIX_ROLE distinguishes the prod container from the read-only staging one.
-# Anything other than "prod" is treated as non-prod by the mutating-route and
-# tool-registry guards; "staging" is the only other value in use.
-BIX_ROLE = os.environ.get("BIX_ROLE", "prod")
+# ── Build identity (GET /version) ─────────────────────────────────────────────
 # Stamped by the Dockerfile via --build-arg at image build; "unknown" for dev runs.
 GIT_SHA  = os.environ.get("GIT_SHA", "unknown")
 BUILT_AT = os.environ.get("BUILT_AT", "unknown")
-# Where the prod container reaches its staging twin (bix docker network).
-STAGING_ROUTER_URL = os.environ.get("STAGING_ROUTER_URL", "http://ai-router-staging:8000")
-
-
-def self_prod_tree() -> Path:
-    """The service's own prod source tree. Function (not constant) so it tracks
-    a monkeypatched FS_ROOT at call time, like STAGING_DIR consumers do."""
-    return Path(os.environ.get("SELF_PROD_TREE", str(FS_ROOT / "bix-ai")))
-
-
-def self_staging_tree() -> Path:
-    """The git clone that approved self-changes are applied to."""
-    return Path(os.environ.get("SELF_STAGING_TREE", str(FS_ROOT / "bix-ai-staging")))
 # Size cap for the content-addressed blob store (blobstore.py). Generous default —
 # blobs are spilled artifacts (pasted logs/source/etc.), not primary storage.
 # Not derived into a BLOB_DIR constant here — blobstore.py reads config.DATA_DIR
-# at call time (mirrors FS_ROOT/STAGING_DIR) so tests can monkeypatch it.
+# at call time (mirrors FS_ROOT) so tests can monkeypatch it.
 BLOB_STORE_MAX_BYTES = int(os.environ.get("BLOB_STORE_MAX_BYTES", str(500_000_000)))
-
-# Log-review roots (read-only). Internal logs sit under the bix-infra mount;
-# Steam's logs dir is mounted read-only into the container separately.
-INTERNAL_LOG_ROOT = Path(os.environ.get("INTERNAL_LOG_ROOT", "/home/matt/apps/bix-infra/logs"))
-STEAM_LOG_ROOT    = Path(os.environ.get("STEAM_LOG_ROOT", "/home/matt/.steam/debian-installation/logs"))

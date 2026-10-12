@@ -40,7 +40,8 @@ def parse_sse_data(raw: str) -> dict:
 
 
 class SSETextCollector:
-    """Accumulate the text answer (and errors) from a raw /chat SSE stream.
+    """Accumulate the text answer (and errors) from a raw /chat SSE stream
+    (a client-side helper for anything that consumes our own stream).
 
     feed() takes arbitrary chunk boundaries (network chunks rarely align with
     event blocks) and buffers to complete '\\n\\n'-terminated blocks. Collection

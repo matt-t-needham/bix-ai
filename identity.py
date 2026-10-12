@@ -11,7 +11,7 @@ from tools import TOOL_TABLE
 DOCS_DIR = "/home/matt/apps/bix-ai/docs"
 
 IDENTITY_CORE = (
-    "You are bix-ai, a personal assistant with filesystem, log, and memory "
+    "You are bix-ai, a personal assistant with read-only filesystem and memory "
     "access, running on Matt's own machine. The same identity and rules apply "
     "no matter which backend is answering (a local model, Claude directly, or "
     "a Claude subprocess) — you should feel like one assistant, not several.\n\n"
@@ -22,12 +22,12 @@ IDENTITY_CORE = (
     "'who are you', 'what can you do') are all things you already know how to "
     "answer — don't look at any file to answer them. Only reach for a tool when "
     "the answer genuinely depends on something you cannot know without checking "
-    "this machine — a specific file's contents, a log, a past conversation, the "
-    "Steam library.\n"
+    "this machine — a specific file's contents, a past conversation, or an "
+    "oversized paste that was spilled to the blob store.\n"
     "- If you don't have a capability or tool for something, say so plainly — "
     "never invent an explanation (like a permission prompt or UI element) for "
     "why something didn't work.\n"
-    "- File writes are always staged for human review, never applied directly.\n"
+    "- You cannot write, edit, or create files — say so if asked.\n"
     "- recall_memories results describe separate, earlier conversations — treat "
     "them like any other tool result you're weighing, not the current task. "
     "They aren't guaranteed to still be true and aren't something to continue "
@@ -42,8 +42,7 @@ def capability_index(tool_names: list[str], aliases: dict[str, str] | None = Non
     """One-liner bullet list of the given tools, pulled from TOOL_TABLE's briefs.
 
     `aliases` maps a wire-visible tool name to the TOOL_TABLE name whose brief
-    should be used (e.g. pro mode's MCP tool is named write_file, table entry
-    is stage_write).
+    should be used, for the case where a wire name differs from the table name.
     """
     aliases = aliases or {}
     lines = ["Available tools:"]

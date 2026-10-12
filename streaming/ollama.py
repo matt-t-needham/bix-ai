@@ -3,10 +3,7 @@ injection, then delegates the agentic loop to streaming.loop.run_tool_loop
 via a (guardrailed) OllamaProvider. Patch points for tests (httpx, time,
 _execute_tool, budgets, routing) stay module attributes here, resolved at
 call time.
-
-Shared with mode=auto's local leg (via streaming.local_first) — mode only
-picks the backend + escalation policy; pre-pass, system prompt, tool
-definitions, and the turn-loop are identical regardless of caller."""
+"""
 import logging
 import time
 
@@ -25,7 +22,7 @@ log = logging.getLogger("router")
 
 OLLAMA_SYSTEM = identity_system_prompt(
     tool_names=[t["function"]["name"] for t in OLLAMA_TOOLS],
-    doc_topics=["staging", "memory", "logs", "blobs", "modes", "todos"],
+    doc_topics=["memory", "blobs", "modes"],
 )
 
 
@@ -111,11 +108,8 @@ async def _stream_ollama(
     async for event in with_progress(
         run_tool_loop(
             provider, current_messages,
-            # Late-bound module-global lookup (tests patch _execute_tool); the
-            # injected _acting_model attributes staged writes to this model —
-            # stage_write only, so every other tool's input stays byte-identical.
-            execute_tool=lambda n, i: _execute_tool(
-                n, {**i, "_acting_model": model} if n == "stage_write" else i),
+            # Late-bound module-global lookup (tests patch _execute_tool).
+            execute_tool=lambda n, i: _execute_tool(n, i),
             max_tokens_budget=LOOP_MAX_TOKENS, max_seconds=LOOP_MAX_SECONDS,
             stats=stats,
             preprocess_ms=preprocess_ms,

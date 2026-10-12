@@ -2,7 +2,8 @@
 TOOL_TABLE as {name, description, input_schema, handler}. The two wire
 formats — FS_TOOLS (Anthropic) and OLLAMA_TOOLS (OpenAI function shape) —
 are generated from that table. Add a tool by adding one table entry; never
-hand-write a per-provider definition again.
+hand-write a per-provider definition again. Every tool is read-only — bix-ai
+has no write path.
 """
 import asyncio
 import json
@@ -10,17 +11,10 @@ import logging
 import re
 from pathlib import Path
 
-import httpx
-
 import blobstore
-import config
-import logtools
-import deploy
-import staging
-import steam
 from config import CONV_DIR, FS_ROOT, OLLAMA_DEFAULT_MODEL
 from fs_core import is_denied_path, list_directory, read_file
-from helpers import SSETextCollector, ollama_chat
+from helpers import ollama_chat
 from memory import _load_all_memories
 
 log = logging.getLogger("router")
@@ -68,96 +62,6 @@ async def _tool_read_file(tool_input: dict) -> str:
         return f"Not a file: {path}"
     return read_file(p)
 
-
-async def _tool_stage_write(tool_input: dict) -> str:
-    target  = tool_input.get("target_path") or tool_input.get("path", "")
-    content = tool_input.get("content", "")
-    # Injected by the streaming adapters (not a model-supplied field): the
-    # model actually running this tool call, recorded as the record's author.
-    proposer = tool_input.get("_acting_model") or "assistant"
-    if not target:
-        return "No target_path provided."
-    try:
-        rec = await asyncio.to_thread(staging.create, target, content, proposer)
-    except ValueError as e:
-        return f"Cannot stage write: {e}"
-    except Exception as e:
-        log.warning("stage_write failed: %s", e)
-        return f"Failed to stage write: {e}"
-    return (
-        f"Staged for review (id={rec['id']}). This was NOT written to "
-        f"{rec['target_path']} — it will only be applied after a human "
-        "approves it at /staging."
-    )
-
-
-async def _tool_list_deploys(tool_input: dict) -> str:
-    deps = await asyncio.to_thread(deploy.list_all)
-    if not deps:
-        return "No deploys."
-    lines = []
-    for d in deps[:10]:
-        tag  = f" [{d['summary_tag']}]" if d.get("summary_tag") else ""
-        note = f" — {d['note']}" if d.get("note") else ""
-        lines.append(f"{d['id']}  {d.get('status', 'queued'):8}  "
-                     f"{d.get('action', '?'):14}  "
-                     f"{(d.get('requested_at') or '')[:19]}{tag}{note}")
-    return "\n".join(lines)
-
-
-async def _tool_read_deploy(tool_input: dict) -> str:
-    dep_id = str(tool_input.get("deploy_id", "")).strip()
-    if not dep_id:
-        return "No deploy_id provided."
-    dep = await asyncio.to_thread(deploy.get, dep_id)
-    if not dep:
-        # Tolerate a prefix — IDs are long and models truncate them.
-        matches = [d for d in await asyncio.to_thread(deploy.list_all)
-                   if d["id"].startswith(dep_id)]
-        if len(matches) != 1:
-            return f"No deploy found with id {dep_id}."
-        dep = matches[0]
-    lines = [f"{k}: {dep[k]}" for k in (
-        "id", "action", "status", "requested_by", "requested_at", "started_at",
-        "finished_at", "exit_code", "git_sha_before", "git_sha_after", "note",
-        "error", "summary_tag", "summary_text",
-    ) if dep.get(k) not in (None, "")]
-    if dep.get("record_ids"):
-        lines.append("staging record_ids: " + ", ".join(dep["record_ids"])
-                     + "  (records live at data/staging/<id>.json)")
-    log_tail = await asyncio.to_thread(deploy.read_log, dep["id"])
-    if log_tail:
-        lines += ["", "--- runner log (tail) ---", log_tail]
-    return "\n".join(lines)
-
-
-async def _tool_list_steam_games(tool_input: dict) -> str:
-    include_runtimes = bool(tool_input.get("include_runtimes", False))
-    try:
-        games = await asyncio.to_thread(
-            steam.list_games, include_non_games=include_runtimes
-        )
-    except Exception as e:
-        log.warning("list_steam_games failed: %s", e)
-        return f"Failed to read Steam library: {e}"
-    return steam.format_games(games)
-
-
-async def _tool_list_log_sources(tool_input: dict) -> str:
-    return await asyncio.to_thread(logtools.list_sources)
-
-
-async def _tool_read_log(tool_input: dict) -> str:
-    path = tool_input.get("path", "")
-    if not path:
-        return "No log path provided. Call list_log_sources first to see available logs."
-    lines    = tool_input.get("lines", 200)
-    contains = tool_input.get("contains") or None
-    try:
-        return await asyncio.to_thread(logtools.read_log, path, lines, contains)
-    except Exception as e:
-        log.warning("read_log failed path=%s: %s", path, e)
-        return f"Failed to read log: {e}"
 
 
 async def _tool_recall_memories(tool_input: dict) -> str:
@@ -259,135 +163,10 @@ async def _tool_grep_blob(tool_input: dict) -> str:
 
 
 # ── The single tool table ─────────────────────────────────────────────────────
-# ── Staging-twin verification (prod-only) ─────────────────────────────────────
-
-_ASK_STAGING_MAX_CHARS = 20_000
-_ASK_STAGING_TIMEOUT_S = 120.0
-
-
-async def _tool_check_staging(tool_input: dict) -> str:
-    """Health/identity snapshot of the staging instance."""
-    base = config.STAGING_ROUTER_URL
-    lines = [f"Staging instance at {base}:"]
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            for path in ("/healthz", "/version", "/system"):
-                r = await client.get(f"{base}{path}")
-                body = r.json() if r.status_code == 200 else f"HTTP {r.status_code}"
-                lines.append(f"  {path}: {json.dumps(body) if isinstance(body, dict) else body}")
-    except (httpx.HTTPError, OSError) as e:
-        return (f"Staging instance unreachable at {base} ({e.__class__.__name__}: {e}). "
-                "It may not be deployed yet — a human can queue 'Deploy staging' "
-                "from /staging or /deploys.")
-    return "\n".join(lines)
-
-
-async def _tool_ask_staging(tool_input: dict) -> str:
-    """Send one prompt to the staging twin's /chat and return its answer."""
-    prompt = str(tool_input.get("prompt", "")).strip()
-    if not prompt:
-        return "Error: prompt is required"
-    mode = str(tool_input.get("mode") or "local")
-    if mode not in ("local", "api", "auto"):
-        return f"Error: mode must be local|api|auto (pro is unavailable on staging), got {mode!r}"
-    model = str(tool_input.get("model") or "")
-    body: dict = {"messages": [{"role": "user", "content": prompt}], "mode": mode}
-    if model:
-        body["model"] = model
-    elif mode == "local":
-        body["model"] = OLLAMA_DEFAULT_MODEL   # /chat's default is a Claude model
-    collector = SSETextCollector(max_chars=_ASK_STAGING_MAX_CHARS)
-    url = f"{config.STAGING_ROUTER_URL}/chat"
-    try:
-        async with httpx.AsyncClient(timeout=_ASK_STAGING_TIMEOUT_S) as client:
-            async with client.stream("POST", url, json=body) as r:
-                if r.status_code != 200:
-                    return f"Staging /chat returned HTTP {r.status_code}"
-                async for chunk in r.aiter_text():
-                    collector.feed(chunk)
-                    if collector.overflow:
-                        break
-    except (httpx.HTTPError, OSError) as e:
-        return (f"Staging instance unreachable at {url} ({e.__class__.__name__}: {e}). "
-                "It may not be deployed yet.")
-    parts = []
-    if collector.text:
-        suffix = "\n… (truncated at 20 KB)" if collector.overflow else ""
-        parts.append(collector.text + suffix)
-    if collector.errors:
-        parts.append("Errors from staging: " + "; ".join(collector.errors))
-    return "\n\n".join(parts) or "(staging returned no text)"
-
-
 # Order matters: it defines the order tools appear in FS_TOOLS/OLLAMA_TOOLS
 # (and therefore in provider request bodies).
 
 TOOL_TABLE: list[dict] = [
-    {
-        "name": "stage_write",
-        "description": (
-            "Propose writing a file. The write is NOT applied immediately — it is "
-            "staged for human review and only written to disk after a person "
-            "approves it at /staging. Use this to create or edit files (e.g. draft "
-            "a blog post, write a note, scaffold source — including bix-ai's own "
-            "source: approved self-changes are applied to the bix-ai-staging clone, "
-            "never the running prod tree). Provide the full intended file contents; "
-            "on an existing file this overwrites it. Secrets, shell scripts, and "
-            "container/CI config are refused. Always tell the user the change was "
-            "staged for review, not written."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "target_path": {
-                    "type": "string",
-                    "description": f"Absolute path to write. Must be within {FS_ROOT}.",
-                },
-                "content": {
-                    "type": "string",
-                    "description": "The full file contents (whole-file; overwrites on edit).",
-                },
-            },
-            "required": ["target_path", "content"],
-        },
-        "handler": _tool_stage_write,
-        "brief": "Propose a file write — staged for human review, never applied directly",
-    },
-    {
-        "name": "read_deploy",
-        "description": (
-            "Look up a deploy by its ID: status, timestamps, error, the local "
-            "model's summary, linked staging record ids, and the tail of the "
-            "runner's build/deploy log (including verbatim pytest output on a "
-            "failed build). Call this FIRST whenever the user references a "
-            "deploy id or asks why a deploy failed — do not go hunting through "
-            "log files for deploy results. A unique id prefix is accepted."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "deploy_id": {
-                    "type": "string",
-                    "description": "The deploy's hex id (full, or a unique prefix).",
-                },
-            },
-            "required": ["deploy_id"],
-        },
-        "handler": _tool_read_deploy,
-        "brief": "Deploy status + runner log by deploy ID",
-    },
-    {
-        "name": "list_deploys",
-        "description": (
-            "List recent deploys (active first, then newest; max 10): id, status, action, "
-            "requested time, summary tag, and note. Call this when the user "
-            "asks about deploys without giving an id, or to find the deploy "
-            "they mean; then use read_deploy for the full log."
-        ),
-        "input_schema": {"type": "object", "properties": {}},
-        "handler": _tool_list_deploys,
-        "brief": "List recent deploys with status and summary tags",
-    },
     {
         "name": "list_directory",
         "description": (
@@ -423,76 +202,6 @@ TOOL_TABLE: list[dict] = [
         },
         "handler": _tool_read_file,
         "brief": "Read the text contents of a file",
-    },
-    {
-        "name": "list_steam_games",
-        "description": (
-            "List the Steam games installed on this machine. Reads Steam's own "
-            "manifest files (libraryfolders.vdf + appmanifest_*.acf) across every "
-            "library folder, so it covers all drives. Returns one line per game "
-            "with its name, Steam appid, on-disk size, and which library it lives "
-            "in. Use this whenever the user asks what games are installed, the "
-            "size of a game, or which drive a game is on. By default Valve "
-            "runtimes (Proton, Steam Linux Runtime, redistributables) are "
-            "excluded; set include_runtimes=true to list those too."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "include_runtimes": {
-                    "type": "boolean",
-                    "description": (
-                        "Include Valve runtime/redistributable apps (Proton, "
-                        "Steam Linux Runtime, etc.). Default false."
-                    ),
-                }
-            },
-            "required": [],
-        },
-        "handler": _tool_list_steam_games,
-        "brief": "List installed Steam games (name, appid, size, library)",
-    },
-    {
-        "name": "list_log_sources",
-        "description": (
-            "List the log files available for review — both the internal app/"
-            "service logs (ai-router, demucs, nginx access/error, nightly deploy "
-            "logs, daily review tickets, etc.) and the Steam client logs. Returns "
-            "each log's full path, size, and last-modified time. Call this first to "
-            "discover what exists, then pass a path to read_log."
-        ),
-        "input_schema": {"type": "object", "properties": {}, "required": []},
-        "handler": _tool_list_log_sources,
-        "brief": "List available log files (app/service logs + Steam logs) — call before read_log",
-    },
-    {
-        "name": "read_log",
-        "description": (
-            "Read the tail of a log file (internal app logs or Steam logs). Returns "
-            "the last N lines; large files are tailed efficiently. Optionally filter "
-            "to lines containing a substring. Use this to review errors, crashes, or "
-            "recent activity. The path must be one shown by list_log_sources."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Absolute path to a log file under a known log root.",
-                },
-                "lines": {
-                    "type": "integer",
-                    "description": "How many trailing lines to return (default 200, max 2000).",
-                },
-                "contains": {
-                    "type": "string",
-                    "description": "Optional case-insensitive substring; only matching lines are returned.",
-                },
-            },
-            "required": ["path"],
-        },
-        "handler": _tool_read_log,
-        "brief": "Read the tail of a log file, optionally filtered by substring",
     },
     {
         "name": "recall_memories",
@@ -574,71 +283,15 @@ TOOL_TABLE: list[dict] = [
         "handler": _tool_grep_blob,
         "brief": "Search a spilled blob for a regex pattern with surrounding context",
     },
-    {
-        "name": "check_staging",
-        "description": (
-            "Check the staging instance of this service (the read-only twin running "
-            "the bix-ai-staging tree, where approved self-changes are deployed for "
-            "verification before a human promotes them to prod). Returns its health, "
-            "build identity (/version: role, git sha, built time) and system metrics. "
-            "Use after a staging deploy to confirm the new build is up."
-        ),
-        "input_schema": {"type": "object", "properties": {}},
-        "handler": _tool_check_staging,
-        "brief": "Health + build identity of the staging twin",
-    },
-    {
-        "name": "ask_staging",
-        "description": (
-            "Send one prompt to the staging instance's /chat and return its answer. "
-            "Use to verify a deployed self-change behaves as intended (e.g. ask it "
-            "something that exercises the changed code path). The staging twin is "
-            "read-only and answers with the candidate code. Response is capped at "
-            "20 KB / 120 s."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "prompt": {"type": "string", "description": "The question to ask the staging instance."},
-                "mode":   {"type": "string", "description": "local (default) | api | auto — pro is unavailable on staging."},
-                "model":  {"type": "string", "description": "Optional model override; defaults per mode."},
-            },
-            "required": ["prompt"],
-        },
-        "handler": _tool_ask_staging,
-        "brief": "Ask the staging twin a question to verify a deployed change",
-    },
 ]
 
 _HANDLERS = {t["name"]: t["handler"] for t in TOOL_TABLE}
 
 
-# ── Role gating ───────────────────────────────────────────────────────────────
-# The staging container (BIX_ROLE=staging) is a read-only twin: it answers
-# questions but never mutates anything. Its registries omit these tools AND
-# _execute_tool refuses them at call time (defence in depth — a model can still
-# hallucinate a tool name that isn't in its registry).
-
-_MUTATING_TOOLS = {"stage_write"}
-# Querying the staging twin must never recurse from staging itself.
-_PROD_ONLY_TOOLS = {"check_staging", "ask_staging"}
-
-
-def _role_denied_tools(role: str) -> set[str]:
-    return set() if role == "prod" else _MUTATING_TOOLS | _PROD_ONLY_TOOLS
-
-
-def tool_table_for_role(role: str) -> list[dict]:
-    denied = _role_denied_tools(role)
-    return [t for t in TOOL_TABLE if t["name"] not in denied]
-
 
 # ── Tool execution ────────────────────────────────────────────────────────────
 
 async def _execute_tool(name: str, tool_input: dict) -> str:
-    if name in _role_denied_tools(config.BIX_ROLE):
-        return (f"Tool '{name}' is not available: this instance runs the "
-                f"read-only {config.BIX_ROLE} role and cannot make changes.")
     handler = _HANDLERS.get(name)
     if handler is None:
         return f"Unknown tool: {name}"
@@ -647,27 +300,20 @@ async def _execute_tool(name: str, tool_input: dict) -> str:
 
 # ── Generated wire formats ────────────────────────────────────────────────────
 
-def fs_tools_for_role(role: str) -> list[dict]:
-    return [
-        {"name": t["name"], "description": t["description"], "input_schema": t["input_schema"]}
-        for t in tool_table_for_role(role)
-    ]
+FS_TOOLS = [
+    {"name": t["name"], "description": t["description"], "input_schema": t["input_schema"]}
+    for t in TOOL_TABLE
+]
 
 
-def ollama_tools_for_role(role: str) -> list[dict]:
-    return [
-        {
-            "type": "function",
-            "function": {
-                "name":        t["name"],
-                "description": t["description"],
-                "parameters":  t["input_schema"],
-            },
-        }
-        for t in tool_table_for_role(role)
-    ]
-
-
-# Frozen at import for this process's role — the role never changes at runtime.
-FS_TOOLS     = fs_tools_for_role(config.BIX_ROLE)
-OLLAMA_TOOLS = ollama_tools_for_role(config.BIX_ROLE)
+OLLAMA_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name":        t["name"],
+            "description": t["description"],
+            "parameters":  t["input_schema"],
+        },
+    }
+    for t in TOOL_TABLE
+]

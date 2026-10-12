@@ -1,17 +1,13 @@
 #!/usr/bin/env python3
-"""Stdio MCP server for bix-ai. Exposes filesystem + memory tools with a path policy."""
+"""Stdio MCP server for bix-ai (mode="pro"). Exposes the read-only filesystem
++ memory tools with a path policy. Stdlib-only — it runs inside the `claude`
+CLI subprocess, not the FastAPI app."""
 import json
 import os
 import pathlib
 import sys
 
-import staging
 from fs_core import is_denied_path, list_directory, read_file
-from tools import TOOL_TABLE
-
-_STAGE_WRITE_DESCRIPTION = next(
-    t["description"] for t in TOOL_TABLE if t["name"] == "stage_write"
-)
 
 READ_ROOTS  = [pathlib.Path(p).resolve() for p in os.environ.get("MCP_READ_PATHS",  "/home/matt/apps").split(":") if p]
 DATA_DIR    = pathlib.Path(os.environ.get("DATA_DIR", "/app/data"))
@@ -71,32 +67,10 @@ TOOL_DEFS = [
             "required": ["query"],
         },
     },
-    {
-        "name": "write_file",
-        "description": _STAGE_WRITE_DESCRIPTION,
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "path":    {"type": "string", "description": "Absolute path to write."},
-                "content": {"type": "string", "description": "Text content to write."},
-            },
-            "required": ["path", "content"],
-        },
-    },
 ]
-
-# The read-only staging role never gets write_file: omitted from the listing
-# and refused at dispatch (the env flows into the claude CLI subprocess).
-_ROLE = os.environ.get("BIX_ROLE", "prod")
-if _ROLE != "prod":
-    TOOL_DEFS = [t for t in TOOL_DEFS if t["name"] != "write_file"]
 
 
 def _execute(name: str, args: dict) -> dict:
-    if name == "write_file" and _ROLE != "prod":
-        return _tool_error(
-            f"write_file is not available: this instance runs the read-only {_ROLE} role."
-        )
     if name == "list_directory":
         raw = args.get("path", "")
         p = pathlib.Path(raw)
@@ -158,19 +132,6 @@ def _execute(name: str, args: dict) -> dict:
             results.append(f"[{date}] {title}\n{summary}" if summary else f"[{date}] {title}")
         return _tool_ok("\n\n".join(results))
 
-    elif name == "write_file":
-        raw     = args.get("path", "")
-        content = args.get("content", "")
-        try:
-            rec = staging.create(raw, content, proposed_by="claude (pro)")
-        except ValueError as e:
-            return _tool_error(f"Cannot stage write: {e}")
-        except Exception as e:
-            return _tool_error(f"Error staging write: {e}")
-        return _tool_ok(
-            f"Staged for review (id={rec['id']}). NOT written to {rec['target_path']} "
-            "until a human approves it at /staging."
-        )
 
     return _tool_error(f"Unknown tool: {name}")
 
