@@ -33,7 +33,10 @@ except Exception:
     pass
 
 import blobstore  # noqa: E402 — after logging setup
+import context  # noqa: E402 — after logging setup
+import conversations  # noqa: E402 — after logging setup
 import model_admin  # noqa: E402 — after logging setup
+import openrouter  # noqa: E402 — after logging setup
 import strategy  # noqa: E402 — after logging setup
 
 import config  # noqa: E402
@@ -43,11 +46,15 @@ from config import (  # noqa: E402
     _ALLOWED_ANTHROPIC_BETAS, _ALLOWED_CLAUDE_MODELS,
     _MAX_BODY_BYTES, _MAX_TOKENS_CAP,
 )
-from helpers import _agg, _claude_session, _write_routing_event, with_keepalive  # noqa: E402
+from helpers import (  # noqa: E402
+    _agg, _claude_session, _write_routing_event, anthropic_text, ollama_chat,
+    parse_sse_data, parse_sse_event, sse, with_keepalive,
+)
 from config import CONV_DIR                                          # noqa: E402
 from memory import _load_all_memories, save_memory_entry  # noqa: E402
 from streaming.claude import _stream_claude                       # noqa: E402
 from streaming.ollama import _stream_ollama                       # noqa: E402
+from streaming.openrouter import _stream_openrouter               # noqa: E402
 from streaming.pro import _stream_pro                             # noqa: E402
 
 psutil.cpu_percent()  # prime the psutil cpu counter
@@ -57,20 +64,21 @@ app = FastAPI()
 # ── Request models ────────────────────────────────────────────────────────────
 
 class ChatRequest(BaseModel):
-    messages:     list[dict[str, Any]]
-    model:        str = DEFAULT_MODEL
-    max_tokens:   int = _MAX_TOKENS_CAP
-    mode:         str = "local"
-    tool_offload: bool = False
+    # With conversation_id set, `messages` is only the NEW user turn(s); the
+    # server owns the history (conversations.py) and decides how much of it
+    # rides along (context.py). "new" creates a conversation; the id comes
+    # back on the `conversation` SSE event. Empty = stateless legacy call
+    # where `messages` is the whole transcript.
+    messages:        list[dict[str, Any]]
+    conversation_id: str = ""
+    model:           str = DEFAULT_MODEL
+    max_tokens:      int = _MAX_TOKENS_CAP
+    mode:            str = "local"
+    tool_offload:    bool = False
     # mode="pro" only: claude-CLI session to resume (from the pro_session SSE
     # event). Preserves tool turns across requests; empty = fresh session.
-    session_id:   str = ""
-
-class MemorySaveRequest(BaseModel):
-    messages:      list[dict[str, Any]]
-    model:         str = DEFAULT_MODEL
-    input_tokens:  int = 0
-    output_tokens: int = 0
+    # With a conversation_id the server remembers it too.
+    session_id:      str = ""
 
 # ── GPU response cache (3 s TTL) ──────────────────────────────────────────────
 _gpu_cache: dict = {"data": None, "ts": 0.0}
@@ -151,16 +159,6 @@ async def system_metrics():
 
 
 # ── Memory routes ─────────────────────────────────────────────────────────────
-
-@app.post("/memory/save")
-async def save_memory_handler(body: MemorySaveRequest):
-    return await save_memory_entry(
-        messages   = body.messages,
-        model_name = body.model,
-        in_tokens  = body.input_tokens,
-        out_tokens = body.output_tokens,
-    )
-
 
 @app.get("/memory")
 async def get_memory():
@@ -449,68 +447,228 @@ async def index():
     return FileResponse("static/index.html")
 
 
+# ── Conversations ─────────────────────────────────────────────────────────────
+
+@app.get("/conversations")
+async def conversations_list():
+    return {"conversations": await asyncio.to_thread(conversations.list_all)}
+
+
+@app.get("/conversations/{conv_id}")
+async def conversation_get(conv_id: str):
+    rec = await asyncio.to_thread(conversations.get, conv_id)
+    if rec is None:
+        return JSONResponse({"ok": False, "message": "not found"}, status_code=404)
+    return rec
+
+
+@app.delete("/conversations/{conv_id}")
+async def conversation_delete(conv_id: str):
+    ok = await asyncio.to_thread(conversations.delete, conv_id)
+    return JSONResponse({"ok": ok}, status_code=200 if ok else 404)
+
+
+@app.post("/conversations/{conv_id}/remember")
+async def conversation_remember(conv_id: str):
+    """Explicit memory save for one conversation (replaces the old per-turn
+    background save). One local-model call for the summary."""
+    rec = await asyncio.to_thread(conversations.get, conv_id)
+    if rec is None:
+        return JSONResponse({"ok": False, "message": "not found"}, status_code=404)
+    if len(rec.get("messages") or []) < 2:
+        return JSONResponse({"ok": False, "message": "nothing to remember yet"}, status_code=400)
+    return await save_memory_entry(
+        messages=rec["messages"], model_name=rec.get("model", ""), in_tokens=0, out_tokens=0,
+    )
+
+
+# ── OpenRouter ────────────────────────────────────────────────────────────────
+
+@app.get("/models/openrouter")
+async def models_openrouter():
+    if not openrouter.configured():
+        return JSONResponse({"ok": False, "message": "OPENROUTER_API_KEY not set"}, status_code=503)
+    models, source = await openrouter.list_models()
+    spent = await asyncio.to_thread(openrouter.spent_today_usd)
+    return {
+        "ok": True, "source": source, "models": models,
+        "default": config.OPENROUTER_DEFAULT_MODEL,
+        "spend": {
+            "today_usd":       spent,
+            "day_cap_usd":     config.OPENROUTER_MAX_USD_PER_DAY,
+            "request_cap_usd": config.OPENROUTER_MAX_USD_PER_REQUEST,
+        },
+    }
+
+
+@app.get("/openrouter/usage")
+async def openrouter_usage():
+    spent = await asyncio.to_thread(openrouter.spent_today_usd)
+    return {
+        "today_usd":       spent,
+        "day_cap_usd":     config.OPENROUTER_MAX_USD_PER_DAY,
+        "request_cap_usd": config.OPENROUTER_MAX_USD_PER_REQUEST,
+        "key":             await openrouter.key_usage(),
+    }
+
+
 # ── Chat route ────────────────────────────────────────────────────────────────
+
+def _context_budget(mode: str) -> int:
+    if mode == "local":
+        return config.CONTEXT_BUDGET_LOCAL
+    if mode == "openrouter":
+        return config.CONTEXT_BUDGET_OPENROUTER
+    return config.CONTEXT_BUDGET_CLAUDE
+
+
+def _summariser(mode: str, model: str):
+    """The one model call context assembly may make — on the provider that's
+    answering. Pro has no cheap one-shot path, so it borrows the API key when
+    present and otherwise fails open (full history is sent)."""
+    system = context.SUMMARY_SYSTEM.format(target=config.CONTEXT_SUMMARY_WORDS)
+
+    async def _local(transcript: str) -> str:
+        return await ollama_chat(model, [{"role": "system", "content": system},
+                                         {"role": "user", "content": transcript}])
+
+    async def _or(transcript: str) -> str:
+        return await openrouter.chat_text(model, [{"role": "system", "content": system},
+                                                  {"role": "user", "content": transcript}])
+
+    async def _claude(transcript: str) -> str:
+        if not config.ANTHROPIC_API_KEY:
+            raise RuntimeError("no ANTHROPIC_API_KEY for context summary")
+        return await anthropic_text(model, [{"role": "user", "content": transcript}], system=system)
+
+    return {"local": _local, "openrouter": _or}.get(mode, _claude)
+
+
+def _json_error(status: int, message: str) -> Response:
+    return Response(status_code=status, content=json.dumps({"error": message}),
+                    media_type="application/json")
+
 
 @app.post("/chat")
 async def chat(request: Request):
     raw = await request.body()
     if len(raw) > _MAX_BODY_BYTES:
-        return Response(
-            status_code=413,
-            content=json.dumps({"error": "Request body too large"}),
-            media_type="application/json",
-        )
+        return _json_error(413, "Request body too large")
     try:
         body = ChatRequest.model_validate_json(raw)
     except Exception as e:
-        return Response(
-            status_code=400,
-            content=json.dumps({"error": f"Invalid request: {e}"}),
-            media_type="application/json",
-        )
-    messages     = body.messages
+        return _json_error(400, f"Invalid request: {e}")
     model        = body.model
     max_tokens   = min(body.max_tokens, _MAX_TOKENS_CAP)
     mode         = body.mode
     tool_offload = body.tool_offload
 
     if mode in ("api", "pro") and model not in _ALLOWED_CLAUDE_MODELS:
-        return Response(
-            status_code=400,
-            content=json.dumps({"error": f"Model not permitted: {model}"}),
-            media_type="application/json",
-        )
+        return _json_error(400, f"Model not permitted: {model}")
     # Dynamic allowlist: any installed Ollama model (static-config fallback
     # inside is_allowed_local_model when Ollama is down).
     if mode == "local" and not await model_admin.is_allowed_local_model(model):
-        return Response(
-            status_code=400,
-            content=json.dumps({"error": f"Model not permitted: {model}"}),
-            media_type="application/json",
-        )
+        return _json_error(400, f"Model not permitted: {model}")
+    if mode == "openrouter":
+        if not openrouter.configured():
+            return _json_error(503, "OpenRouter is not configured")
+        if not openrouter.is_valid_model_id(model):
+            return _json_error(400, f"Model not permitted: {model}")
 
-    log.info("chat mode=%s model=%s msgs=%d", mode, model, len(messages))
+    # ── Server-owned history ──
+    conv = None
+    if body.conversation_id:
+        if not body.messages or body.messages[-1].get("role") != "user":
+            return _json_error(400, "conversation turns must end with a user message")
+        if body.conversation_id == "new":
+            conv = await asyncio.to_thread(conversations.create, model, mode)
+        else:
+            conv = await asyncio.to_thread(conversations.get, body.conversation_id)
+            if conv is None:
+                return _json_error(404, f"Unknown conversation: {body.conversation_id}")
+        for m in body.messages:
+            conversations.append_user(conv, m)
+        conv["model"], conv["mode"] = model, mode
+        await asyncio.to_thread(conversations.save, conv)
+        session_id = body.session_id or conv.get("pro_session_id", "")
+    else:
+        session_id = body.session_id
+
+    log.info("chat mode=%s model=%s conv=%s msgs=%d", mode, model,
+             conv["id"] if conv else "-", len(body.messages))
 
     async def stream():
+        nonlocal conv
+        if conv is not None:
+            yield sse("conversation", {"id": conv["id"], "title": conv["title"]})
+            # Pro resumes its own CLI session with just the newest message;
+            # everything else gets the budgeted tail + rolling summary.
+            if mode == "pro" and session_id:
+                messages = [conv["messages"][-1]]
+                ctx_stats = {"total_messages": len(conv["messages"]), "sent_messages": 1,
+                             "folded_messages": len(conv["messages"]) - 1,
+                             "sent_tokens": context.message_tokens(conv["messages"][-1]),
+                             "summary_tokens": 0, "summarised": 0, "summary_failed": 0,
+                             "resumed_session": 1}
+                sent_base = len(conv["messages"]) - 1
+            else:
+                messages, new_summary, ctx_stats = await context.assemble(
+                    conv["messages"], conv.get("summary"), _context_budget(mode),
+                    _summariser(mode, model))
+                if new_summary != conv.get("summary"):
+                    conv["summary"] = new_summary
+                    await asyncio.to_thread(conversations.save, conv)
+                sent_base = ctx_stats["folded_messages"]
+            yield sse("context", ctx_stats)
+        else:
+            messages = body.messages
+            sent_base = 0
+
         # Blobs referenced by this request must survive LRU eviction until the
         # stream finishes (a concurrent request's spill could otherwise evict
         # them mid-loop). Blobs spilled *during* this request are mtime-newest,
         # so LRU never reaches them within the request.
         pinned = strategy.referenced_blob_hashes(messages)
         blobstore.pin(pinned)
+        head_len = len(messages) - (len(conv["messages"]) - sent_base) if conv else 0
+        reply_text = ""
+        history_applied = False
+        error_msg = ""
         try:
             if mode == "local":
-                async for event in _stream_ollama(messages, model, mode=mode, tool_offload=tool_offload):
-                    yield event
+                gen = _stream_ollama(messages, model, mode=mode, tool_offload=tool_offload)
             elif mode == "api":
-                async for event in _stream_claude(messages, model, max_tokens, skip_preprocess=False, mode=mode):
-                    yield event
+                gen = _stream_claude(messages, model, max_tokens, skip_preprocess=False, mode=mode)
+            elif mode == "openrouter":
+                gen = _stream_openrouter(messages, model, mode=mode)
             else:
-                async for event in _stream_pro(messages, model, max_tokens, mode=mode,
-                                               session_id=body.session_id):
-                    yield event
+                gen = _stream_pro(messages, model, max_tokens, mode=mode, session_id=session_id)
+            async for event in gen:
+                if conv is not None:
+                    ev = parse_sse_event(event)
+                    if ev == "delta":
+                        reply_text += str(parse_sse_data(event).get("text", ""))
+                    elif ev == "history":
+                        # Canonical transformed list: summary pair + sent tail
+                        # (post-preprocess) + new assistant/tool turns.
+                        conversations.replace_tail(
+                            conv, sent_base, parse_sse_data(event).get("messages", [])[head_len:])
+                        history_applied = True
+                    elif ev == "pro_session":
+                        conv["pro_session_id"] = parse_sse_data(event).get("session_id", "") or conv.get("pro_session_id", "")
+                    elif ev in ("error", "quota_exceeded"):
+                        error_msg = parse_sse_data(event).get("message", "") or ev
+                yield event
         finally:
             blobstore.unpin(pinned)
+            if conv is not None:
+                if not history_applied:
+                    # Pro (no history event) or an errored turn: keep what we
+                    # got so the transcript stays alternating and honest.
+                    text = reply_text or (f"(no reply — {error_msg})" if error_msg else "")
+                    if text:
+                        conversations.append_assistant_text(conv, text)
+                await asyncio.to_thread(conversations.save, conv)
 
     return StreamingResponse(with_keepalive(stream()), media_type="text/event-stream")
 

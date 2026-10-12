@@ -121,8 +121,8 @@ def _stop(patches):
 
 def test_preprocess_runs_by_default_and_emits_event():
     # Unlike claude.py's tests (all skip_preprocess=True), this confirms the
-    # pre-pass wiring itself fires for mode=local/mode=auto — strategy.py and
-    # compact.py's own logic is covered exhaustively in their own test files;
+    # pre-pass wiring itself fires for mode=local — strategy.py's own logic is
+    # covered exhaustively in its own test file;
     # this only checks the integration point.
     turn0 = _turn_lines([
         {"choices": [{"delta": {"content": "hi"}}]},

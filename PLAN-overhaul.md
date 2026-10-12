@@ -85,7 +85,7 @@ Also removed in PR 1: `auto` mode and its router (`routing.py`,
 Not touched in PR 1 (PR 2 decides their fate): `strategy.py`, `compact.py`,
 `blobstore.py`.
 
-## PR 2 — OpenRouter + server-owned history
+## PR 2 — OpenRouter + server-owned history  *(branch `claude/openrouter-history`)*
 
 - `streaming/openrouter.py`: OpenAI-compatible provider, matching how
   bix-graph's `OpenRouterProvider` (`ai_graph_mode/lib/ai-providers.ts`)
@@ -114,7 +114,10 @@ Not touched in PR 1 (PR 2 decides their fate): `strategy.py`, `compact.py`,
     (`usage`, `limit`, `limit_remaining`) feeds the budget pill in the UI.
 - `conversations.py`: server-side conversation store under `DATA_DIR`.
   `POST /chat` takes a `conversation_id` + the new message only. The client
-  no longer round-trips the transcript.
+  no longer round-trips the transcript. Chats list/open/delete in the drawer;
+  reload resumes the last one.
+- Memory saving is explicit (`POST /conversations/{id}/remember`, a button in
+  the drawer) instead of firing after every reply.
 - Context assembly per turn, by provider: a token budget (small for local,
   larger for cloud) filled newest-first with verbatim turns; older turns
   fall into a rolling summary that is regenerated only when the cut-off
@@ -129,4 +132,7 @@ Not touched in PR 1 (PR 2 decides their fate): `strategy.py`, `compact.py`,
 ## Open questions
 
 - Whether the Claude CLI path can report tokens reliably enough for the cost
-  figure, or whether subscription turns just show "subscription".
+  figure, or whether subscription turns just show "subscription" (currently:
+  the API-rate estimate, labelled "Pro · est.").
+- `strategy.py`'s spill pass survived PR 2 unchanged; revisit once there's
+  real usage of the server-owned history.

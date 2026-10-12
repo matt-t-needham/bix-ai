@@ -79,6 +79,8 @@ async def run_tool_loop(
                     if ttft_ms is None:
                         ttft_ms = round((clock() - start) * 1000)
                     yield sse("delta", {"text": ev["text"]})
+                elif kind == "thinking_delta":
+                    yield sse("thinking", {"text": ev["text"]})
                 elif kind == "input_tokens":
                     if turn == 0 and provider.emits_input_tokens_sse:
                         yield sse("input_tokens", {"count": ev["count"]})

@@ -6,6 +6,8 @@ normalised shape consumed by streaming.loop.run_tool_loop:
 Normalised events yielded by stream_turn (plain dicts, `kind` discriminated):
     input_tokens      {count}                       — usage on stream open
     text_delta        {text}
+    thinking_delta    {text}                        — OpenRouter only: reasoning tokens
+                                                    (loop maps to a `thinking` SSE event)
     tool_start        {index, id, name}
     tool_input_delta  {index, partial_json}
     tool_end          {index}
@@ -84,7 +86,7 @@ def _ollama_assistant_message(text: str, tool_map: dict) -> dict:
 def _to_ollama_wire(messages: list) -> list:
     """Messages threaded through the loop are canonical (Anthropic) shape —
     assistant tool_use / user tool_result content blocks — same as what the
-    client stores and what strategy.py/compact.py assume. Ollama's chat
+    client stores and what strategy.py/context.py assume. Ollama's chat
     endpoint speaks OpenAI's wire shape (role="tool", assistant.tool_calls),
     so translate right at the HTTP boundary rather than letting native shape
     leak into current_messages (that used to escape via the `history` SSE
@@ -274,16 +276,26 @@ class AnthropicProvider:
 
 
 class OllamaProvider:
+    """OpenAI-chat-completions-shaped provider. Ollama is the default target;
+    OpenRouterProvider below points the same parser at a different URL."""
     name = "ollama"
     emits_input_tokens_sse = False  # OpenAI-compat stream chunks carry no usage
 
     def __init__(self, model: str, tools: list, client_factory, route,
                  system_sentinel: str, *, on_exhausted: str = "best_effort",
-                 max_retries: int = 2):
+                 max_retries: int = 2, url: str = OLLAMA_URL,
+                 headers: dict | None = None, request_extra: dict | None = None):
         self.model = model
         self.tools = tools
         self.client_factory = client_factory
         self._route = route
+        self.url = url
+        self.headers = headers or {}
+        self.request_extra = request_extra or {}   # merged into every request body
+        # Real usage when the backend reports it (OpenRouter with
+        # stream_options.include_usage); 0 means "not reported, estimate".
+        self.usage_prompt_tokens = 0
+        self.usage_completion_tokens = 0
         self.system_sentinel = system_sentinel  # injected system msg to strip from history
         # "best_effort" (answer with what we have) | "escalate" (raise so the
         # caller can fail over to another provider — no caller since auto mode went).
@@ -297,6 +309,8 @@ class OllamaProvider:
         self.guardrail_rescues = 0    # rescued a malformed/embedded tool call, no retry needed
         self.guardrail_retries = 0    # nudged and re-called the model
         self.guardrail_exhausted = False
+
+    label = "Ollama"   # prefix on provider_error messages
 
     def stream_status(self) -> str:
         return f"Streaming from Ollama ({self.model})…"
@@ -334,19 +348,19 @@ class OllamaProvider:
         last_progress = time.monotonic()
 
         async with self.client_factory() as client:
-            async with client.stream("POST", OLLAMA_URL, json={
+            async with client.stream("POST", self.url, json={
                 "model": self.model, "messages": _to_ollama_wire(messages),
-                "tools": self.tools, "stream": True,
-            }) as r:
+                "tools": self.tools, "stream": True, **self.request_extra,
+            }, headers=self.headers) as r:
                 if r.status_code != 200:
                     body = await r.aread()
                     try:
                         err = json.loads(body).get("error", f"HTTP {r.status_code}")
                     except Exception:
                         err = f"HTTP {r.status_code}"
-                    log.error("ollama error model=%s status=%d err=%s",
-                              self.model, r.status_code, err)
-                    yield {"kind": "provider_error", "message": f"Ollama: {err}"}
+                    log.error("%s error model=%s status=%d err=%s",
+                              self.name, self.model, r.status_code, err)
+                    yield {"kind": "provider_error", "message": f"{self.label}: {err}"}
                     return
                 async for line in r.aiter_lines():
                     if not line.startswith("data:"):
@@ -358,9 +372,25 @@ class OllamaProvider:
                         data = json.loads(raw)
                     except json.JSONDecodeError:
                         continue
+                    usage = data.get("usage")
+                    if isinstance(usage, dict):
+                        self.usage_prompt_tokens += int(usage.get("prompt_tokens") or 0)
+                        self.usage_completion_tokens += int(usage.get("completion_tokens") or 0)
+                    if data.get("error"):
+                        err = data["error"]
+                        msg = err.get("message") if isinstance(err, dict) else str(err)
+                        log.error("%s stream error model=%s err=%s", self.name, self.model, msg)
+                        yield {"kind": "provider_error", "message": f"{self.label}: {msg}"}
+                        return
                     choice        = (data.get("choices") or [{}])[0]
                     delta         = choice.get("delta", {})
                     finish_reason = choice.get("finish_reason") or finish_reason
+
+                    # OpenRouter streams reasoning separately from the answer
+                    # (`reasoning` on newer models, `reasoning_content` on some).
+                    thinking = delta.get("reasoning") or delta.get("reasoning_content") or ""
+                    if thinking and live:
+                        yield {"kind": "thinking_delta", "text": thinking}
 
                     content = delta.get("content") or ""
                     if content:
@@ -443,7 +473,7 @@ class OllamaProvider:
                 if ev["kind"] == "provider_error":
                     yield ev
                     return
-                if ev["kind"] == "text_delta":
+                if ev["kind"] in ("text_delta", "thinking_delta"):
                     yield ev
                 elif ev["kind"] == "working":
                     yield ev
@@ -552,3 +582,50 @@ class OllamaProvider:
                           guardrail_rescues=self.guardrail_rescues,
                           guardrail_retries=self.guardrail_retries,
                           guardrail_exhausted=self.guardrail_exhausted)
+
+
+class OpenRouterProvider(OllamaProvider):
+    """Same OpenAI-shaped wire parser as Ollama, pointed at OpenRouter with
+    bearer auth and attribution headers. Differences that matter: real usage
+    arrives on the final chunk (we ask for it via stream_options), reasoning
+    models stream `reasoning` deltas that the UI shows collapsed, and a
+    garbled tool call gets one nudge at most — retries cost money."""
+    name = "openrouter"
+    label = "OpenRouter"
+
+    def __init__(self, model: str, tools: list, client_factory, route, system_sentinel: str,
+                 *, url: str, headers: dict, cost_fn=None, max_retries: int = 1):
+        super().__init__(model, tools, client_factory, route, system_sentinel,
+                         on_exhausted="best_effort", max_retries=max_retries,
+                         url=url, headers=headers,
+                         request_extra={"stream_options": {"include_usage": True}})
+        self._cost_fn = cost_fn   # (input_tokens, output_tokens) -> usd
+
+    def stream_status(self) -> str:
+        return f"Streaming from OpenRouter ({self.model})…"
+
+    def _tokens(self) -> tuple[int, int]:
+        if self.usage_prompt_tokens or self.usage_completion_tokens:
+            return self.usage_prompt_tokens, self.usage_completion_tokens
+        return 0, max(self.output_chars // 4, 1)
+
+    def final_token_fields(self, elapsed: float) -> dict:
+        inp, out = self._tokens()
+        return {"input_tokens": inp, "output_tokens": out,
+                "tps": round(out / elapsed, 1) if elapsed > 0 else 0}
+
+    def breach_token_fields(self, messages: list) -> dict:
+        inp, out = self._tokens()
+        return {"input_tokens": inp, "output_tokens": out or self.budget_tokens(messages), "tps": 0}
+
+    def cost_usd(self) -> float:
+        inp, out = self._tokens()
+        return self._cost_fn(inp, out) if self._cost_fn else 0.0
+
+    async def write_routing(self, ttft_ms: int, elapsed_ms: int) -> None:
+        inp, out = self._tokens()
+        await self._route(inp, out, ttft_ms, elapsed_ms,
+                          guardrail_rescues=self.guardrail_rescues,
+                          guardrail_retries=self.guardrail_retries,
+                          guardrail_exhausted=self.guardrail_exhausted,
+                          est_cost_usd=self.cost_usd())

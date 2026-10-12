@@ -155,6 +155,10 @@
     }
     .ind-model.local { color: var(--yellow); }
     .ind-model.cloud { color: var(--mauve); }
+    .ind-model.openrouter { color: var(--blue); }
+    .msg.assistant.openrouter .bubble { border-left: 2px solid var(--blue); }
+    .thinking { margin: 0 0 8px; width: fit-content; max-width: 100%; }
+    .thinking .sub-bubble-name { color: var(--subtext); }
     .ind-arrow { color: var(--surface1); margin: 0 5px; }
     .switch-marker {
       width: fit-content; max-width: 100%;
@@ -331,6 +335,7 @@
     .model-chip:hover { border-color: var(--surface1); }
     .model-chip .pdot { width: 7px; height: 7px; border-radius: 50%; background: var(--mauve); flex-shrink: 0; }
     .model-chip.local .pdot { background: var(--yellow); }
+    .model-chip.openrouter .pdot { background: var(--blue); }
     .model-chip .pname { color: var(--subtext); }
     .model-chip .mname { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .model-chip .caret { color: var(--subtext); font-size: .65rem; }
@@ -430,6 +435,15 @@
     .sheet-row .rcheck { color: var(--mauve); width: 16px; text-align: center; flex-shrink: 0; visibility: hidden; }
     .sheet-row.active .rcheck { visibility: visible; }
     .sheet-row.local.active .rcheck { color: var(--yellow); }
+    .sheet-row.openrouter.active .rcheck { color: var(--blue); }
+    .sheet-search {
+      width: 100%; min-height: 40px; margin: 2px 0 6px;
+      font-size: 16px; background: var(--bg); color: var(--text);
+      border: 1px solid var(--surface1); border-radius: 10px; padding: 6px 12px;
+    }
+    .sheet-search:focus { outline: none; border-color: var(--blue); }
+    .spend-line { display: flex; justify-content: space-between; font-size: .76rem; color: var(--subtext); padding: 4px 10px; font-variant-numeric: tabular-nums; }
+    .spend-line .sv { color: var(--text); }
     .sheet-note { font-size: .74rem; color: var(--subtext); padding: 4px 10px 8px; line-height: 1.5; }
     .sheet-toggle {
       display: flex; align-items: center; justify-content: space-between; gap: 10px;
@@ -551,6 +565,24 @@
     .mem-item .mtitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .mem-item .marrow { color: var(--subtext); opacity: .6; }
     .link-more { font-size: .74rem; color: var(--subtext); text-align: center; cursor: pointer; padding: 8px 0; }
+    .chat-item {
+      display: flex; align-items: center; gap: 8px;
+      min-height: 40px; padding: 4px 4px 4px 10px;
+      background: var(--bg); border-radius: 8px; font-size: .78rem; cursor: pointer;
+      border: 1px solid transparent;
+    }
+    .chat-item.active { border-color: var(--mauve); }
+    .chat-item .ctitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .chat-item .cwhen { color: var(--subtext); font-size: .68rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .chat-item .cdel { width: 32px; height: 32px; border-radius: 8px; color: var(--subtext); display: inline-flex; align-items: center; justify-content: center; }
+    .chat-item .cdel:hover { color: var(--red); background: var(--surface1); }
+    .wide-btn {
+      min-height: 40px; border-radius: 8px; padding: 0 14px; font-size: .8rem;
+      border: 1px solid var(--surface1); color: var(--text); background: var(--bg);
+    }
+    .wide-btn:hover { border-color: var(--subtext); }
+    .wide-btn.primary { background: var(--mauve); color: var(--bg); border-color: transparent; font-weight: 600; }
+    .wide-btn:disabled { opacity: .5; }
 
     .model-row { display: flex; align-items: center; gap: 8px; font-size: .78rem; min-height: 36px; }
     .model-row .mdot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; background: var(--surface1); }
@@ -597,6 +629,7 @@
       <span id="status-label">idle</span>
       <span id="budget-label" class="budget"></span>
     </div>
+    <button class="icon-btn" id="new-chat-btn" title="New chat" aria-label="New chat">＋</button>
     <button class="icon-btn" id="drawer-toggle" title="Stats" aria-label="Open stats">≡</button>
   </header>
 
@@ -604,7 +637,8 @@
     <div class="msgs-inner" id="msgs-inner">
       <div class="empty-state" id="empty-state">
         <strong>bix ai</strong><br>
-        Local, Claude, or OpenRouter — pick a model below and ask away.
+        Local, Claude, or OpenRouter — pick a model below and ask away.<br>
+        <span style="font-size:.8rem">Chats are saved on the server; reopen them from the ≡ drawer.</span>
       </div>
     </div>
     <div class="scroll-badge" id="scroll-badge" onclick="jumpToBottom()">↓ new content</div>
@@ -648,6 +682,17 @@
     <button class="icon-btn" id="drawer-close" aria-label="Close stats">✕</button>
   </div>
   <div class="d-body">
+
+    <div class="d-section">
+      <div class="d-title d-collapsible" onclick="toggleDSection('chats')">
+        <span class="lhs"><span class="d-chev" id="chats-chev">▶</span>Chats</span>
+        <span class="d-badge" id="chats-badge"></span>
+      </div>
+      <div class="d-sub" id="chats-body">
+        <button class="wide-btn primary" onclick="newChat()">New chat</button>
+        <div id="chats-list"><span class="d-empty">None yet</span></div>
+      </div>
+    </div>
 
     <div class="d-section">
       <div class="d-title d-collapsible" onclick="toggleDSection('curreq')">
@@ -719,7 +764,24 @@
         <span class="d-badge" id="mem-badge">—</span>
       </div>
       <div class="d-sub" id="mem-body">
+        <button class="wide-btn" id="remember-btn" onclick="rememberChat()">Remember this chat</button>
+        <div id="remember-note" class="d-note" style="display:none"></div>
         <div id="mem-list"></div>
+      </div>
+    </div>
+
+    <div class="d-section">
+      <div class="d-title d-collapsible" onclick="toggleDSection('spend')">
+        <span class="lhs"><span class="d-chev" id="spend-chev">▶</span>OpenRouter spend</span>
+        <span class="d-badge" id="spend-badge"></span>
+      </div>
+      <div class="d-sub" id="spend-body">
+        <div class="sys-metric">
+          <div class="sys-label-row"><span class="sk">Today</span><span class="sv" id="spend-today">—</span></div>
+          <div class="bar-wrap"><div class="bar-fill" id="spend-bar" style="width:0%"></div></div>
+        </div>
+        <div class="hi-stats flush" id="spend-stats"></div>
+        <div class="d-note" id="spend-note"></div>
       </div>
     </div>
 
@@ -750,12 +812,12 @@
 <script>
 // ── Providers ─────────────────────────────────────────────────────────────────
 // One entry per provider the picker shows. `mode` is what POST /chat gets.
-// OpenRouter lands here in PR 2 — add an entry, nothing else in the picker
-// needs to change.
 const PROVIDERS = [
-  { id: 'local',  label: 'Local',  mode: 'local', isLocal: true,  note: 'Ollama on this machine. Free.' },
-  { id: 'claude', label: 'Claude', mode: 'pro',   isLocal: false, note: 'Claude via the Pro subscription.' },
+  { id: 'local',      label: 'Local',      mode: 'local',      isLocal: true,  note: 'Ollama on this machine. Free.' },
+  { id: 'claude',     label: 'Claude',     mode: 'pro',        isLocal: false, note: 'Claude via the Pro subscription.' },
+  { id: 'openrouter', label: 'OpenRouter', mode: 'openrouter', isLocal: false, note: 'Pay-as-you-go on my own key, capped per request and per day.' },
 ];
+const PROVIDER_COLOR = { local: 'var(--yellow)', claude: 'var(--mauve)', openrouter: 'var(--blue)' };
 const CLAUDE_MODELS = [
   { id: 'claude-opus-4-7',           name: 'Opus 4.7' },
   { id: 'claude-sonnet-4-6',         name: 'Sonnet 4.6' },
@@ -777,7 +839,7 @@ const MODEL_RATES = {
 };
 
 // ── State ─────────────────────────────────────────────────────────────────────
-let convHistory  = [];
+let conversationId = null;   // server-owned chat; the browser keeps only the id
 let provider     = 'claude';
 let model        = 'claude-sonnet-4-6';
 let localModel   = 'gemma4:26b';        // remembered separately so switching back is one tap
@@ -796,6 +858,9 @@ let toolOffload  = false;
 let proSessionId = null;    // claude-CLI session (pro mode) — keeps tool turns across requests
 let localModels  = LOCAL_FALLBACK;
 let modelsLoaded = false, modelPulling = false;
+let orModels = [], orLoaded = false, orSpend = null, orDefault = 'qwen/qwen3-coder', orQuery = '';
+let orRates  = {};               // model id -> [prompt, completion] USD per 1M (from the catalogue)
+let openrouterModel = orDefault;
 
 const PREF_KEY = 'bixai-prefs';
 function loadPrefs() {
@@ -804,11 +869,13 @@ function loadPrefs() {
     if (p.provider && PROVIDERS.some(x => x.id === p.provider)) provider = p.provider;
     if (p.model)      model      = p.model;
     if (p.localModel) localModel = p.localModel;
+    if (p.openrouterModel) openrouterModel = p.openrouterModel;
+    if (p.conversationId) conversationId = p.conversationId;
     if (typeof p.toolOffload === 'boolean') toolOffload = p.toolOffload;
   } catch {}
 }
 function savePrefs() {
-  try { localStorage.setItem(PREF_KEY, JSON.stringify({ provider, model, localModel, toolOffload })); } catch {}
+  try { localStorage.setItem(PREF_KEY, JSON.stringify({ provider, model, localModel, openrouterModel, toolOffload, conversationId })); } catch {}
 }
 
 // ── DOM ───────────────────────────────────────────────────────────────────────
@@ -860,7 +927,11 @@ function friendlyModel(m) {
 }
 function shortModel(m) {
   const c = CLAUDE_MODELS.find(x => x.id === m);
-  return c ? c.name : m;
+  if (c) return c.name;
+  return m.includes('/') ? m.split('/').slice(1).join('/') : m;   // vendor prefix is on the chip already
+}
+function indicatorClass(m) {
+  return m.isLocal ? 'local' : (m.provider === 'openrouter' ? 'openrouter' : 'cloud');
 }
 function providerOf(id) { return PROVIDERS.find(p => p.id === id) || PROVIDERS[1]; }
 function isLocalModelName(m) { return localModels.some(x => x.name === m) || LOCAL_FALLBACK.some(x => x.name === m); }
@@ -870,7 +941,7 @@ function toolFriendlyName(name) {
 }
 function estimateCost(model, inTok, outTok) {
   if (!inTok && !outTok) return null;
-  const rates = MODEL_RATES[model];
+  const rates = MODEL_RATES[model] || orRates[model];
   if (!rates) return null; // local/unknown model — no advisory cost
   const [rIn, rOut] = rates;
   const usd = ((inTok || 0) * rIn + (outTok || 0) * rOut) / 1e6;
@@ -887,7 +958,7 @@ function renderIndicator(wrap, chain) {
   if (!rl) return;
   rl.innerHTML = chain.map((m, i) =>
     (i ? '<span class="ind-arrow">→</span>' : '') +
-    `<span class="ind-model ${m.isLocal ? 'local' : 'cloud'}">${escHtml(friendlyModel(m.name))}</span>`
+    `<span class="ind-model ${indicatorClass(m)}">${escHtml(friendlyModel(m.name))}</span>`
   ).join('');
 }
 
@@ -902,6 +973,7 @@ function isLocalProvider() { return providerOf(provider).isLocal; }
 function renderChip() {
   const p = providerOf(provider);
   chipEl.classList.toggle('local', p.isLocal);
+  chipEl.classList.toggle('openrouter', p.id === 'openrouter');
   $('chip-provider').textContent = p.label;
   $('chip-model').textContent = shortModel(model);
   $('api-mode-badge').classList.toggle('visible', p.id === 'claude' && forceApi);
@@ -913,6 +985,7 @@ function selectModel(provId, modelId) {
   provider = provId;
   model    = modelId;
   if (providerOf(provId).isLocal) localModel = modelId;
+  if (provId === 'openrouter') openrouterModel = modelId;
   if (provId !== 'claude') { forceApi = false; }
   savePrefs();
   renderChip();
@@ -922,7 +995,7 @@ function selectModel(provId, modelId) {
 function renderSheet() {
   const parts = [];
   for (const p of PROVIDERS) {
-    const dotColor = p.isLocal ? 'var(--yellow)' : 'var(--mauve)';
+    const dotColor = PROVIDER_COLOR[p.id];
     parts.push(`<div class="sheet-section">
       <div class="sheet-title"><span class="pdot" style="background:${dotColor}"></span>${p.label}</div>`);
     if (p.id === 'local') {
@@ -944,6 +1017,34 @@ function renderSheet() {
           <span class="rcheck">✓</span><span class="rname">${m.name}</span><span class="rsub">${forceApi ? 'API credits' : 'Pro'}</span></button>`);
       }
       if (forceApi) parts.push('<div class="sheet-note">Pro quota reached — billing to API credits. <button class="toggle-btn" id="back-to-pro">back to Pro</button></div>');
+    } else if (p.id === 'openrouter') {
+      if (orLoaded === 'unconfigured') {
+        parts.push('<div class="sheet-note">Not configured — set OPENROUTER_API_KEY on the server.</div>');
+      } else {
+        parts.push(`<input class="sheet-search" id="or-search" placeholder="search models or type an id (vendor/model)" value="${escHtml(orQuery)}" spellcheck="false" autocapitalize="off" autocorrect="off">`);
+        const q = orQuery.trim().toLowerCase();
+        const matches = orModels.filter(m => !q || m.id.toLowerCase().includes(q) || (m.name || '').toLowerCase().includes(q));
+        const shown = matches.slice(0, 25);
+        const typedOk = q && /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*(:[a-z0-9._-]+)?$/.test(q) && !q.startsWith('openrouter/');
+        if (typedOk && !orModels.some(m => m.id === q)) {
+          parts.push(`<button class="sheet-row openrouter" data-provider="openrouter" data-model="${escHtml(q)}">
+            <span class="rcheck">✓</span><span class="rname">${escHtml(q)}</span><span class="rsub">use as typed</span></button>`);
+        }
+        if (provider === 'openrouter' && !shown.some(m => m.id === model) && model !== q) {
+          parts.push(`<button class="sheet-row openrouter active" data-provider="openrouter" data-model="${escHtml(model)}">
+            <span class="rcheck">✓</span><span class="rname">${escHtml(model)}</span><span class="rsub">current</span></button>`);
+        }
+        for (const m of shown) {
+          const active = provider === 'openrouter' && model === m.id;
+          const price = m.prompt_usd_per_m != null ? `$${fmtRate(m.prompt_usd_per_m)}/$${fmtRate(m.completion_usd_per_m)}` : '';
+          parts.push(`<button class="sheet-row openrouter${active ? ' active' : ''}" data-provider="openrouter" data-model="${escHtml(m.id)}" title="${escHtml(m.id)}${m.reasoning_mandatory ? ' · always reasons' : ''}">
+            <span class="rcheck">✓</span><span class="rname">${escHtml(m.id)}${m.reasoning_mandatory ? ' <span style="color:var(--subtext)">🜁</span>' : ''}</span><span class="rsub">${price}</span></button>`);
+        }
+        if (matches.length > shown.length) parts.push(`<div class="sheet-note">${matches.length - shown.length} more — keep typing to narrow.</div>`);
+        if (!orLoaded) parts.push('<div class="sheet-note">Loading catalogue…</div>');
+        if (orSpend) parts.push(`<div class="spend-line"><span>Today</span><span class="sv">$${orSpend.today_usd.toFixed(3)} of $${orSpend.day_cap_usd.toFixed(2)}</span></div>`);
+        parts.push('<div class="sheet-note">Prices are USD per 1M tokens, in/out.</div>');
+      }
     }
     parts.push(`<div class="sheet-note">${p.note}</div></div>`);
   }
@@ -956,8 +1057,65 @@ function renderSheet() {
   if (tb) tb.addEventListener('click', () => { toolOffload = !toolOffload; savePrefs(); renderChip(); renderSheet(); });
   const bp = $('back-to-pro');
   if (bp) bp.addEventListener('click', () => { forceApi = false; renderChip(); renderSheet(); });
+  const si = $('or-search');
+  if (si) {
+    si.addEventListener('input', () => {
+      orQuery = si.value;
+      const pos = si.selectionStart;
+      renderSheet();
+      const again = $('or-search'); again.focus(); again.setSelectionRange(pos, pos);
+    });
+    si.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { const first = sheetBody.querySelector('.sheet-row.openrouter'); if (first) first.click(); }
+    });
+  }
 }
-function openSheet()  { renderSheet(); sheetEl.classList.add('open'); sheetBack.classList.add('visible'); if (!modelsLoaded) loadModels(); }
+function fmtRate(v) { return v >= 10 ? v.toFixed(0) : v >= 1 ? v.toFixed(2) : v.toFixed(3).replace(/0+$/, '').replace(/\.$/, ''); }
+function openSheet()  { renderSheet(); sheetEl.classList.add('open'); sheetBack.classList.add('visible'); if (!modelsLoaded) loadModels(); if (!orLoaded) loadOpenRouter(); }
+
+async function loadOpenRouter() {
+  try {
+    const res = await fetch('/models/openrouter');
+    if (res.status === 503) { orLoaded = 'unconfigured'; if (sheetEl.classList.contains('open')) renderSheet(); return; }
+    const data = await res.json();
+    if (!res.ok || data.ok === false) throw new Error(data.message || `HTTP ${res.status}`);
+    orModels = data.models || [];
+    orRates = {};
+    for (const m of orModels) orRates[m.id] = [m.prompt_usd_per_m || 0, m.completion_usd_per_m || 0];
+    orDefault = data.default || orDefault;
+    orSpend = data.spend || null;
+    orLoaded = true;
+    if (!openrouterModel) openrouterModel = orDefault;
+    if (sheetEl.classList.contains('open')) renderSheet();
+    renderSpend();
+  } catch (e) {
+    orLoaded = true;
+    if (sheetEl.classList.contains('open')) renderSheet();
+  }
+}
+
+async function loadSpend() {
+  try {
+    const d = await fetch('/openrouter/usage').then(r => r.json());
+    orSpend = { today_usd: d.today_usd, day_cap_usd: d.day_cap_usd, request_cap_usd: d.request_cap_usd, key: d.key };
+    renderSpend();
+  } catch {}
+}
+function renderSpend() {
+  if (!orSpend) return;
+  const pct = orSpend.day_cap_usd > 0 ? Math.min(100, orSpend.today_usd / orSpend.day_cap_usd * 100) : 0;
+  $('spend-today').textContent = `$${orSpend.today_usd.toFixed(3)} / $${orSpend.day_cap_usd.toFixed(2)}`;
+  const bar = $('spend-bar'); bar.style.width = pct + '%'; bar.className = barClass(pct);
+  $('spend-badge').textContent = `$${orSpend.today_usd.toFixed(2)} today`;
+  const cell = (k, v) => `<div class="hi-stat"><span class="sk">${k}</span><span class="sv">${v}</span></div>`;
+  const k = orSpend.key;
+  $('spend-stats').innerHTML =
+    cell('Per-request cap', `$${(orSpend.request_cap_usd || 0).toFixed(2)}`) +
+    (k ? cell('Key used', k.usage != null ? `$${Number(k.usage).toFixed(2)}` : '—') +
+         cell('Key limit', k.limit != null ? `$${Number(k.limit).toFixed(2)}` : 'none') +
+         cell('Remaining', k.limit_remaining != null ? `$${Number(k.limit_remaining).toFixed(2)}` : '—') : '');
+  $('spend-note').textContent = k ? 'Key figures are OpenRouter\'s own; today is from this service\'s log.' : 'Today is from this service\'s log; key usage unavailable.';
+}
 function closeSheet() { sheetEl.classList.remove('open'); sheetBack.classList.remove('visible'); }
 chipEl.addEventListener('click', () => sheetEl.classList.contains('open') ? closeSheet() : openSheet());
 $('sheet-close').addEventListener('click', closeSheet);
@@ -981,6 +1139,8 @@ function openDrawer()  {
   fetchBuildInfo();
   if (!memLoaded) loadMemory();
   if (!modelsLoaded) loadModels();
+  loadChats();
+  loadSpend();
 }
 function closeDrawer() {
   drawer.classList.remove('open'); toggleBtn.classList.remove('open');
@@ -1003,8 +1163,8 @@ async function fetchBuildInfo() {
 }
 
 const SECTION_STORE = 'bixai-sections';
-const SECTIONS = ['curreq', 'history', 'system', 'models', 'mem', 'about'];
-const SECTION_DEFAULTS = { curreq: true, history: true, system: false, models: false, mem: false, about: false };
+const SECTIONS = ['chats', 'curreq', 'history', 'system', 'models', 'mem', 'spend', 'about'];
+const SECTION_DEFAULTS = { chats: true, curreq: true, history: false, system: false, models: false, mem: false, spend: false, about: false };
 function _sectionStates() { try { return JSON.parse(localStorage.getItem(SECTION_STORE) || '{}'); } catch { return {}; } }
 function saveSectionState(id, open) { try { const s = _sectionStates(); s[id] = open; localStorage.setItem(SECTION_STORE, JSON.stringify(s)); } catch {} }
 function setSection(id, open) {
@@ -1086,10 +1246,10 @@ function renderMd(text) {
 }
 
 // ── Bubbles ───────────────────────────────────────────────────────────────────
-function addBubble(role, isLocal) {
+function addBubble(role, isLocal, prov) {
   if (emptyState) emptyState.style.display = 'none';
   const wrap = document.createElement('div');
-  wrap.className = 'msg ' + role + (isLocal ? ' local' : '');
+  wrap.className = 'msg ' + role + (isLocal ? ' local' : '') + (prov === 'openrouter' ? ' openrouter' : '');
   const lbl = document.createElement('div');
   lbl.className = 'role-label';
   lbl.textContent = role === 'user' ? 'You' : '';
@@ -1117,8 +1277,21 @@ function addMeta(wrap, m, isLocal, modelName, mode) {
     parts.push(fmtMs(m.elapsed_ms));
   }
   if (m.spilled > 0) parts.push(`<span class="ollama-tag">${m.spilled} spilled</span>`);
+  if (m.context) parts.push(`${m.context.sent_messages}/${m.context.total_messages} msgs · ~${fmtTok(m.context.sent_tokens)} ctx${m.context.summarised ? ' · summarised' : ''}`);
   el.innerHTML = parts.join(' · ');
   wrap.appendChild(el);
+}
+
+// Collapsible "Thinking" block above the answer for reasoning models.
+function addThinking(bubble) {
+  const sb  = document.createElement('div');  sb.className = 'sub-bubble thinking';
+  const hdr = document.createElement('div');  hdr.className = 'sub-bubble-hdr';
+  const bod = document.createElement('div');  bod.className = 'sub-bubble-body';
+  hdr.innerHTML = `<span class="chevron">▶</span><span class="sub-bubble-name">Thinking…</span>`;
+  hdr.addEventListener('click', () => sb.classList.toggle('open'));
+  sb.append(hdr, bod);
+  bubble.prepend(sb);
+  return { sb, hdr, bod };
 }
 
 // ── Drawer stats ──────────────────────────────────────────────────────────────
@@ -1147,7 +1320,8 @@ function renderCurrentStats() {
       ${cell('Out',   fmtTok(r.output_tokens), running)}
       ${perf}
       ${cell('Total', r.elapsed_ms ? fmtMs(r.elapsed_ms) : '—')}
-      ${cell('History', `${r.history_messages} msgs`)}
+      ${r.context ? cell('Context', `${r.context.sent_messages}/${r.context.total_messages} msgs · ~${fmtTok(r.context.sent_tokens)}`) : ''}
+      ${r.context && r.context.folded_messages ? cell('Folded', `${r.context.folded_messages} msgs${r.context.summarised ? ' (summarised now)' : ''}${r.context.summary_failed ? ' · summary failed' : ''}`) : ''}
       ${extras}
     </div>`;
 }
@@ -1392,24 +1566,141 @@ async function* readSse(res) {
   }
 }
 
-async function saveMemoryInBackground() {
-  if (convHistory.length < 2) return;
+async function rememberChat() {
+  const btn = $('remember-btn'), note = $('remember-note');
+  if (!conversationId) { note.textContent = 'Nothing to remember yet.'; note.style.display = ''; return; }
+  btn.disabled = true; note.textContent = 'Summarising…'; note.style.display = '';
   try {
-    const res = await fetch('/memory/save', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        messages:      convHistory,
-        model:         model,
-        input_tokens:  currentReq?.input_tokens  || 0,
-        output_tokens: currentReq?.output_tokens || 0,
-      }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.ok && !data.skipped) { memLoaded = false; if ($('mem-body').style.display !== 'none') loadMemory(); }
-    }
+    const res = await fetch(`/conversations/${encodeURIComponent(conversationId)}/remember`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok === false) throw new Error(data.message || `HTTP ${res.status}`);
+    note.textContent = data.skipped ? 'Already remembered.' : 'Saved to memory.';
+    memLoaded = false; loadMemory();
+  } catch (e) {
+    note.textContent = 'Could not save: ' + e.message;
+  } finally { btn.disabled = false; }
+}
+
+// ── Conversations (server-owned) ──────────────────────────────────────────────
+let chatList = [];
+async function loadChats() {
+  try {
+    const d = await fetch('/conversations').then(r => r.json());
+    chatList = d.conversations || [];
+    renderChats();
   } catch {}
+}
+function fmtWhen(iso) {
+  if (!iso) return '';
+  const d = new Date(iso), now = new Date();
+  return d.toDateString() === now.toDateString() ? d.toTimeString().slice(0, 5) : iso.slice(5, 10);
+}
+function renderChats() {
+  const list = $('chats-list');
+  $('chats-badge').textContent = chatList.length || '';
+  if (!chatList.length) { list.innerHTML = '<span class="d-empty">None yet</span>'; return; }
+  list.innerHTML = '';
+  for (const c of chatList.slice(0, 30)) {
+    const row = document.createElement('div');
+    row.className = 'chat-item' + (c.id === conversationId ? ' active' : '');
+    const t = document.createElement('span'); t.className = 'ctitle'; t.textContent = c.title || 'untitled';
+    const w = document.createElement('span'); w.className = 'cwhen'; w.textContent = fmtWhen(c.updated);
+    const del = document.createElement('button'); del.className = 'cdel'; del.textContent = '✕'; del.title = 'Delete chat';
+    del.addEventListener('click', e => { e.stopPropagation(); deleteChat(c.id); });
+    row.append(t, w, del);
+    row.addEventListener('click', () => { openChat(c.id); closeDrawer(); });
+    list.appendChild(row);
+  }
+}
+function clearMessages() {
+  msgsIn.querySelectorAll('.msg, .switch-marker').forEach(el => el.remove());
+  if (emptyState) emptyState.style.display = '';
+}
+function newChat() {
+  if (busy) return;
+  conversationId = null; proSessionId = null;
+  savePrefs();
+  clearMessages();
+  renderChats();
+  closeDrawer();
+  inputEl.focus();
+}
+async function deleteChat(id) {
+  if (!confirm('Delete this chat?')) return;
+  try { await fetch(`/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch {}
+  if (id === conversationId) { conversationId = null; savePrefs(); clearMessages(); }
+  loadChats();
+}
+function blockText(b) { return typeof b === 'string' ? b : (b && b.type === 'text' ? b.text : (b && typeof b.content === 'string' ? b.content : '')); }
+// Re-render a stored conversation: text blocks as bubbles, tool_use + the
+// following tool_result turn as one collapsed tool group.
+function renderStored(rec) {
+  clearMessages();
+  const msgs = rec.messages || [];
+  let lastAssistant = null, lastTools = {};
+  for (const m of msgs) {
+    const content = m.content;
+    if (m.role === 'user') {
+      if (Array.isArray(content) && content.some(b => b && b.type === 'tool_result')) {
+        for (const b of content) {
+          if (b && b.type === 'tool_result' && lastTools[b.tool_use_id]) {
+            const pre = document.createElement('pre'); pre.className = 'tool-result';
+            pre.textContent = typeof b.content === 'string' ? b.content : JSON.stringify(b.content);
+            lastTools[b.tool_use_id].bod.appendChild(pre);
+          }
+        }
+        continue;
+      }
+      const text = typeof content === 'string' ? content : content.map(blockText).join('\n');
+      addBubble('user', false).bubble.textContent = text;
+      continue;
+    }
+    const isLocal = rec.mode === 'local';
+    const { wrap, bubble } = addBubble('assistant', isLocal, rec.mode);
+    renderIndicator(wrap, [{ name: rec.model, isLocal, provider: rec.mode === 'openrouter' ? 'openrouter' : rec.mode }]);
+    const blocks = typeof content === 'string' ? [{ type: 'text', text: content }] : (content || []);
+    const text = blocks.filter(b => b && b.type === 'text').map(b => b.text).join('\n\n');
+    bubble.innerHTML = renderMd(text);
+    const tools = blocks.filter(b => b && b.type === 'tool_use');
+    lastTools = {};
+    if (tools.length) {
+      const g = document.createElement('div'); g.className = 'tool-group';
+      g.innerHTML = `<div class="tool-group-hdr"><span class="chevron">▶</span><span class="tool-group-label">⚙ ${tools.length} tool call${tools.length > 1 ? 's' : ''}</span><span class="tool-group-dot"></span></div><div class="tool-group-body"></div>`;
+      g.querySelector('.tool-group-hdr').addEventListener('click', () => g.classList.toggle('open'));
+      for (const t of tools) {
+        const sb = document.createElement('div'); sb.className = 'sub-bubble';
+        const hdr = document.createElement('div'); hdr.className = 'sub-bubble-hdr';
+        const bod = document.createElement('div'); bod.className = 'sub-bubble-body';
+        hdr.innerHTML = `<span class="chevron">▶</span><span class="sub-bubble-name"></span><span class="sub-bubble-args"></span>`;
+        hdr.querySelector('.sub-bubble-name').textContent = toolFriendlyName(t.name);
+        const v = Object.values(t.input || {})[0]; const val = typeof v === 'string' ? v : JSON.stringify(v || '');
+        hdr.querySelector('.sub-bubble-args').textContent = val.length > 45 ? '…' + val.slice(-42) : val;
+        bod.textContent = JSON.stringify(t.input || {}, null, 2);
+        hdr.addEventListener('click', () => sb.classList.toggle('open'));
+        sb.append(hdr, bod); g.querySelector('.tool-group-body').appendChild(sb);
+        lastTools[t.id] = { sb, hdr, bod };
+      }
+      wrap.appendChild(g);
+    }
+    lastAssistant = wrap;
+  }
+  jumpToBottom();
+}
+async function openChat(id) {
+  if (busy) return;
+  try {
+    const res = await fetch(`/conversations/${encodeURIComponent(id)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const rec = await res.json();
+    conversationId = rec.id;
+    proSessionId = rec.pro_session_id || null;
+    savePrefs();
+    renderStored(rec);
+    renderChats();
+  } catch (e) {
+    conversationId = null; savePrefs();
+    clearMessages();
+  }
 }
 
 // ── Cancel ────────────────────────────────────────────────────────────────────
@@ -1440,24 +1731,24 @@ async function send() {
   setBudget(null);
 
   lastUserMsg = text;
-  convHistory.push({ role: 'user', content: text });
   addBubble('user', false).bubble.textContent = text;
 
   const mode    = resolvedMode();
   const isLocal = isLocalProvider();
   // A non-pro turn adds history the CLI session doesn't have — drop the
-  // session so the next pro request replays the full text history instead.
+  // session so the next pro request replays the (server-assembled) history.
   if (mode !== 'pro') proSessionId = null;
 
-  const { wrap, bubble } = addBubble('assistant', isLocal);
-  const modelsUsed = [{ name: model, isLocal }];
+  const { wrap, bubble } = addBubble('assistant', isLocal, provider);
+  const modelsUsed = [{ name: model, isLocal, provider }];
   renderIndicator(wrap, modelsUsed);
   let fullText        = '';
   let toolGroupEl     = null;
   let pendingTools    = 0;
   let totalTools      = 0;
   let modelSwap       = null;
-  let historyReceived = false;  // set on `history` SSE — suppresses the text-only convHistory fallback push on `done`
+  let thinkingEl      = null;
+  let thinkingText    = '';
   const toolBubbles     = {};
   const toolBubblesById = {};
   let textSegments    = [{type: 'text', content: ''}];
@@ -1482,7 +1773,7 @@ async function send() {
   currentReq = {
     id: reqSeq, timestamp: new Date(), userMsg: text,
     provider, model, mode, isLocal, models: modelsUsed, status: 'running',
-    history_messages: convHistory.length,
+    context: null,
     input_tokens: 0, output_tokens: 0,
     ttft_ms: 0, elapsed_ms: 0, tps: 0,
     preprocess_ms: 0, spilled: 0, compacted: 0, failed: 0,
@@ -1497,7 +1788,9 @@ async function send() {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        messages: convHistory, model, mode, tool_offload: isLocal && toolOffload,
+        messages: [{ role: 'user', content: text }],
+        conversation_id: conversationId || 'new',
+        model, mode, tool_offload: isLocal && toolOffload,
         session_id: mode === 'pro' ? (proSessionId || '') : '',
       }),
       signal: abortCtrl.signal,
@@ -1540,6 +1833,19 @@ async function send() {
         currentReq.input_tokens = data.count;
         renderCurrentStats();
 
+      } else if (evType === 'conversation') {
+        if (data.id && data.id !== conversationId) { conversationId = data.id; savePrefs(); loadChats(); }
+
+      } else if (evType === 'context') {
+        currentReq.context = data;
+        renderCurrentStats();
+
+      } else if (evType === 'thinking') {
+        if (!thinkingEl) thinkingEl = addThinking(bubble);
+        thinkingText += data.text;
+        thinkingEl.bod.textContent = thinkingText;
+        autoScroll();
+
       } else if (evType === 'delta') {
         fullText += data.text;
         textSegments[textSegments.length - 1].content += data.text;
@@ -1555,7 +1861,11 @@ async function send() {
           else if (seg.type === 'transition') html += seg.html;
         }
         bubble.innerHTML = html;
-        addMeta(wrap, data, isLocal, model, mode);
+        if (thinkingEl) {
+          thinkingEl.hdr.querySelector('.sub-bubble-name').textContent = `Thought for ${fmtTok(Math.round(thinkingText.length / 4))} tok`;
+          bubble.prepend(thinkingEl.sb);
+        }
+        addMeta(wrap, { ...data, context: currentReq.context }, isLocal, model, mode);
         setStatus('done', isLocal ? `${data.tps} tok/s` : fmtMs(data.elapsed_ms));
         Object.assign(currentReq, {
           input_tokens:  data.input_tokens,
@@ -1639,10 +1949,7 @@ async function send() {
         }
 
       } else if (evType === 'history') {
-        // Clean-completion-only: server's canonical transformed history (tool
-        // turns, post-preprocess pointers) replaces convHistory wholesale.
-        convHistory = data.messages;
-        historyReceived = true;
+        // Server owns the transcript now; nothing to keep client-side.
 
       } else if (evType === 'pro_session') {
         if (data.session_id) proSessionId = data.session_id;
@@ -1657,10 +1964,8 @@ async function send() {
         setStatus('', 'quota reached');
 
       } else if (evType === 'done') {
-        // pro path (subprocess) doesn't emit `history` — fall back to the
-        // text-only push so that mode still accumulates conversation context.
-        if (!historyReceived) convHistory.push({ role: 'assistant', content: fullText });
-        saveMemoryInBackground();
+        if (mode === 'openrouter') loadSpend();
+        loadChats();
 
       } else if (evType === 'error') {
         bubble.textContent = 'Error: ' + data.message;
@@ -1706,9 +2011,13 @@ function isCoarsePointer() { return window.matchMedia('(pointer: coarse)').match
 loadPrefs();
 if (provider === 'local' && !isLocalModelName(model)) model = localModel;
 if (provider === 'claude' && !CLAUDE_MODELS.some(m => m.id === model)) model = 'claude-sonnet-4-6';
+if (provider === 'openrouter' && !model.includes('/')) model = openrouterModel || orDefault;
 renderChip();
 initSectionStates();
 loadModels();
+loadOpenRouter();
+$('new-chat-btn').addEventListener('click', newChat);
+if (conversationId) openChat(conversationId);
 </script>
 </body>
 </html>
