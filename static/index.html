@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1e1e2e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>bix ai</title>
   <style>
     :root {
@@ -16,127 +19,62 @@
       --green:    #a6e3a1;
       --red:      #f38ba8;
       --mauve:    #cba6f7;
+      --sat:  env(safe-area-inset-top, 0px);
+      --sab:  env(safe-area-inset-bottom, 0px);
+      --sal:  env(safe-area-inset-left, 0px);
+      --sar:  env(safe-area-inset-right, 0px);
+      --drawer-w: 360px;
+      --tap: 44px;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-
+    html, body { height: 100%; }
     body {
       background: var(--bg);
       color: var(--text);
       font-family: system-ui, -apple-system, sans-serif;
       font-size: 16px;
       height: 100dvh;
-      display: flex;
       overflow: hidden;
+      -webkit-text-size-adjust: 100%;
+      overscroll-behavior: none;
     }
+    button, input, textarea, select { font: inherit; color: inherit; }
+    button { cursor: pointer; background: none; border: none; -webkit-tap-highlight-color: transparent; }
 
-    /* ── main column ── */
-    .main-col {
-      flex: 1;
-      min-width: 0;
+    /* ── app column ── */
+    .app {
+      height: 100dvh;
       display: flex;
       flex-direction: column;
+      min-width: 0;
+      transition: margin-right .25s ease;
     }
 
     /* ── header ── */
     header {
-      padding: 10px 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: calc(6px + var(--sat)) calc(8px + var(--sar)) 6px calc(14px + var(--sal));
       border-bottom: 1px solid var(--surface1);
-      display: flex;
-      align-items: center;
-      gap: 12px;
       flex-shrink: 0;
+      min-height: calc(var(--tap) + var(--sat));
     }
-    h1 { font-size: .9rem; font-weight: 600; letter-spacing: .04em; color: var(--mauve); flex-shrink: 0; }
-
-    .mode-group {
-      display: flex;
-      background: var(--surface0);
-      border-radius: 8px;
-      padding: 2px;
-      gap: 2px;
-      height: 24px;
-    }
-    .mode-btn {
-      flex: 1;
-      padding: 0 10px;
-      border-radius: 6px;
-      border: none;
-      background: transparent;
-      color: var(--subtext);
-      font: inherit;
-      font-size: .75rem;
-      cursor: pointer;
-      transition: background .15s, color .15s;
-      white-space: nowrap;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .mode-btn.active                    { background: var(--surface1); color: var(--text); }
-    .mode-btn.active[data-mode="local"] { color: var(--yellow); }
-    .mode-btn.active[data-mode="ai"]    { color: var(--mauve); }
-    .mode-btn.active[data-mode="auto"]  { color: var(--mauve); }
-
-    .fallback-label {
-      display: block;
-      font-size: .72rem;
-      color: var(--subtext);
-      margin-bottom: 4px;
-    }
-
-    .api-mode-badge {
-      display: none;
-      font-size: .72rem;
-      color: var(--subtext);
-      border: 1px solid var(--surface1);
-      border-radius: 4px;
-      padding: 1px 6px;
-      white-space: nowrap;
-      flex-shrink: 0;
-    }
-    .api-mode-badge.visible { display: block; }
-
-    .quota-banner {
-      background: color-mix(in srgb, var(--yellow) 15%, var(--surface0));
-      border: 1px solid var(--yellow);
-      border-radius: 6px;
-      padding: 8px 12px;
-      margin-top: 8px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: .85em;
-      color: var(--yellow);
-    }
-    .use-api-btn {
-      background: var(--surface1);
-      border: 1px solid var(--subtext);
-      color: var(--text);
-      border-radius: 4px;
-      padding: 2px 8px;
-      cursor: pointer;
-      font-size: .9em;
-    }
-    .use-api-btn:hover { border-color: var(--text); }
-
-    .budget {
-      font-size: .68rem;
-      color: var(--subtext);
-      font-variant-numeric: tabular-nums;
-      border-left: 1px solid var(--surface1);
-      padding-left: 7px;
-    }
-    .budget:empty { display: none; }
+    h1 { font-size: .95rem; font-weight: 600; letter-spacing: .04em; color: var(--mauve); flex-shrink: 0; }
     .status {
       display: flex;
       align-items: center;
       gap: 7px;
-      font-size: .76rem;
+      font-size: .78rem;
       color: var(--subtext);
       white-space: nowrap;
-      flex-shrink: 0;
-      margin-left: auto;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
+      flex: 1;
+      justify-content: flex-end;
     }
+    #status-label { overflow: hidden; text-overflow: ellipsis; }
     .dot {
       width: 8px; height: 8px;
       border-radius: 50%;
@@ -150,40 +88,57 @@
     .dot.streaming   { background: var(--blue);    animation: pulse 1s   infinite; }
     .dot.done        { background: var(--green); animation: none; }
     .dot.error       { background: var(--red);   animation: none; }
-
-    #drawer-toggle {
-      background: transparent;
-      border: none;
+    .budget {
+      font-size: .68rem;
       color: var(--subtext);
-      font-size: 1.1rem;
-      cursor: pointer;
-      padding: 4px 7px;
-      border-radius: 6px;
-      line-height: 1;
+      font-variant-numeric: tabular-nums;
+      border-left: 1px solid var(--surface1);
+      padding-left: 7px;
+      display: none;
+    }
+    @media (min-width: 600px) { .budget:not(:empty) { display: inline; } }
+
+    .icon-btn {
+      width: var(--tap); height: var(--tap);
+      display: inline-flex; align-items: center; justify-content: center;
+      border-radius: 10px;
+      color: var(--subtext);
+      font-size: 1.15rem;
       flex-shrink: 0;
       transition: color .15s, background .15s;
     }
-    #drawer-toggle:hover  { color: var(--text); background: var(--surface0); }
-    #drawer-toggle.open   { color: var(--text); background: var(--surface1); }
+    .icon-btn:hover, .icon-btn.open { color: var(--text); background: var(--surface0); }
 
     /* ── messages ── */
     .messages {
       flex: 1;
+      min-height: 0;
       overflow-y: auto;
-      padding: 24px 0;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
+      -webkit-overflow-scrolling: touch;
+      position: relative;
+      padding: 16px 0 8px;
     }
     .msgs-inner {
       width: 100%;
       max-width: 820px;
-      padding: 0 32px;
+      margin: 0 auto;
+      padding: 0 calc(12px + var(--sal)) 0 calc(12px + var(--sar));
       display: flex;
       flex-direction: column;
-      gap: 22px;
+      gap: 16px;
     }
-    .msg { display: flex; flex-direction: column; gap: 5px; }
+    @media (min-width: 600px) { .msgs-inner { padding: 0 24px; gap: 20px; } }
+    .empty-state {
+      margin: auto;
+      text-align: center;
+      color: var(--subtext);
+      font-size: .9rem;
+      padding: 60px 24px;
+      line-height: 1.6;
+    }
+    .empty-state strong { color: var(--mauve); font-weight: 600; }
+
+    .msg { display: flex; flex-direction: column; gap: 4px; }
     .msg.user      { align-items: flex-end; }
     .msg.assistant { align-items: flex-start; }
     .role-label {
@@ -191,19 +146,8 @@
       font-weight: 500;
       color: var(--subtext);
       padding: 0 4px;
+      display: inline-flex; align-items: center; flex-wrap: wrap;
     }
-    /* Responder indicator: yellow = local model, mauve = Claude (cloud). */
-    .role-label.local { color: var(--yellow); }
-    .role-label.cloud { color: var(--mauve); }
-    .role-label.local::before, .role-label.cloud::before {
-      content: ''; display: inline-block; width: 6px; height: 6px;
-      border-radius: 50%; margin-right: 5px; vertical-align: middle;
-      background: currentColor;
-    }
-    /* Composite indicator: mode + ordered chain of every model used. */
-    .role-label.composite { display: inline-flex; align-items: center; flex-wrap: wrap; }
-    .ind-mode  { color: var(--subtext); font-weight: 600; }
-    .ind-sep, .ind-arrow { color: var(--surface1); margin: 0 5px; }
     .ind-model { display: inline-flex; align-items: center; }
     .ind-model::before {
       content: ''; display: inline-block; width: 5px; height: 5px;
@@ -211,7 +155,7 @@
     }
     .ind-model.local { color: var(--yellow); }
     .ind-model.cloud { color: var(--mauve); }
-    /* Inline marker in the bubble body at a model offload / switch / escalation. */
+    .ind-arrow { color: var(--surface1); margin: 0 5px; }
     .switch-marker {
       width: fit-content; max-width: 100%;
       font-size: .68rem; color: var(--subtext);
@@ -219,248 +163,107 @@
       border-radius: 10px; padding: 2px 10px; margin: 8px 0;
     }
     .bubble {
-      padding: 11px 16px;
-      border-radius: 14px;
-      line-height: 1.65;
-      max-width: min(70ch, 90%);
+      padding: 10px 14px;
+      border-radius: 16px;
+      line-height: 1.55;
+      max-width: 88%;
       word-break: break-word;
+      overflow-wrap: anywhere;
+      font-size: .95rem;
     }
-    .msg.user .bubble      { background: var(--mauve); color: var(--bg); border-bottom-right-radius: 3px; }
-    .msg.assistant .bubble { background: var(--surface0); border-bottom-left-radius: 3px; }
+    @media (min-width: 600px) { .bubble { max-width: min(70ch, 85%); font-size: 1rem; line-height: 1.6; } }
+    .msg.user .bubble      { background: var(--mauve); color: var(--bg); border-bottom-right-radius: 4px; white-space: pre-wrap; }
+    .msg.assistant .bubble { background: var(--surface0); border-bottom-left-radius: 4px; }
     .msg.assistant.local .bubble { border-left: 2px solid var(--yellow); }
     .bubble p { margin: 0 0 .55em; }
     .bubble p:last-child { margin-bottom: 0; }
     .bubble pre {
       background: var(--bg);
       border: 1px solid var(--surface1);
-      border-radius: 6px;
-      padding: 10px 14px;
+      border-radius: 8px;
+      padding: 10px 12px;
       overflow-x: auto;
       margin: 8px 0;
-      font-size: .85em;
+      font-size: .82em;
       line-height: 1.5;
+      max-width: 100%;
     }
-    .bubble code { font-family: 'Cascadia Code','Fira Code',monospace; font-size: .88em; }
+    .bubble code { font-family: ui-monospace, 'Cascadia Code', 'Fira Code', Menlo, monospace; font-size: .88em; }
     .bubble pre code { font-size: inherit; }
     .bubble strong { font-weight: 600; }
     .bubble em { font-style: italic; }
     .meta {
-      font-size: .72rem;
+      font-size: .7rem;
       color: var(--subtext);
       padding: 0 4px;
       line-height: 1.6;
+      font-variant-numeric: tabular-nums;
     }
     .ollama-tag { color: var(--yellow); }
 
-    /* ── input ── */
-    .input-wrap {
-      border-top: 1px solid var(--surface1);
-      padding: 12px 0 16px;
-      display: flex;
-      justify-content: center;
-      flex-shrink: 0;
-    }
-    .input-inner {
-      width: 100%;
-      max-width: 820px;
-      padding: 0 32px;
-      display: flex;
-      flex-direction: row;
-      gap: 8px;
-      align-items: flex-end;
-    }
-    .input-right {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      flex-shrink: 0;
-    }
-    textarea {
-      flex: 1;
-      min-height: 70px;
-      max-height: 180px;
-      background: var(--surface0);
-      border: 1px solid transparent;
+    .quota-banner {
+      background: color-mix(in srgb, var(--yellow) 15%, var(--surface0));
+      border: 1px solid var(--yellow);
       border-radius: 10px;
-      color: var(--text);
-      padding: 10px 14px;
-      font: inherit;
-      font-size: .93rem;
-      resize: none;
-      outline: none;
-      line-height: 1.5;
-      transition: border-color .15s;
-    }
-    textarea:focus { border-color: var(--mauve); }
-    textarea::placeholder { color: var(--subtext); }
-    #send {
-      background: var(--mauve);
-      color: var(--bg);
-      border: 1px solid transparent;
-      border-radius: 10px;
-      padding: 0 18px;
-      height: 46px;
-      width: 100%;
-      font: inherit;
-      font-weight: 600;
-      font-size: .9rem;
-      cursor: pointer;
-      transition: opacity .15s, background .15s, color .15s, border-color .15s;
-      white-space: nowrap;
-    }
-    #send:hover:not(.is-cancel) { opacity: .85; }
-    #send.is-cancel {
-      background: transparent;
-      color: var(--red);
-      border-color: var(--red);
-    }
-
-    /* ── drawer ── */
-    #drawer {
-      width: 0;
-      flex-shrink: 0;
-      overflow: hidden;
-      transition: width .28s ease;
-    }
-    #drawer.open { width: 40vw; }
-
-    .drawer-inner {
-      width: 40vw;
-      height: 100%;
-      display: flex;
-      flex-direction: column;
-      background: var(--surface0);
-      border-left: 1px solid var(--surface1);
-    }
-    .d-hdr {
-      padding: 12px 16px;
-      border-bottom: 1px solid var(--surface1);
-      font-size: .84rem;
-      font-weight: 600;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      flex-shrink: 0;
-    }
-    #drawer-close {
-      background: transparent;
-      border: none;
-      color: var(--subtext);
-      cursor: pointer;
-      font-size: .9rem;
-      padding: 3px 6px;
-      border-radius: 5px;
-      line-height: 1;
-      transition: color .15s, background .15s;
-    }
-    #drawer-close:hover { color: var(--text); background: var(--surface1); }
-
-    .d-body {
-      flex: 1;
-      overflow: hidden;
-      display: flex;
-      flex-direction: column;
-    }
-    .d-fixed {
-      flex-shrink: 0;
-      padding: 16px;
-      display: flex;
-      flex-direction: column;
-      gap: 20px;
-    }
-    .d-scroll {
-      flex: 1;
-      min-height: 0;
-      overflow-y: auto;
-      padding: 12px 16px 16px;
-      display: flex;
-      flex-direction: column;
-      gap: 9px;
-      border-top: 1px solid var(--surface1);
-    }
-    .d-section { display: flex; flex-direction: column; gap: 9px; }
-    .d-title {
-      font-size: .69rem;
-      text-transform: uppercase;
-      letter-spacing: .08em;
-      color: var(--subtext);
-    }
-    .d-section select {
-      background: var(--bg);
-      border: 1px solid var(--surface1);
-      border-radius: 6px;
-      color: var(--text);
-      padding: 7px 10px;
-      font: inherit;
-      font-size: .85rem;
-      outline: none;
-      width: 100%;
-      cursor: pointer;
-    }
-    .d-section select:focus { border-color: var(--mauve); }
-
-    /* system bars */
-    .sys-metric { display: flex; flex-direction: column; gap: 5px; }
-    .sys-label-row { display: flex; justify-content: space-between; font-size: .8rem; }
-    .sys-label-row .sk { color: var(--subtext); }
-    .sys-label-row .sv { color: var(--text); font-variant-numeric: tabular-nums; }
-    .bar-wrap { height: 4px; background: var(--surface1); border-radius: 2px; overflow: hidden; }
-    .bar-fill { height: 100%; border-radius: 2px; background: var(--blue); transition: width .6s ease, background .4s; }
-    .bar-fill.warn { background: var(--yellow); }
-    .bar-fill.crit { background: var(--red); }
-
-    /* history items */
-    .hist-item {
-      background: var(--bg);
-      border-radius: 8px;
       padding: 10px 12px;
+      margin-top: 8px;
       display: flex;
-      flex-direction: column;
-      gap: 6px;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      font-size: .85em;
+      color: var(--yellow);
+      max-width: 88%;
     }
-    .hi-header {
-      display: flex;
-      align-items: baseline;
-      gap: 7px;
-      font-size: .78rem;
-    }
-    .hi-time   { color: var(--subtext); font-variant-numeric: tabular-nums; }
-    .hi-model  { color: var(--text); font-weight: 500; }
-    .hi-local  { color: var(--yellow); font-size: .72rem; }
-    .hi-pro    { color: var(--mauve);  font-size: .72rem; }
-    .hi-api    { color: var(--blue);   font-size: .72rem; }
-    .hi-err    { color: var(--red);    font-size: .72rem; }
-
-    .hi-summary {
-      font-size: .78rem;
+    .use-api-btn {
+      background: var(--surface1);
+      border: 1px solid var(--subtext);
       color: var(--text);
-      line-height: 1.4;
-    }
-    .hi-pending { color: var(--subtext); font-style: italic; }
-    .hi-src-tag { font-size: .65rem; color: var(--subtext); margin-left: 4px; }
-    .hi-error { font-size: .76rem; color: var(--red); padding-top: 5px; border-top: 1px solid var(--surface1); }
-    .hi-cancelled { font-size: .76rem; color: var(--subtext); font-style: italic; padding-top: 5px; border-top: 1px solid var(--surface1); }
-
-    /* sub-bubbles (tool use) */
-    .sub-bubbles { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; width: 100%; max-width: min(70ch, 90%); }
-    .sub-bubble {
-      background: var(--bg);
-      border: 1px solid var(--surface1);
       border-radius: 8px;
-      overflow: hidden;
-      font-size: .78rem;
+      padding: 6px 12px;
+      min-height: 36px;
+      font-size: .9em;
     }
-    .sub-bubble-hdr {
+
+    /* ── tool groups ── */
+    .tool-group { margin-top: 6px; width: 100%; max-width: 88%; }
+    @media (min-width: 600px) { .tool-group { max-width: min(70ch, 85%); } }
+    .tool-group-hdr {
       display: flex;
       align-items: center;
       gap: 7px;
-      padding: 5px 10px;
+      padding: 8px 10px;
+      min-height: 36px;
+      background: var(--bg);
+      border: 1px solid var(--surface1);
+      border-radius: 10px;
       cursor: pointer;
       color: var(--subtext);
+      font-size: .78rem;
       user-select: none;
-      transition: background .15s;
     }
-    .sub-bubble-hdr:hover { background: var(--surface1); }
+    .tool-group.open .tool-group-hdr { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+    .tool-group-hdr .chevron { font-size: .6rem; transition: transform .18s; }
+    .tool-group.open .tool-group-hdr .chevron { transform: rotate(90deg); }
+    .tool-group-label { flex: 1; color: var(--yellow); font-weight: 500; }
+    .tool-group-dot { width: 6px; height: 6px; border-radius: 50%; background: transparent; flex-shrink: 0; }
+    .tool-group.running .tool-group-dot { background: var(--blue); animation: pulse .8s infinite; }
+    .tool-group-body {
+      display: none;
+      border: 1px solid var(--surface1);
+      border-top: none;
+      border-bottom-left-radius: 10px;
+      border-bottom-right-radius: 10px;
+      overflow: hidden;
+    }
+    .tool-group.open .tool-group-body { display: block; }
+    .sub-bubble { background: var(--bg); border-top: 1px solid var(--surface1); font-size: .78rem; overflow: hidden; }
+    .sub-bubble:first-child { border-top: none; }
+    .sub-bubble-hdr {
+      display: flex; align-items: center; gap: 7px;
+      padding: 8px 10px; min-height: 36px;
+      cursor: pointer; color: var(--subtext); user-select: none;
+    }
     .sub-bubble-hdr .chevron { font-size: .6rem; transition: transform .18s; display: inline-block; }
     .sub-bubble.open .chevron { transform: rotate(90deg); }
     .sub-bubble-name { color: var(--yellow); font-weight: 500; }
@@ -468,8 +271,8 @@
     .sub-bubble-body {
       display: none;
       padding: 8px 12px;
-      font-family: 'Cascadia Code','Fira Code',monospace;
-      font-size: .78rem;
+      font-family: ui-monospace, 'Cascadia Code', 'Fira Code', Menlo, monospace;
+      font-size: .75rem;
       white-space: pre-wrap;
       word-break: break-all;
       color: var(--subtext);
@@ -479,17 +282,239 @@
     }
     .sub-bubble.open .sub-bubble-body { display: block; }
     .tool-result {
-      margin: 8px 0 0;
-      padding: 8px 10px;
-      background: var(--bg);
-      border-left: 2px solid var(--green);
-      color: var(--text);
-      white-space: pre-wrap;
-      word-break: break-all;
-      font-family: inherit;
-      font-size: inherit;
+      margin: 8px 0 0; padding: 8px 10px;
+      background: var(--bg); border-left: 2px solid var(--green);
+      color: var(--text); white-space: pre-wrap; word-break: break-all;
+      font-family: inherit; font-size: inherit;
     }
     .tool-result.error { border-left-color: var(--red); color: var(--red); }
+
+    .scroll-badge {
+      position: sticky;
+      bottom: 8px;
+      margin: 8px auto 0;
+      width: fit-content;
+      background: var(--surface1);
+      color: var(--text);
+      border-radius: 20px;
+      padding: 8px 14px;
+      font-size: .78rem;
+      display: none;
+      z-index: 10;
+      white-space: nowrap;
+      box-shadow: 0 2px 8px rgba(0,0,0,.3);
+    }
+    .scroll-badge.visible { display: block; }
+
+    /* ── composer ── */
+    .composer {
+      flex-shrink: 0;
+      border-top: 1px solid var(--surface1);
+      padding: 8px calc(10px + var(--sar)) calc(8px + var(--sab)) calc(10px + var(--sal));
+      background: var(--bg);
+    }
+    .composer-inner { max-width: 820px; margin: 0 auto; display: flex; flex-direction: column; gap: 6px; }
+    @media (min-width: 600px) { .composer { padding-top: 10px; } .composer-inner { gap: 8px; } }
+    .composer-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .model-chip {
+      display: inline-flex; align-items: center; gap: 7px;
+      min-height: 32px; padding: 0 12px;
+      border-radius: 16px;
+      background: var(--surface0);
+      border: 1px solid transparent;
+      color: var(--text);
+      font-size: .8rem;
+      max-width: 100%;
+      overflow: hidden;
+      transition: border-color .15s;
+    }
+    .model-chip:hover { border-color: var(--surface1); }
+    .model-chip .pdot { width: 7px; height: 7px; border-radius: 50%; background: var(--mauve); flex-shrink: 0; }
+    .model-chip.local .pdot { background: var(--yellow); }
+    .model-chip .pname { color: var(--subtext); }
+    .model-chip .mname { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .model-chip .caret { color: var(--subtext); font-size: .65rem; }
+    .chip-tag {
+      font-size: .7rem; color: var(--subtext);
+      border: 1px solid var(--surface1); border-radius: 12px;
+      padding: 3px 9px; white-space: nowrap; display: none;
+    }
+    .chip-tag.visible { display: inline-block; }
+    .chip-tag.on { color: var(--yellow); border-color: var(--yellow); }
+    .input-row { display: flex; gap: 8px; align-items: flex-end; }
+    textarea {
+      flex: 1;
+      min-width: 0;
+      min-height: var(--tap);
+      max-height: 160px;
+      background: var(--surface0);
+      border: 1px solid transparent;
+      border-radius: 14px;
+      color: var(--text);
+      padding: 11px 14px;
+      font-size: 16px;   /* ≥16px stops iOS zooming the page on focus */
+      resize: none;
+      outline: none;
+      line-height: 1.4;
+      transition: border-color .15s;
+    }
+    textarea:focus { border-color: var(--mauve); }
+    textarea::placeholder { color: var(--subtext); }
+    #send {
+      width: var(--tap); height: var(--tap);
+      border-radius: 50%;
+      background: var(--mauve);
+      color: var(--bg);
+      border: 1px solid transparent;
+      font-weight: 700;
+      font-size: 1.1rem;
+      display: inline-flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      transition: opacity .15s, background .15s, color .15s, border-color .15s;
+    }
+    #send:hover:not(.is-cancel) { opacity: .85; }
+    #send.is-cancel { background: transparent; color: var(--red); border-color: var(--red); }
+
+    /* ── sheets (model picker) ── */
+    .backdrop {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,.45);
+      opacity: 0; pointer-events: none;
+      transition: opacity .2s;
+      z-index: 40;
+    }
+    .backdrop.visible { opacity: 1; pointer-events: auto; }
+    .sheet {
+      position: fixed;
+      left: 0; right: 0; bottom: 0;
+      max-height: 80dvh;
+      background: var(--surface0);
+      border-top: 1px solid var(--surface1);
+      border-radius: 16px 16px 0 0;
+      transform: translateY(100%);
+      transition: transform .25s ease;
+      z-index: 50;
+      display: flex; flex-direction: column;
+      padding-bottom: var(--sab);
+    }
+    .sheet.open { transform: translateY(0); }
+    @media (min-width: 600px) {
+      .sheet { left: 50%; right: auto; bottom: 50%; width: 420px; max-height: 70vh;
+               transform: translate(-50%, 60%); opacity: 0; border-radius: 16px; border: 1px solid var(--surface1);
+               transition: transform .2s, opacity .2s; padding-bottom: 0; }
+      .sheet.open { transform: translate(-50%, 50%); opacity: 1; }
+    }
+    .sheet-hdr {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 16px 8px; font-size: .85rem; font-weight: 600; flex-shrink: 0;
+    }
+    .sheet-body { overflow-y: auto; padding: 0 8px 8px; }
+    .sheet-section { padding: 8px 0 4px; }
+    .sheet-title {
+      font-size: .69rem; text-transform: uppercase; letter-spacing: .08em;
+      color: var(--subtext); padding: 6px 10px; display: flex; align-items: center; gap: 6px;
+    }
+    .sheet-title .pdot { width: 7px; height: 7px; border-radius: 50%; }
+    .sheet-row {
+      width: 100%;
+      display: flex; align-items: center; gap: 10px;
+      min-height: var(--tap); padding: 8px 10px;
+      border-radius: 10px;
+      text-align: left;
+      color: var(--text);
+      font-size: .9rem;
+    }
+    .sheet-row:hover { background: var(--surface1); }
+    .sheet-row .rname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sheet-row .rsub  { color: var(--subtext); font-size: .72rem; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+    .sheet-row .rcheck { color: var(--mauve); width: 16px; text-align: center; flex-shrink: 0; visibility: hidden; }
+    .sheet-row.active .rcheck { visibility: visible; }
+    .sheet-row.local.active .rcheck { color: var(--yellow); }
+    .sheet-note { font-size: .74rem; color: var(--subtext); padding: 4px 10px 8px; line-height: 1.5; }
+    .sheet-toggle {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      min-height: var(--tap); padding: 6px 10px; font-size: .8rem; color: var(--subtext);
+    }
+    .toggle-btn {
+      font-size: .72rem; padding: 6px 12px; min-height: 32px; border-radius: 16px;
+      border: 1px solid var(--surface1); color: var(--subtext);
+      transition: color .15s, border-color .15s, background .15s;
+    }
+    .toggle-btn.on { color: var(--yellow); border-color: var(--yellow); background: color-mix(in srgb, var(--yellow) 10%, transparent); }
+
+    /* ── drawer ── */
+    #drawer {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      background: var(--surface0);
+      transform: translateY(100%);
+      transition: transform .25s ease;
+      display: flex; flex-direction: column;
+      padding-top: var(--sat);
+    }
+    #drawer.open { transform: translateY(0); }
+    @media (min-width: 900px) {
+      #drawer {
+        inset: 0 0 0 auto;
+        width: var(--drawer-w);
+        border-left: 1px solid var(--surface1);
+        transform: translateX(100%);
+        padding-top: 0;
+      }
+      #drawer.open { transform: translateX(0); }
+      body.drawer-open .app { margin-right: var(--drawer-w); }
+      #drawer-backdrop { display: none; }
+    }
+    .d-hdr {
+      padding: 4px 8px 4px 16px;
+      min-height: var(--tap);
+      border-bottom: 1px solid var(--surface1);
+      font-size: .85rem; font-weight: 600;
+      display: flex; align-items: center; justify-content: space-between;
+      flex-shrink: 0;
+    }
+    .d-body {
+      flex: 1; min-height: 0;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 8px 16px calc(16px + var(--sab));
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    .d-section { display: flex; flex-direction: column; gap: 9px; padding: 6px 0; border-bottom: 1px solid var(--surface1); }
+    .d-section:last-child { border-bottom: none; }
+    .d-title {
+      font-size: .69rem;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--subtext);
+    }
+    .d-collapsible {
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: space-between; gap: 6px;
+      min-height: 36px;
+      user-select: none;
+      transition: color .15s;
+    }
+    .d-collapsible:hover { color: var(--text); }
+    .d-collapsible .lhs { display: flex; align-items: center; gap: 6px; }
+    .d-chev { font-size: .6rem; transition: transform .18s; display: inline-block; }
+    .d-badge { font-weight: 400; font-size: .75rem; font-variant-numeric: tabular-nums; text-transform: none; letter-spacing: 0; }
+    .d-sub { display: flex; flex-direction: column; gap: 8px; padding-bottom: 6px; }
+    .d-empty { font-size: .8rem; color: var(--surface1); font-style: italic; }
+
+    .sys-metric { display: flex; flex-direction: column; gap: 5px; }
+    .sys-label-row { display: flex; justify-content: space-between; font-size: .8rem; }
+    .sys-label-row .sk { color: var(--subtext); }
+    .sys-label-row .sv { color: var(--text); font-variant-numeric: tabular-nums; }
+    .bar-wrap { height: 4px; background: var(--surface1); border-radius: 2px; overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: 2px; background: var(--blue); transition: width .6s ease, background .4s; }
+    .bar-fill.warn { background: var(--yellow); }
+    .bar-fill.crit { background: var(--red); }
+    .gpu-row { display: flex; justify-content: space-between; font-size: .78rem; padding: 1px 0; }
+    .gpu-row .sk { color: var(--subtext); }
+    .gpu-row .sv { color: var(--text); font-variant-numeric: tabular-nums; }
+
     .hi-stats {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -497,128 +522,74 @@
       padding-top: 7px;
       border-top: 1px solid var(--surface1);
     }
-    .hi-stat {
-      display: flex;
-      justify-content: space-between;
-      font-size: .74rem;
-    }
+    .hi-stats.flush { border-top: none; padding-top: 0; }
+    .hi-stat { display: flex; justify-content: space-between; font-size: .76rem; gap: 6px; }
     .hi-stat .sk { color: var(--subtext); }
-    .hi-stat .sv { color: var(--text); font-variant-numeric: tabular-nums; }
+    .hi-stat .sv { color: var(--text); font-variant-numeric: tabular-nums; text-align: right; }
+    .hi-stat .sv.live { color: var(--blue); }
 
-    .d-empty { font-size: .8rem; color: var(--surface1); font-style: italic; }
+    .hist-item { background: var(--bg); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+    .hi-header { display: flex; align-items: baseline; gap: 7px; font-size: .78rem; }
+    .hi-time  { color: var(--subtext); font-variant-numeric: tabular-nums; }
+    .hi-model { color: var(--text); font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .hi-local { color: var(--yellow); font-size: .72rem; }
+    .hi-pro   { color: var(--mauve);  font-size: .72rem; }
+    .hi-api   { color: var(--blue);   font-size: .72rem; }
+    .hi-err   { color: var(--red);    font-size: .72rem; }
+    .hi-prompt { font-size: .78rem; color: var(--text); line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .hi-error { font-size: .76rem; color: var(--red); padding-top: 5px; border-top: 1px solid var(--surface1); word-break: break-word; }
+    .hi-cancelled { font-size: .76rem; color: var(--subtext); font-style: italic; padding-top: 5px; border-top: 1px solid var(--surface1); }
+    #history-list { display: flex; flex-direction: column; gap: 8px; }
 
-    .d-collapsible {
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      user-select: none;
-      transition: color .15s;
+    .mem-item {
+      display: flex; align-items: center; gap: 8px;
+      min-height: 40px; padding: 6px 10px;
+      background: var(--bg); border-radius: 8px;
+      text-decoration: none; color: inherit; font-size: .78rem;
     }
-    .d-collapsible:hover { color: var(--text); }
-    .d-chev { font-size: .6rem; transition: transform .18s; display: inline-block; }
+    .mem-item .mdate { color: var(--subtext); font-size: .68rem; white-space: nowrap; }
+    .mem-item .mtitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .mem-item .marrow { color: var(--subtext); opacity: .6; }
+    .link-more { font-size: .74rem; color: var(--subtext); text-align: center; cursor: pointer; padding: 8px 0; }
 
-    .mem-hdr {
-      cursor: pointer;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      user-select: none;
-      padding: 2px 0;
-      border-radius: 4px;
-      transition: color .15s;
+    .model-row { display: flex; align-items: center; gap: 8px; font-size: .78rem; min-height: 36px; }
+    .model-row .mdot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; background: var(--surface1); }
+    .model-row .mdot.loaded { background: var(--yellow); }
+    .model-row .mname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .model-row .msize { color: var(--subtext); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+    .model-row .mdel { width: 32px; height: 32px; border-radius: 8px; color: var(--subtext); display: inline-flex; align-items: center; justify-content: center; }
+    .model-row .mdel:hover { color: var(--red); background: var(--surface1); }
+    .pull-row { display: flex; gap: 6px; }
+    .pull-row input {
+      flex: 1; min-width: 0; min-height: 36px;
+      font-size: 16px; background: var(--bg); color: var(--text);
+      border: 1px solid var(--surface1); border-radius: 8px; padding: 4px 10px;
     }
-    .mem-hdr:hover { color: var(--text); }
+    .pull-row button { min-height: 36px; padding: 0 14px; border-radius: 8px; background: var(--yellow); color: var(--bg); font-size: .8rem; font-weight: 600; }
+    .pull-row button:disabled { opacity: .5; }
+    .d-error { font-size: .74rem; color: var(--red); line-height: 1.5; }
+    .d-note  { font-size: .72rem; color: var(--subtext); line-height: 1.5; }
 
-    #history-list { display: flex; flex-direction: column; gap: 10px; }
-
+    .link-list { display: flex; flex-direction: column; gap: 6px; }
     .metrics-link {
-      display: block;
-      font-size: .78rem;
-      color: var(--blue);
-      text-decoration: none;
-      padding: 7px 10px;
-      border-radius: 6px;
-      background: var(--bg);
-      text-align: center;
-      border: 1px solid var(--surface1);
-      transition: opacity .15s;
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: .8rem; color: var(--blue); text-decoration: none;
+      min-height: 40px; padding: 0 12px; border-radius: 8px;
+      background: var(--bg); border: 1px solid var(--surface1);
     }
-    .metrics-link:hover { opacity: .75; }
-
-    .gpu-row {
-      display: flex;
-      justify-content: space-between;
-      font-size: .78rem;
-      padding: 1px 0;
-    }
-    .gpu-row .sk { color: var(--subtext); }
-    .gpu-row .sv { color: var(--text); font-variant-numeric: tabular-nums; }
-
-    /* ── tool group (grouped tool calls) ── */
-    .tool-group { margin-top: 8px; width: 100%; max-width: min(70ch, 90%); }
-    .tool-group-hdr {
-      display: flex;
-      align-items: center;
-      gap: 7px;
-      padding: 5px 10px;
-      background: var(--bg);
-      border: 1px solid var(--surface1);
-      border-radius: 8px;
-      cursor: pointer;
-      color: var(--subtext);
-      font-size: .78rem;
-      user-select: none;
-      transition: background .15s;
-    }
-    .tool-group.open .tool-group-hdr { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
-    .tool-group-hdr:hover { background: color-mix(in srgb, var(--surface1) 50%, var(--bg)); }
-    .tool-group-hdr .chevron { font-size: .6rem; transition: transform .18s; }
-    .tool-group.open .tool-group-hdr .chevron { transform: rotate(90deg); }
-    .tool-group-label { flex: 1; color: var(--yellow); font-weight: 500; }
-    .tool-group-dot {
-      width: 6px; height: 6px;
-      border-radius: 50%;
-      background: transparent;
-      flex-shrink: 0;
-      transition: background .3s;
-    }
-    .tool-group.running .tool-group-dot { background: var(--blue); animation: pulse .8s infinite; }
-    .tool-group-body {
-      display: none;
-      border: 1px solid var(--surface1);
-      border-top: none;
-      border-bottom-left-radius: 8px;
-      border-bottom-right-radius: 8px;
-      overflow: hidden;
-    }
-    .tool-group.open .tool-group-body { display: block; }
-
-    /* ── scroll-lock badge ── */
-    .messages { position: relative; }
-    .scroll-badge {
-      position: absolute;
-      bottom: 16px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: var(--surface1);
-      color: var(--text);
-      border: 1px solid var(--surface0);
-      border-radius: 20px;
-      padding: 5px 14px;
-      font-size: .78rem;
-      cursor: pointer;
-      display: none;
-      z-index: 10;
-      white-space: nowrap;
-      box-shadow: 0 2px 8px rgba(0,0,0,.3);
-    }
-    .scroll-badge.visible { display: block; }
+    .metrics-link:hover { opacity: .8; }
+    .auth-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: .78rem; min-height: 32px; }
+    .auth-row .lhs { display: flex; align-items: center; gap: 7px; min-width: 0; }
+    #auth-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--surface1); flex-shrink: 0; transition: background .3s; }
+    #auth-label { color: var(--subtext); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #auth-expiry { font-size: .72rem; color: var(--subtext); font-variant-numeric: tabular-nums; }
+    .mini-btn { min-width: 32px; min-height: 32px; border-radius: 8px; border: 1px solid var(--surface1); color: var(--subtext); font-size: .8rem; }
+    .mini-btn:hover { color: var(--text); border-color: var(--subtext); }
   </style>
 </head>
 <body>
 
-<div class="main-col">
+<div class="app">
   <header>
     <h1>bix ai</h1>
     <div class="status">
@@ -626,292 +597,176 @@
       <span id="status-label">idle</span>
       <span id="budget-label" class="budget"></span>
     </div>
-    <button id="drawer-toggle" title="Stats">≡</button>
+    <button class="icon-btn" id="drawer-toggle" title="Stats" aria-label="Open stats">≡</button>
   </header>
 
-  <div class="messages" id="messages">
-    <div class="msgs-inner" id="msgs-inner"></div>
+  <main class="messages" id="messages">
+    <div class="msgs-inner" id="msgs-inner">
+      <div class="empty-state" id="empty-state">
+        <strong>bix ai</strong><br>
+        Local, Claude, or OpenRouter — pick a model below and ask away.
+      </div>
+    </div>
     <div class="scroll-badge" id="scroll-badge" onclick="jumpToBottom()">↓ new content</div>
-  </div>
+  </main>
 
-  <div class="input-wrap">
-    <div class="input-inner">
-      <textarea id="input" placeholder="Message… (Shift+Enter for new line)" rows="1"></textarea>
-      <div class="input-right">
-        <div class="mode-group">
-          <button class="mode-btn" data-mode="ai">Cloud</button>
-          <button class="mode-btn active" data-mode="auto">Auto</button>
-          <button class="mode-btn" data-mode="local">Local</button>
-        </div>
-        <div class="api-mode-badge" id="api-mode-badge" title="Using API credits (Pro quota reached)">API</div>
-        <button id="send">Send</button>
+  <footer class="composer">
+    <div class="composer-inner">
+      <div class="composer-row">
+        <button class="model-chip" id="model-chip" aria-haspopup="dialog" aria-controls="model-sheet">
+          <span class="pdot"></span>
+          <span class="pname" id="chip-provider">Claude</span>
+          <span class="mname" id="chip-model">Sonnet 4.6</span>
+          <span class="caret">▼</span>
+        </button>
+        <span class="chip-tag" id="api-mode-badge" title="Using API credits (Pro quota reached)">API credits</span>
+        <span class="chip-tag" id="offload-badge" title="Tool calls are offloaded to the tool model">tools → qwen</span>
+      </div>
+      <div class="input-row">
+        <textarea id="input" placeholder="Message…" rows="1" enterkeyhint="send"></textarea>
+        <button id="send" aria-label="Send">↑</button>
       </div>
     </div>
-  </div>
+  </footer>
 </div>
 
-<div id="drawer">
-  <div class="drawer-inner">
-    <div class="d-hdr">
-      <span>Stats</span>
-      <button id="drawer-close" title="Collapse">✕</button>
-    </div>
-    <div class="d-body">
-
-      <div class="d-fixed">
-        <a class="metrics-link" href="https://metrics.bix.computer" target="_blank">Internal Metrics →</a>
-        <a class="metrics-link" id="staging-link" href="/staging" target="_blank">Staged writes →</a>
-        <a class="metrics-link" id="deploys-link" href="/deploys" target="_blank">Deploys →</a>
-        <a class="metrics-link" href="/routing" target="_blank">Routing dashboard →</a>
-        <a class="metrics-link" href="/blobs" target="_blank">Blob store →</a>
-
-        <div class="d-section">
-          <div class="d-title d-collapsible" onclick="toggleDSection('router')">
-            <span class="d-chev" id="router-chev">▶</span>
-            AI Router
-          </div>
-          <div id="router-body" style="display:none">
-            <div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:8px;margin-bottom:4px;border-bottom:1px solid var(--surface1)">
-              <div style="display:flex;align-items:center;gap:7px">
-                <div id="auth-dot" style="width:7px;height:7px;border-radius:50%;background:var(--surface1);flex-shrink:0;transition:background .3s"></div>
-                <span id="auth-label" style="font-size:.78rem;color:var(--subtext)">—</span>
-              </div>
-              <div style="display:flex;align-items:center;gap:8px">
-                <span id="auth-expiry" style="font-size:.72rem;color:var(--subtext);font-variant-numeric:tabular-nums"></span>
-                <button onclick="fetchAuthStatus()" title="Refresh auth status" style="background:transparent;border:1px solid var(--surface1);border-radius:4px;color:var(--subtext);font:inherit;font-size:.75rem;padding:1px 7px;cursor:pointer;line-height:1.6;transition:color .15s,border-color .15s" onmouseover="this.style.color='var(--text)';this.style.borderColor='var(--subtext)'" onmouseout="this.style.color='var(--subtext)';this.style.borderColor='var(--surface1)'">↺</button>
-              </div>
-            </div>
-            <div id="auth-hint" style="display:none;font-size:.71rem;color:var(--yellow);margin-bottom:8px;line-height:1.6"></div>
-            <div id="build-info" style="font-size:.7rem;color:var(--subtext);margin-bottom:6px;font-variant-numeric:tabular-nums"></div>
-            <div class="hi-stats">
-              <div class="hi-stat"><span class="sk">Requests</span><span class="sv" id="rs-requests">—</span></div>
-              <div class="hi-stat"><span class="sk">Spilled</span><span class="sv ollama-tag" id="rs-spilled">—</span></div>
-              <div class="hi-stat"><span class="sk">Checked</span><span class="sv" id="rs-checked">—</span></div>
-              <div class="hi-stat"><span class="sk">Prep time</span><span class="sv" id="rs-prep">—</span></div>
-            </div>
-            <div id="rs-avg-ttft"></div>
-          </div>
-        </div>
-
-        <div class="d-section">
-          <div class="d-title d-collapsible" onclick="toggleDSection('system')">
-            <span class="d-chev" id="system-chev">▶</span>
-            System
-          </div>
-          <div id="system-body" style="display:none">
-            <div style="display:flex;flex-direction:column;gap:8px">
-              <div class="sys-metric">
-                <div class="sys-label-row"><span class="sk">CPU</span><span class="sv" id="cpu-val">—</span></div>
-                <div class="bar-wrap"><div class="bar-fill" id="cpu-bar" style="width:0%"></div></div>
-              </div>
-              <div class="sys-metric">
-                <div class="sys-label-row"><span class="sk">RAM</span><span class="sv" id="ram-val">—</span></div>
-                <div class="bar-wrap"><div class="bar-fill" id="ram-bar" style="width:0%"></div></div>
-              </div>
-              <div class="sys-metric" id="vram-metric" style="display:none">
-                <div class="sys-label-row"><span class="sk">VRAM</span><span class="sv" id="gpu-vram-val">—</span></div>
-                <div class="bar-wrap"><div class="bar-fill" id="vram-bar" style="width:0%"></div></div>
-              </div>
-            </div>
-            <div id="gpu-section" style="margin-top:6px;display:none">
-              <div class="gpu-row"><span class="sk">Offload</span><span class="sv" id="gpu-layers-val">—</span></div>
-            </div>
-          </div>
-        </div>
-
-        <div class="d-section">
-          <div class="d-title">Model</div>
-          <select id="model-select">
-            <optgroup label="Claude">
-              <option value="claude-opus-4-7">Opus 4.7</option>
-              <option value="claude-sonnet-4-6" selected>Sonnet 4.6</option>
-              <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
-            </optgroup>
-            <optgroup label="Ollama (local)">
-              <option value="qwen3.5:9b">Qwen 3.5 9B</option>
-              <option value="gemma4:e2b">Gemma 4 E2B</option>
-              <option value="gemma4:26b">Gemma 4 26B</option>
-            </optgroup>
-          </select>
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
-            <span style="font-size:.78rem;color:var(--subtext)">
-              Tool offloading
-              <span onclick="const e=document.getElementById('tool-offload-info');e.style.display=e.style.display==='none'?'block':'none'" style="cursor:pointer;color:var(--blue);margin-left:4px;font-size:.7rem;user-select:none">(?)</span>
-            </span>
-            <button id="tool-offload-btn" style="font-size:.7rem;padding:1px 9px;border-radius:4px;border:1px solid var(--surface1);background:transparent;color:var(--subtext);cursor:pointer;transition:color .15s,border-color .15s,background .15s">off</button>
-          </div>
-          <div id="tool-offload-info" style="display:none;font-size:.7rem;color:var(--subtext);background:var(--surface0);border-left:2px solid var(--blue);padding:6px 8px;margin-top:6px;line-height:1.5;border-radius:0 3px 3px 0">
-            <strong style="color:var(--text)">Local Ollama only.</strong> When ON, swaps the selected model for <code style="background:var(--surface1);padding:0 3px;border-radius:2px">qwen3.5:9b</code> on requests that may use tools (read/write files, recall memories). Smaller models often produce broken tool JSON — qwen3.5 handles structured outputs reliably.<br>
-            <span style="color:var(--subtext)">Turn ON when your chosen Ollama model returns malformed tool calls. Leave OFF for plain chat without tools, or in Claude mode (this setting has no effect there).</span>
-          </div>
-        </div>
-
-        <div class="d-section">
-          <div class="d-title d-collapsible" onclick="toggleDSection('curreq')">
-            <span class="d-chev" id="curreq-chev">▶</span>
-            Current Request
-          </div>
-          <div id="curreq-body" style="display:none">
-            <div id="current-stats"><span class="d-empty">No active request</span></div>
-          </div>
-        </div>
-      </div>
-
-      <div class="d-scroll">
-
-        <div class="d-section" id="mem-section">
-          <div class="d-title mem-hdr" id="mem-toggle" onclick="toggleMemList()">
-            <span style="display:flex;align-items:center;gap:6px">
-              <span class="chevron" id="mem-chevron" style="font-size:.6rem;transition:transform .18s">▶</span>
-              Memory
-            </span>
-            <span id="mem-badge" style="font-weight:400;color:var(--subtext);font-size:.75rem;font-variant-numeric:tabular-nums">—</span>
-          </div>
-          <div id="mem-list" style="display:none;flex-direction:column;gap:6px;"></div>
-        </div>
-
-        <div class="d-section" id="models-section" style="border-top:1px solid var(--surface1);padding-top:12px">
-          <div class="d-title mem-hdr" onclick="toggleModelsList()">
-            <span style="display:flex;align-items:center;gap:6px">
-              <span class="chevron" id="models-chevron" style="font-size:.6rem;transition:transform .18s">▶</span>
-              Models
-            </span>
-            <span id="models-badge" style="font-weight:400;color:var(--subtext);font-size:.75rem;font-variant-numeric:tabular-nums">—</span>
-          </div>
-          <div id="models-body" style="display:none;flex-direction:column;gap:8px">
-            <div id="models-list" style="display:flex;flex-direction:column;gap:4px"></div>
-            <div style="display:flex;gap:6px">
-              <input id="model-pull-name" placeholder="e.g. qwen2.5:0.5b" spellcheck="false"
-                     style="flex:1;min-width:0;font:inherit;font-size:.75rem;background:var(--bg);color:var(--text);border:1px solid var(--surface1);border-radius:4px;padding:4px 8px">
-              <button id="model-pull-btn" onclick="pullModel()"
-                      style="font:inherit;font-size:.75rem;padding:4px 12px;border:none;border-radius:4px;background:var(--yellow);color:var(--bg);cursor:pointer">Pull</button>
-            </div>
-            <div id="model-pull-progress" style="display:none">
-              <div class="sys-label-row"><span class="sk" id="model-pull-status" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">…</span><span class="sv" id="model-pull-pct" style="font-variant-numeric:tabular-nums"></span></div>
-              <div class="bar-wrap"><div class="bar-fill warn" id="model-pull-bar" style="width:0%"></div></div>
-            </div>
-            <div id="models-error" style="display:none;font-size:.72rem;color:var(--red);line-height:1.5"></div>
-            <a href="https://ollama.com/library" target="_blank" style="font-size:.7rem;color:var(--blue)">browse ollama.com/library →</a>
-          </div>
-        </div>
-
-        <div class="d-section" style="border-top:1px solid var(--surface1);padding-top:12px">
-          <div class="d-title" style="display:flex;justify-content:space-between;align-items:baseline">
-            <span>History</span>
-            <span id="hist-cost-total" style="font-size:.72rem;font-weight:400;color:var(--subtext)"></span>
-          </div>
-          <div id="history-list"><span class="d-empty">None yet</span></div>
-        </div>
-
-      </div>
-
-    </div>
+<!-- Model picker sheet -->
+<div class="backdrop" id="sheet-backdrop"></div>
+<div class="sheet" id="model-sheet" role="dialog" aria-label="Choose a model">
+  <div class="sheet-hdr">
+    <span>Model</span>
+    <button class="icon-btn" id="sheet-close" aria-label="Close">✕</button>
   </div>
+  <div class="sheet-body" id="sheet-body"></div>
 </div>
+
+<!-- Stats drawer -->
+<div class="backdrop" id="drawer-backdrop"></div>
+<aside id="drawer" aria-label="Stats">
+  <div class="d-hdr">
+    <span>Stats</span>
+    <button class="icon-btn" id="drawer-close" aria-label="Close stats">✕</button>
+  </div>
+  <div class="d-body">
+
+    <div class="d-section">
+      <div class="d-title d-collapsible" onclick="toggleDSection('curreq')">
+        <span class="lhs"><span class="d-chev" id="curreq-chev">▶</span>This request</span>
+      </div>
+      <div class="d-sub" id="curreq-body">
+        <div id="current-stats"><span class="d-empty">No request yet</span></div>
+      </div>
+    </div>
+
+    <div class="d-section">
+      <div class="d-title d-collapsible" onclick="toggleDSection('history')">
+        <span class="lhs"><span class="d-chev" id="history-chev">▶</span>History</span>
+        <span class="d-badge" id="hist-cost-total"></span>
+      </div>
+      <div class="d-sub" id="history-body">
+        <div id="history-list"><span class="d-empty">None yet</span></div>
+      </div>
+    </div>
+
+    <div class="d-section">
+      <div class="d-title d-collapsible" onclick="toggleDSection('system')">
+        <span class="lhs"><span class="d-chev" id="system-chev">▶</span>System</span>
+        <span class="d-badge" id="system-badge"></span>
+      </div>
+      <div class="d-sub" id="system-body">
+        <div class="sys-metric">
+          <div class="sys-label-row"><span class="sk">CPU</span><span class="sv" id="cpu-val">—</span></div>
+          <div class="bar-wrap"><div class="bar-fill" id="cpu-bar" style="width:0%"></div></div>
+        </div>
+        <div class="sys-metric">
+          <div class="sys-label-row"><span class="sk">RAM</span><span class="sv" id="ram-val">—</span></div>
+          <div class="bar-wrap"><div class="bar-fill" id="ram-bar" style="width:0%"></div></div>
+        </div>
+        <div class="sys-metric" id="vram-metric" style="display:none">
+          <div class="sys-label-row"><span class="sk">VRAM</span><span class="sv" id="gpu-vram-val">—</span></div>
+          <div class="bar-wrap"><div class="bar-fill" id="vram-bar" style="width:0%"></div></div>
+        </div>
+        <div id="gpu-section" style="display:none">
+          <div class="gpu-row"><span class="sk">GPU offload</span><span class="sv" id="gpu-layers-val">—</span></div>
+        </div>
+        <div class="d-note" id="gpu-idle-note">GPU idle — Ollama unloads models after ~5 min.</div>
+      </div>
+    </div>
+
+    <div class="d-section">
+      <div class="d-title d-collapsible" onclick="toggleDSection('models')">
+        <span class="lhs"><span class="d-chev" id="models-chev">▶</span>Local models</span>
+        <span class="d-badge" id="models-badge">—</span>
+      </div>
+      <div class="d-sub" id="models-body">
+        <div id="models-list"></div>
+        <div class="pull-row">
+          <input id="model-pull-name" placeholder="pull e.g. qwen2.5:0.5b" spellcheck="false" autocapitalize="off" autocorrect="off">
+          <button id="model-pull-btn" onclick="pullModel()">Pull</button>
+        </div>
+        <div id="model-pull-progress" style="display:none">
+          <div class="sys-label-row"><span class="sk" id="model-pull-status" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">…</span><span class="sv" id="model-pull-pct"></span></div>
+          <div class="bar-wrap"><div class="bar-fill warn" id="model-pull-bar" style="width:0%"></div></div>
+        </div>
+        <div id="models-error" class="d-error" style="display:none"></div>
+        <a href="https://ollama.com/library" target="_blank" rel="noopener" style="font-size:.72rem;color:var(--blue)">browse ollama.com/library →</a>
+      </div>
+    </div>
+
+    <div class="d-section">
+      <div class="d-title d-collapsible" onclick="toggleDSection('mem')">
+        <span class="lhs"><span class="d-chev" id="mem-chev">▶</span>Memory</span>
+        <span class="d-badge" id="mem-badge">—</span>
+      </div>
+      <div class="d-sub" id="mem-body">
+        <div id="mem-list"></div>
+      </div>
+    </div>
+
+    <div class="d-section">
+      <div class="d-title d-collapsible" onclick="toggleDSection('about')">
+        <span class="lhs"><span class="d-chev" id="about-chev">▶</span>About</span>
+        <span class="d-badge" id="build-info"></span>
+      </div>
+      <div class="d-sub" id="about-body">
+        <div class="auth-row">
+          <span class="lhs"><span id="auth-dot"></span><span id="auth-label">—</span></span>
+          <span style="display:flex;align-items:center;gap:8px">
+            <span id="auth-expiry"></span>
+            <button class="mini-btn" onclick="fetchAuthStatus()" title="Refresh auth status">↺</button>
+          </span>
+        </div>
+        <div id="auth-hint" class="d-note" style="display:none;color:var(--yellow)"></div>
+        <div class="link-list">
+          <a class="metrics-link" href="https://metrics.bix.computer" target="_blank" rel="noopener"><span>Internal metrics</span><span>↗</span></a>
+          <a class="metrics-link" href="/routing" target="_blank"><span>Routing log</span><span>↗</span></a>
+          <a class="metrics-link" href="/blobs" target="_blank"><span>Blob store</span><span>↗</span></a>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</aside>
 
 <script>
-// ── State ─────────────────────────────────────────────────────────────────────
-let convHistory  = [];
-let mode         = 'auto';
-let model        = 'claude-sonnet-4-6';
-let busy         = false;
-let reqSeq       = 0;
-let currentReq   = null;
-let reqHistory   = [];
-let sysTimer     = null;
-let abortCtrl    = null;
-let memCount     = 0;
-let memEntries   = [];
-let memExpanded  = false;
-let memLoaded    = false;
-let forceApi     = false;   // set to true when Pro quota is exhausted
-let lastUserMsg  = '';      // stored for quota retry
-let toolOffload  = false;
-let proSessionId = null;    // claude-CLI session (pro mode) — keeps tool turns across requests
-let pendingContext = null;  // staged-change context (/?staged=<id>) — merged into the next sent message
+// ── Providers ─────────────────────────────────────────────────────────────────
+// One entry per provider the picker shows. `mode` is what POST /chat gets.
+// OpenRouter lands here in PR 2 — add an entry, nothing else in the picker
+// needs to change.
+const PROVIDERS = [
+  { id: 'local',  label: 'Local',  mode: 'local', isLocal: true,  note: 'Ollama on this machine. Free.' },
+  { id: 'claude', label: 'Claude', mode: 'pro',   isLocal: false, note: 'Claude via the Pro subscription.' },
+];
+const CLAUDE_MODELS = [
+  { id: 'claude-opus-4-7',           name: 'Opus 4.7' },
+  { id: 'claude-sonnet-4-6',         name: 'Sonnet 4.6' },
+  { id: 'claude-haiku-4-5-20251001', name: 'Haiku 4.5' },
+];
+const LOCAL_FALLBACK = [
+  { name: 'gemma4:26b' }, { name: 'qwen3.5:9b' }, { name: 'gemma4:e2b' },
+];
+const TOOL_MODEL = 'qwen3.5:9b';
 
-const modeDefaults = { ai: 'claude-sonnet-4-6', auto: 'claude-sonnet-4-6', local: 'gemma4:26b' };
-
-// ── DOM ───────────────────────────────────────────────────────────────────────
-const msgsEl      = document.getElementById('messages');
-const msgsIn      = document.getElementById('msgs-inner');
-const inputEl     = document.getElementById('input');
-const sendBtn     = document.getElementById('send');
-const dotEl       = document.getElementById('dot');
-const lblEl       = document.getElementById('status-label');
-const budgetEl    = document.getElementById('budget-label');
-const drawer      = document.getElementById('drawer');
-const toggleBtn   = document.getElementById('drawer-toggle');
-const closeBtn    = document.getElementById('drawer-close');
-const modelSel    = document.getElementById('model-select');
-const curStats    = document.getElementById('current-stats');
-const histList    = document.getElementById('history-list');
-const scrollBadge = document.getElementById('scroll-badge');
-
-// ── Scroll lock ───────────────────────────────────────────────────────────────
-function isAtBottom() { return msgsEl.scrollHeight - msgsEl.scrollTop - msgsEl.clientHeight < 100; }
-function showScrollBadge() { if (scrollBadge) scrollBadge.classList.add('visible'); }
-function hideScrollBadge() { if (scrollBadge) scrollBadge.classList.remove('visible'); }
-function jumpToBottom() { msgsEl.scrollTop = msgsEl.scrollHeight; hideScrollBadge(); }
-function autoScroll()   { if (isAtBottom()) msgsEl.scrollTop = msgsEl.scrollHeight; else showScrollBadge(); }
-msgsEl.addEventListener('scroll', () => { if (isAtBottom()) hideScrollBadge(); });
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-function setStatus(stage, label) { dotEl.className = 'dot ' + stage; lblEl.textContent = label; }
-function fmtTok(n) { return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n); }
-function setBudget(d) {
-  budgetEl.textContent = d ? `turn ${d.turn}/${d.max_turns} · ${d.elapsed_s}s/${d.max_seconds}s`
-                             + ` · ${fmtTok(d.tokens)}/${fmtTok(d.max_tokens)} tok` : '';
-}
-function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-function fmtModel(m) { return m.replace(/^claude-/,'').replace(/-\d{8}$/,''); }
-function barClass(p) { return p > 85 ? 'bar-fill crit' : p > 70 ? 'bar-fill warn' : 'bar-fill'; }
-function friendlyModel(m) {
-  if (!m) return 'Assistant';
-  const l = m.toLowerCase();
-  if (l.startsWith('claude'))  return 'Claude';
-  if (l.startsWith('gemma'))   return 'Gemma';
-  if (l.startsWith('qwen'))    return 'Qwen';
-  if (l.startsWith('llama'))   return 'Llama';
-  if (l.startsWith('mistral')) return 'Mistral';
-  if (l.startsWith('phi'))     return 'Phi';
-  return m.split(':')[0].split('-')[0];
-}
-// The local model used for local/auto modes (auto's `model` var is the Claude
-// escalation target, not the responder, so derive the local name separately).
-function localModelName() { return mode === 'local' ? model : (modeDefaults.local || 'gemma4:26b'); }
-
-// Display name for the calling mode (the Local / Auto / Cloud taxonomy).
-function modeName(resolvedMode) {
-  return resolvedMode === 'local' ? 'Local'
-       : resolvedMode === 'auto'  ? 'Auto'
-       : 'Cloud';   // pro / api
-}
-// Append a model to the ordered usage chain, de-duping consecutive repeats.
-function pushModel(chain, name, isLocal) {
-  const last = chain[chain.length - 1];
-  if (!last || last.name !== name) chain.push({ name, isLocal });
-}
-// Render the composite indicator atop a bubble: mode + every model used, in order
-// (e.g. "Auto · Gemma → Qwen → Claude"). Local models are yellow, Claude mauve.
-function renderIndicator(wrap, modeLabel, chain) {
-  const rl = wrap.querySelector('.role-label');
-  if (!rl) return;
-  rl.classList.remove('local', 'cloud');
-  rl.classList.add('composite');
-  const parts = [`<span class="ind-mode">${modeLabel}</span>`];
-  chain.forEach((m, i) => {
-    parts.push(`<span class="ind-${i === 0 ? 'sep' : 'arrow'}">${i === 0 ? '·' : '→'}</span>`);
-    parts.push(`<span class="ind-model ${m.isLocal ? 'local' : 'cloud'}">${friendlyModel(m.name)}</span>`);
-  });
-  rl.innerHTML = parts.join('');
-}
-function toolFriendlyName(name) {
-  const map = {read_file: 'Read File', list_directory: 'List Directory', recall_memories: 'Recall Memories', write_file: 'Write File'};
-  return map[name] || name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-}
-
-// Cost per 1M tokens in USD (input, output)
 // Advisory USD per 1M tokens [input, output] — keep in sync with
 // config.py MODEL_COSTS (source: platform.claude.com pricing, 2026-07).
 const MODEL_RATES = {
@@ -921,6 +776,99 @@ const MODEL_RATES = {
   'claude-sonnet-4-5':         [3, 15],
   'claude-haiku-4-5-20251001': [1, 5 ],
 };
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let convHistory  = [];
+let provider     = 'claude';
+let model        = 'claude-sonnet-4-6';
+let localModel   = 'gemma4:26b';        // remembered separately so switching back is one tap
+let busy         = false;
+let reqSeq       = 0;
+let currentReq   = null;
+let reqHistory   = [];
+let sysTimer     = null;
+let abortCtrl    = null;
+let memEntries   = [];
+let memLoaded    = false;
+let memShowAll   = false;
+let forceApi     = false;   // set to true when Pro quota is exhausted
+let lastUserMsg  = '';      // stored for quota retry
+let toolOffload  = false;
+let proSessionId = null;    // claude-CLI session (pro mode) — keeps tool turns across requests
+let localModels  = LOCAL_FALLBACK;
+let modelsLoaded = false, modelPulling = false;
+
+const PREF_KEY = 'bixai-prefs';
+function loadPrefs() {
+  try {
+    const p = JSON.parse(localStorage.getItem(PREF_KEY) || '{}');
+    if (p.provider && PROVIDERS.some(x => x.id === p.provider)) provider = p.provider;
+    if (p.model)      model      = p.model;
+    if (p.localModel) localModel = p.localModel;
+    if (typeof p.toolOffload === 'boolean') toolOffload = p.toolOffload;
+  } catch {}
+}
+function savePrefs() {
+  try { localStorage.setItem(PREF_KEY, JSON.stringify({ provider, model, localModel, toolOffload })); } catch {}
+}
+
+// ── DOM ───────────────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const msgsEl      = $('messages');
+const msgsIn      = $('msgs-inner');
+const emptyState  = $('empty-state');
+const inputEl     = $('input');
+const sendBtn     = $('send');
+const dotEl       = $('dot');
+const lblEl       = $('status-label');
+const budgetEl    = $('budget-label');
+const drawer      = $('drawer');
+const drawerBack  = $('drawer-backdrop');
+const toggleBtn   = $('drawer-toggle');
+const closeBtn    = $('drawer-close');
+const curStats    = $('current-stats');
+const histList    = $('history-list');
+const scrollBadge = $('scroll-badge');
+const chipEl      = $('model-chip');
+const sheetEl     = $('model-sheet');
+const sheetBack   = $('sheet-backdrop');
+const sheetBody   = $('sheet-body');
+
+// ── Scroll lock ───────────────────────────────────────────────────────────────
+function isAtBottom() { return msgsEl.scrollHeight - msgsEl.scrollTop - msgsEl.clientHeight < 100; }
+function showScrollBadge() { scrollBadge.classList.add('visible'); }
+function hideScrollBadge() { scrollBadge.classList.remove('visible'); }
+function jumpToBottom() { msgsEl.scrollTop = msgsEl.scrollHeight; hideScrollBadge(); }
+function autoScroll()   { if (isAtBottom()) msgsEl.scrollTop = msgsEl.scrollHeight; else showScrollBadge(); }
+msgsEl.addEventListener('scroll', () => { if (isAtBottom()) hideScrollBadge(); });
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function setStatus(stage, label) { dotEl.className = 'dot ' + stage; lblEl.textContent = label; }
+function fmtTok(n) { return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n || 0); }
+function fmtMs(ms) { return ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : Math.round(ms) + 'ms'; }
+function setBudget(d) {
+  budgetEl.textContent = d ? `turn ${d.turn}/${d.max_turns} · ${d.elapsed_s}s · ${fmtTok(d.tokens)} tok` : '';
+}
+function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function barClass(p) { return p > 85 ? 'bar-fill crit' : p > 70 ? 'bar-fill warn' : 'bar-fill'; }
+function friendlyModel(m) {
+  if (!m) return 'Assistant';
+  const c = CLAUDE_MODELS.find(x => x.id === m);
+  if (c) return c.name;
+  const l = m.toLowerCase();
+  if (l.startsWith('claude'))  return 'Claude';
+  return m;
+}
+function shortModel(m) {
+  const c = CLAUDE_MODELS.find(x => x.id === m);
+  return c ? c.name : m;
+}
+function providerOf(id) { return PROVIDERS.find(p => p.id === id) || PROVIDERS[1]; }
+function isLocalModelName(m) { return localModels.some(x => x.name === m) || LOCAL_FALLBACK.some(x => x.name === m); }
+function toolFriendlyName(name) {
+  const map = {read_file: 'Read File', list_directory: 'List Directory', recall_memories: 'Recall Memories', read_blob: 'Read Blob', grep_blob: 'Grep Blob'};
+  return map[name] || name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
 function estimateCost(model, inTok, outTok) {
   if (!inTok && !outTok) return null;
   const rates = MODEL_RATES[model];
@@ -930,161 +878,204 @@ function estimateCost(model, inTok, outTok) {
   if (usd < 0.0001) return '<$0.0001';
   return '$' + usd.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
 }
-
-// ── Mode ──────────────────────────────────────────────────────────────────────
-// Rebuilt whenever the Ollama optgroup is repopulated from GET /models/ollama —
-// the change handler below depends on it, so it can't stay a parse-time const.
-let localModelValues = new Set();
-function refreshLocalModelValues() {
-  localModelValues = new Set(
-    [...document.querySelectorAll('#model-select option')].filter(o => o.closest('optgroup')?.label?.includes('local')).map(o => o.value)
-  );
+function pushModel(chain, name, isLocal) {
+  const last = chain[chain.length - 1];
+  if (!last || last.name !== name) chain.push({ name, isLocal });
 }
-refreshLocalModelValues();
-
-function setMode(m, syncModel = true) {
-  mode = m;
-  document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === m));
-  if (syncModel) { model = modeDefaults[m] || 'claude-sonnet-4-6'; modelSel.value = model; }
-  if (m !== 'ai') { forceApi = false; updateApiModeBadge(); }
+// Responder label atop a bubble: every model used, in order (local yellow, cloud mauve).
+function renderIndicator(wrap, chain) {
+  const rl = wrap.querySelector('.role-label');
+  if (!rl) return;
+  rl.innerHTML = chain.map((m, i) =>
+    (i ? '<span class="ind-arrow">→</span>' : '') +
+    `<span class="ind-model ${m.isLocal ? 'local' : 'cloud'}">${escHtml(friendlyModel(m.name))}</span>`
+  ).join('');
 }
 
-function updateApiModeBadge() {
-  const badge = document.getElementById('api-mode-badge');
-  if (badge) badge.classList.toggle('visible', forceApi);
+// ── Mode / model picker ───────────────────────────────────────────────────────
+function resolvedMode() {
+  const p = providerOf(provider);
+  if (p.id === 'claude' && forceApi) return 'api';
+  return p.mode;
+}
+function isLocalProvider() { return providerOf(provider).isLocal; }
+
+function renderChip() {
+  const p = providerOf(provider);
+  chipEl.classList.toggle('local', p.isLocal);
+  $('chip-provider').textContent = p.label;
+  $('chip-model').textContent = shortModel(model);
+  $('api-mode-badge').classList.toggle('visible', p.id === 'claude' && forceApi);
+  $('offload-badge').classList.toggle('visible', p.isLocal && toolOffload && model !== TOOL_MODEL);
+  $('offload-badge').classList.toggle('on', toolOffload);
 }
 
-document.querySelectorAll('.mode-btn').forEach(btn => {
-  btn.addEventListener('click', () => setMode(btn.dataset.mode));
-});
+function selectModel(provId, modelId) {
+  provider = provId;
+  model    = modelId;
+  if (providerOf(provId).isLocal) localModel = modelId;
+  if (provId !== 'claude') { forceApi = false; }
+  savePrefs();
+  renderChip();
+  renderSheet();
+}
 
-modelSel.addEventListener('change', () => {
-  model = modelSel.value;
-  if (localModelValues.has(model)) setMode('local', false);
-  else if (mode === 'local')       setMode('ai', false);
-});
-
-const toolOffloadBtn = document.getElementById('tool-offload-btn');
-toolOffloadBtn.addEventListener('click', () => {
-  toolOffload = !toolOffload;
-  toolOffloadBtn.textContent = toolOffload ? 'on' : 'off';
-  toolOffloadBtn.style.color       = toolOffload ? 'var(--yellow)' : 'var(--subtext)';
-  toolOffloadBtn.style.borderColor = toolOffload ? 'var(--yellow)' : 'var(--surface1)';
-  toolOffloadBtn.style.background  = toolOffload ? 'color-mix(in srgb, var(--yellow) 10%, transparent)' : 'transparent';
-});
+function renderSheet() {
+  const parts = [];
+  for (const p of PROVIDERS) {
+    const dotColor = p.isLocal ? 'var(--yellow)' : 'var(--mauve)';
+    parts.push(`<div class="sheet-section">
+      <div class="sheet-title"><span class="pdot" style="background:${dotColor}"></span>${p.label}</div>`);
+    if (p.id === 'local') {
+      if (!localModels.length) parts.push('<div class="sheet-note">No local models installed.</div>');
+      for (const m of localModels) {
+        const active = provider === 'local' && model === m.name;
+        const sub = m.size ? fmtGB(m.size) + (m.loaded ? ' · loaded' : '') : '';
+        parts.push(`<button class="sheet-row local${active ? ' active' : ''}" data-provider="local" data-model="${escHtml(m.name)}">
+          <span class="rcheck">✓</span><span class="rname">${escHtml(m.name)}</span><span class="rsub">${sub}</span></button>`);
+      }
+      parts.push(`<div class="sheet-toggle">
+        <span>Offload tool calls to ${TOOL_MODEL}<br><span style="font-size:.7rem">for models that garble tool JSON</span></span>
+        <button class="toggle-btn${toolOffload ? ' on' : ''}" id="tool-offload-btn">${toolOffload ? 'on' : 'off'}</button>
+      </div>`);
+    } else if (p.id === 'claude') {
+      for (const m of CLAUDE_MODELS) {
+        const active = provider === 'claude' && model === m.id;
+        parts.push(`<button class="sheet-row${active ? ' active' : ''}" data-provider="claude" data-model="${m.id}">
+          <span class="rcheck">✓</span><span class="rname">${m.name}</span><span class="rsub">${forceApi ? 'API credits' : 'Pro'}</span></button>`);
+      }
+      if (forceApi) parts.push('<div class="sheet-note">Pro quota reached — billing to API credits. <button class="toggle-btn" id="back-to-pro">back to Pro</button></div>');
+    }
+    parts.push(`<div class="sheet-note">${p.note}</div></div>`);
+  }
+  sheetBody.innerHTML = parts.join('');
+  sheetBody.querySelectorAll('.sheet-row').forEach(b => b.addEventListener('click', () => {
+    selectModel(b.dataset.provider, b.dataset.model);
+    closeSheet();
+  }));
+  const tb = $('tool-offload-btn');
+  if (tb) tb.addEventListener('click', () => { toolOffload = !toolOffload; savePrefs(); renderChip(); renderSheet(); });
+  const bp = $('back-to-pro');
+  if (bp) bp.addEventListener('click', () => { forceApi = false; renderChip(); renderSheet(); });
+}
+function openSheet()  { renderSheet(); sheetEl.classList.add('open'); sheetBack.classList.add('visible'); if (!modelsLoaded) loadModels(); }
+function closeSheet() { sheetEl.classList.remove('open'); sheetBack.classList.remove('visible'); }
+chipEl.addEventListener('click', () => sheetEl.classList.contains('open') ? closeSheet() : openSheet());
+$('sheet-close').addEventListener('click', closeSheet);
+sheetBack.addEventListener('click', closeSheet);
 
 function retryWithApi() {
   if (!lastUserMsg) return;
   forceApi = true;
-  updateApiModeBadge();
-  // Re-send the last user message via API credits
-  const text = lastUserMsg;
-  inputEl.value = text;
+  renderChip();
+  inputEl.value = lastUserMsg;
   send();
-}
-
-function _resolvedMode() {
-  if (mode === 'local') return 'local';
-  if (mode === 'auto')  return 'auto';
-  if (forceApi)        return 'api';
-  return 'pro';
 }
 
 // ── Drawer ────────────────────────────────────────────────────────────────────
 function openDrawer()  {
   drawer.classList.add('open'); toggleBtn.classList.add('open');
+  drawerBack.classList.add('visible');
+  document.body.classList.add('drawer-open');
   startSysPoll();
   fetchAuthStatus();
-  fetchStagingCount();
-  fetchDeploysCount();
   fetchBuildInfo();
   if (!memLoaded) loadMemory();
   if (!modelsLoaded) loadModels();
 }
+function closeDrawer() {
+  drawer.classList.remove('open'); toggleBtn.classList.remove('open');
+  drawerBack.classList.remove('visible');
+  document.body.classList.remove('drawer-open');
+  stopSysPoll();
+}
+toggleBtn.addEventListener('click', () => drawer.classList.contains('open') ? closeDrawer() : openDrawer());
+closeBtn.addEventListener('click', closeDrawer);
+drawerBack.addEventListener('click', closeDrawer);
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { closeSheet(); closeDrawer(); }
+});
+
 async function fetchBuildInfo() {
   try {
     const v = await fetch('/version').then(r => r.json());
-    const el = document.getElementById('build-info');
-    if (el) el.textContent = `build ${(v.git_sha || '?').slice(0, 7)} · ${v.role || '?'}`;
+    $('build-info').textContent = `build ${(v.git_sha || '?').slice(0, 7)}`;
   } catch (_) { /* best-effort */ }
 }
-async function fetchStagingCount() {
-  try {
-    const r = await fetch('/staging/count');
-    if (!r.ok) return;
-    const { pending } = await r.json();
-    const el = document.getElementById('staging-link');
-    if (el) el.textContent = pending > 0
-      ? `Staged writes (${pending} pending) →`
-      : 'Staged writes →';
-  } catch (_) { /* best-effort */ }
+
+const SECTION_STORE = 'bixai-sections';
+const SECTIONS = ['curreq', 'history', 'system', 'models', 'mem', 'about'];
+const SECTION_DEFAULTS = { curreq: true, history: true, system: false, models: false, mem: false, about: false };
+function _sectionStates() { try { return JSON.parse(localStorage.getItem(SECTION_STORE) || '{}'); } catch { return {}; } }
+function saveSectionState(id, open) { try { const s = _sectionStates(); s[id] = open; localStorage.setItem(SECTION_STORE, JSON.stringify(s)); } catch {} }
+function setSection(id, open) {
+  const body = $(id + '-body'), chev = $(id + '-chev');
+  if (!body) return;
+  body.style.display = open ? '' : 'none';
+  if (chev) chev.style.transform = open ? 'rotate(90deg)' : '';
+  if (id === 'mem' && open && !memLoaded) loadMemory();
+  if (id === 'models' && open && !modelsLoaded) loadModels();
 }
-async function fetchDeploysCount() {
-  try {
-    const r = await fetch('/deploys/count');
-    if (!r.ok) return;
-    const { active } = await r.json();
-    const el = document.getElementById('deploys-link');
-    if (el) el.textContent = active > 0
-      ? `Deploys (${active} active) →`
-      : 'Deploys →';
-  } catch (_) { /* best-effort */ }
+function toggleDSection(id) {
+  const body = $(id + '-body');
+  if (!body) return;
+  const open = body.style.display === 'none';
+  setSection(id, open);
+  saveSectionState(id, open);
 }
-function closeDrawer() { drawer.classList.remove('open'); toggleBtn.classList.remove('open'); stopSysPoll(); }
-toggleBtn.addEventListener('click', () => drawer.classList.contains('open') ? closeDrawer() : openDrawer());
-closeBtn.addEventListener('click', closeDrawer);
+function initSectionStates() {
+  const saved = _sectionStates();
+  for (const id of SECTIONS) setSection(id, saved[id] ?? SECTION_DEFAULTS[id]);
+}
 
 // ── System poll ───────────────────────────────────────────────────────────────
 async function fetchSys() {
   try {
-    const [d, s] = await Promise.all([
-      fetch('/system').then(r => r.json()),
-      fetch('/stats').then(r => r.json()).catch(() => null),
-    ]);
-    if (s) {
-      document.getElementById('rs-requests').textContent  = s.requests;
-      document.getElementById('rs-spilled').textContent = s.spilled || '0';
-      document.getElementById('rs-checked').textContent   = s.checked || '0';
-      const prepSec = s.preprocess_ms >= 1000 ? (s.preprocess_ms / 1000).toFixed(1) + 's' : (s.preprocess_ms || 0) + 'ms';
-      document.getElementById('rs-prep').textContent = prepSec;
-    }
-    document.getElementById('cpu-val').textContent = d.cpu_percent + '%';
-    const cb = document.getElementById('cpu-bar'); cb.style.width = d.cpu_percent + '%'; cb.className = barClass(d.cpu_percent);
-    document.getElementById('ram-val').textContent = `${d.ram_used_gb} / ${d.ram_total_gb} GB`;
-    const rb = document.getElementById('ram-bar'); rb.style.width = d.ram_percent + '%'; rb.className = barClass(d.ram_percent);
-    const vramMetric = document.getElementById('vram-metric');
-    const gpuSection = document.getElementById('gpu-section');
+    const d = await fetch('/system').then(r => r.json());
+    $('cpu-val').textContent = d.cpu_percent + '%';
+    const cb = $('cpu-bar'); cb.style.width = d.cpu_percent + '%'; cb.className = barClass(d.cpu_percent);
+    $('ram-val').textContent = `${d.ram_used_gb} / ${d.ram_total_gb} GB`;
+    const rb = $('ram-bar'); rb.style.width = d.ram_percent + '%'; rb.className = barClass(d.ram_percent);
+    const vramMetric = $('vram-metric'), gpuSection = $('gpu-section'), idleNote = $('gpu-idle-note');
+    const badge = $('system-badge');
     if (d.gpu) {
       const state = d.gpu.state;
       if (state === 'unreachable' || state === 'idle') {
-        if (vramMetric) vramMetric.style.display = 'none';
-        if (gpuSection) gpuSection.style.display = 'none';
+        vramMetric.style.display = 'none';
+        gpuSection.style.display = 'none';
+        idleNote.style.display = '';
+        idleNote.textContent = state === 'unreachable' ? 'Ollama unreachable.' : 'GPU idle — Ollama unloads models after ~5 min.';
+        badge.textContent = state === 'unreachable' ? 'ollama down' : 'gpu idle';
       } else {
-        const vb = document.getElementById('vram-bar');
         const vramGb  = (d.gpu.size_vram  / 1e9).toFixed(1);
         const totalGb = (d.gpu.size_total / 1e9).toFixed(1);
         const vramPct = d.gpu.size_total > 0 ? Math.round(d.gpu.size_vram / d.gpu.size_total * 100) : 0;
         let layersText;
-        if (d.gpu.num_gpu != null) {
-          layersText = d.gpu.num_gpu > 0 ? d.gpu.num_gpu + ' layers GPU' : 'CPU only';
-        } else {
-          layersText = d.gpu.size_vram > 0 ? 'Partial GPU' : 'CPU only';
-        }
-        document.getElementById('gpu-layers-val').textContent = layersText;
-        document.getElementById('gpu-vram-val').textContent   = d.gpu.size_vram ? `${vramGb} / ${totalGb} GB` : '—';
-        vb.style.width = vramPct + '%'; vb.className = barClass(vramPct);
-        if (vramMetric) vramMetric.style.display = '';
-        if (gpuSection) gpuSection.style.display = '';
+        if (d.gpu.num_gpu != null) layersText = d.gpu.num_gpu > 0 ? d.gpu.num_gpu + ' layers GPU' : 'CPU only';
+        else                       layersText = d.gpu.size_vram > 0 ? 'Partial GPU' : 'CPU only';
+        $('gpu-layers-val').textContent = layersText;
+        $('gpu-vram-val').textContent   = d.gpu.size_vram ? `${vramGb} / ${totalGb} GB` : '—';
+        const vb = $('vram-bar'); vb.style.width = vramPct + '%'; vb.className = barClass(vramPct);
+        vramMetric.style.display = '';
+        gpuSection.style.display = '';
+        idleNote.style.display = 'none';
+        badge.textContent = `${d.gpu.model || ''} ${vramGb} GB`.trim();
       }
+    } else {
+      badge.textContent = `cpu ${d.cpu_percent}%`;
     }
   } catch {}
 }
 function startSysPoll() { if (sysTimer) return; fetchSys(); sysTimer = setInterval(fetchSys, 2000); }
 function stopSysPoll()  { clearInterval(sysTimer); sysTimer = null; }
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) stopSysPoll();
+  else if (drawer.classList.contains('open')) startSysPoll();
+});
 
 // ── Markdown ──────────────────────────────────────────────────────────────────
 function renderMd(text) {
-  let s = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  let s = escHtml(text);
   s = s.replace(/```(?:\w*)\n([\s\S]*?)```/g, (_,c) => `<pre><code>${c.trimEnd()}</code></pre>`);
   s = s.replace(/`([^`\n]+)`/g, '<code>$1</code>');
   s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
@@ -1096,13 +1087,13 @@ function renderMd(text) {
 }
 
 // ── Bubbles ───────────────────────────────────────────────────────────────────
-function addBubble(role, isLocal, modelName) {
+function addBubble(role, isLocal) {
+  if (emptyState) emptyState.style.display = 'none';
   const wrap = document.createElement('div');
   wrap.className = 'msg ' + role + (isLocal ? ' local' : '');
   const lbl = document.createElement('div');
   lbl.className = 'role-label';
-  if (role !== 'user') lbl.classList.add(isLocal ? 'local' : 'cloud');
-  lbl.textContent = role === 'user' ? 'You' : friendlyModel(modelName);
+  lbl.textContent = role === 'user' ? 'You' : '';
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
   wrap.append(lbl, bubble);
@@ -1111,122 +1102,107 @@ function addBubble(role, isLocal, modelName) {
   return { wrap, bubble };
 }
 
-function addMeta(wrap, m) {
+// Per-provider meta line. Local: speed matters. Cloud: tokens + cost matter.
+function addMeta(wrap, m, isLocal, modelName, mode) {
   const el = document.createElement('div');
   el.className = 'meta';
-  const inTok = m.input_tokens ? `in ${m.input_tokens}` : '';
-  const outTok = `out ${m.output_tokens}`;
-  const parts = [
-    [inTok, outTok].filter(Boolean).join(' · '),
-    `TTFT ${m.ttft_ms}ms`,
-    `${m.tps} tok/s`,
-    `${m.elapsed_ms}ms total`,
-  ];
-  if (m.preprocess_ms > 50) parts.push(`prep ${m.preprocess_ms}ms`);
-  if (m.summarised > 0)     parts.push(`<span class="ollama-tag">${m.summarised} compressed</span>`);
-  if (m.spilled > 0)        parts.push(`<span class="ollama-tag">${m.spilled} spilled</span>`);
+  const parts = [];
+  if (isLocal) {
+    parts.push(`TTFT ${fmtMs(m.ttft_ms)}`, `${m.tps} tok/s`, `${fmtMs(m.elapsed_ms)}`);
+    if (m.output_tokens) parts.push(`${fmtTok(m.output_tokens)} out`);
+  } else {
+    if (m.input_tokens) parts.push(`${fmtTok(m.input_tokens)} in`);
+    parts.push(`${fmtTok(m.output_tokens)} out`);
+    const cost = estimateCost(modelName, m.input_tokens, m.output_tokens);
+    if (cost) parts.push(mode === 'pro' ? `~${cost} (Pro)` : cost);
+    parts.push(fmtMs(m.elapsed_ms));
+  }
+  if (m.spilled > 0) parts.push(`<span class="ollama-tag">${m.spilled} spilled</span>`);
   el.innerHTML = parts.join(' · ');
   wrap.appendChild(el);
 }
 
 // ── Drawer stats ──────────────────────────────────────────────────────────────
-function row(k, v, live) {
-  return `<div class="stat-row"><span class="sk">${k}</span><span class="sv${live?' live':''}">${v}</span></div>`;
-}
-
 function renderCurrentStats() {
-  if (!currentReq) { curStats.innerHTML = '<span class="d-empty">No active request</span>'; return; }
+  if (!currentReq) { curStats.innerHTML = '<span class="d-empty">No request yet</span>'; return; }
   const r = currentReq, running = r.status === 'running';
   const statusCol = running ? 'var(--blue)' : r.status === 'error' ? 'var(--red)' : r.status === 'cancelled' ? 'var(--subtext)' : 'var(--green)';
-  const live = running ? ' live' : '';
   const cell = (k, v, l) => `<div class="hi-stat"><span class="sk">${k}</span><span class="sv${l?' live':''}">${v}</span></div>`;
+  const chain = r.models.map(m => escHtml(friendlyModel(m.name))).join(' → ');
   const extras = [
-    r.summarised ? cell('Compressed', r.summarised) : '',
-    r.spilled    ? cell('Spilled',    r.spilled)    : '',
-    r.compacted  ? cell('Compacted',  'yes')        : '',
-    r.skipped    ? cell('Passed',     r.skipped)    : '',
-    r.failed     ? cell('Failed',     r.failed)     : '',
+    r.spilled    ? cell('Spilled',   r.spilled) : '',
+    r.compacted  ? cell('Compacted', 'yes')     : '',
+    r.failed     ? cell('Prep failed', r.failed) : '',
+    r.preprocess_ms > 50 ? cell('Prep', fmtMs(r.preprocess_ms)) : '',
   ].filter(Boolean).join('');
+  const perf = r.isLocal
+    ? cell('TTFT', r.ttft_ms ? fmtMs(r.ttft_ms) : '—') + cell('Tok/s', r.tps || '—', running)
+    : cell(r.mode === 'pro' ? 'Pro · est.' : 'Cost', estimateCost(r.model, r.input_tokens, r.output_tokens) || '—', running);
   curStats.innerHTML = `
-    <div style="font-size:.78rem;margin-bottom:8px;display:flex;align-items:baseline;gap:7px;">
+    <div style="font-size:.78rem;margin-bottom:8px;display:flex;align-items:baseline;gap:7px;flex-wrap:wrap">
       <span style="color:${statusCol};font-weight:500">${r.status}</span>
-      <span style="color:var(--subtext)">${r.mode} · ${friendlyModel(r.model)}</span>
+      <span style="color:var(--subtext)">${providerOf(r.provider).label} · ${chain}</span>
     </div>
-    <div class="hi-stats">
-      ${cell('In',    r.input_tokens || '—', running)}
-      ${cell('Out',   r.output_tokens,        running)}
-      ${cell('TTFT',  r.ttft_ms  ? r.ttft_ms  + 'ms' : '—')}
-      ${cell('Tok/s', r.tps      || '—',              running)}
-      ${cell('Total', r.elapsed_ms ? r.elapsed_ms + 'ms' : '—')}
-      ${cell('Prep',  r.preprocess_ms > 50 ? r.preprocess_ms + 'ms' : '—')}
-      ${r.mode !== 'local' ? cell('Est. cost', estimateCost(r.model, r.input_tokens, r.output_tokens) || '—', running) : ''}
+    <div class="hi-stats flush">
+      ${cell('In',    r.input_tokens ? fmtTok(r.input_tokens) : '—', running)}
+      ${cell('Out',   fmtTok(r.output_tokens), running)}
+      ${perf}
+      ${cell('Total', r.elapsed_ms ? fmtMs(r.elapsed_ms) : '—')}
+      ${cell('History', `${r.history_messages} msgs`)}
       ${extras}
     </div>`;
 }
 
 function renderHistory() {
-  const costTotalEl = document.getElementById('hist-cost-total');
+  const costTotalEl = $('hist-cost-total');
   if (!reqHistory.length) {
     histList.innerHTML = '<span class="d-empty">None yet</span>';
-    if (costTotalEl) costTotalEl.textContent = '';
+    costTotalEl.textContent = '';
     return;
   }
-
-  // Session total cost (Claude requests only)
   const sessionCost = reqHistory
-    .filter(r => r.mode !== 'local' && r.status === 'done')
+    .filter(r => !r.isLocal && r.status === 'done')
     .reduce((sum, r) => {
-      const [rIn, rOut] = MODEL_RATES[r.model] || [0, 0]; // auto may finish on a local model — never bill those
+      const [rIn, rOut] = MODEL_RATES[r.model] || [0, 0];
       return sum + ((r.input_tokens || 0) * rIn + (r.output_tokens || 0) * rOut) / 1e6;
     }, 0);
-  if (costTotalEl) {
-    costTotalEl.textContent = sessionCost > 0
-      ? `session $${sessionCost.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')}`
-      : '';
-  }
+  // Pro turns are subscription-billed; the figure is what they would have cost on the API.
+  costTotalEl.textContent = sessionCost > 0 ? `~$${sessionCost.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')}` : '';
 
-  renderAvgTtft();
-  histList.innerHTML = [...reqHistory].reverse().slice(0, 12).map(r => {
-    const t     = r.timestamp.toTimeString().slice(0,5);
-    const local = r.mode === 'local' ? `<span class="hi-local"> · local</span>` : '';
-    const pro   = r.mode === 'pro'   ? `<span class="hi-pro"> · pro</span>`     : '';
-    const api   = r.mode === 'api'   ? `<span class="hi-api"> · api</span>`     : '';
-    const auto  = r.mode === 'auto'  ? `<span class="hi-pro"> · auto</span>`    : '';
-    const err   = r.status === 'error' ? `<span class="hi-err"> · error</span>` : '';
-    const toks  = r.input_tokens ? `${r.input_tokens}→${r.output_tokens}` : `~${r.output_tokens}`;
-    const cost  = r.mode !== 'local' ? estimateCost(r.model, r.input_tokens, r.output_tokens) : null;
+  histList.innerHTML = [...reqHistory].reverse().slice(0, 15).map(r => {
+    const t    = r.timestamp.toTimeString().slice(0,5);
+    const tag  = r.isLocal ? `<span class="hi-local"> · local</span>`
+               : r.mode === 'api' ? `<span class="hi-api"> · api</span>`
+               : `<span class="hi-pro"> · pro</span>`;
+    const err  = r.status === 'error' ? `<span class="hi-err"> · error</span>` : '';
+    const toks = r.input_tokens ? `${fmtTok(r.input_tokens)}→${fmtTok(r.output_tokens)}` : `~${fmtTok(r.output_tokens)}`;
+    const cost = !r.isLocal ? estimateCost(r.model, r.input_tokens, r.output_tokens) : null;
+    const chain = r.models.map(m => escHtml(friendlyModel(m.name))).join(' → ');
 
-    let bodyHtml = '';
+    let bodyHtml;
     if (r.status === 'error') {
       bodyHtml = `<div class="hi-error">${escHtml(r.errorMsg || 'Unknown error')}</div>`;
     } else if (r.status === 'cancelled') {
       bodyHtml = `<div class="hi-cancelled">Cancelled${r.output_tokens ? ` after ${r.output_tokens} tok` : ''}</div>`;
     } else {
-      let summaryHtml = '';
-      if (r.summary === undefined) {
-        summaryHtml = `<div class="hi-summary hi-pending">summarising…</div>`;
-      } else if (r.summary) {
-        const srcTag = r.summarySource === 'local' ? `<span class="hi-src-tag"> · local</span>` : '';
-        summaryHtml = `<div class="hi-summary">${escHtml(r.summary)}${srcTag}</div>`;
-      }
-      bodyHtml = `${summaryHtml}
-      <div class="hi-stats">
+      const perf = r.isLocal
+        ? `<div class="hi-stat"><span class="sk">TTFT</span><span class="sv">${fmtMs(r.ttft_ms)}</span></div>
+           <div class="hi-stat"><span class="sk">Tok/s</span><span class="sv">${r.tps}</span></div>`
+        : (cost ? `<div class="hi-stat"><span class="sk">${r.mode === 'pro' ? 'Pro · est.' : 'Cost'}</span><span class="sv">${cost}</span></div>` : '');
+      bodyHtml = `<div class="hi-stats">
         <div class="hi-stat"><span class="sk">Tokens</span><span class="sv">${toks}</span></div>
-        ${cost ? `<div class="hi-stat"><span class="sk">Cost</span><span class="sv">${cost}</span></div>` : ''}
-        <div class="hi-stat"><span class="sk">TTFT</span><span class="sv">${r.ttft_ms}ms</span></div>
-        <div class="hi-stat"><span class="sk">Tok/s</span><span class="sv">${r.tps}</span></div>
-        <div class="hi-stat"><span class="sk">Total</span><span class="sv">${r.elapsed_ms}ms</span></div>
-        ${r.summarised > 0 ? `<div class="hi-stat"><span class="sk">Compressed</span><span class="sv ollama-tag">${r.summarised} block${r.summarised > 1 ? 's' : ''}</span></div>` : ''}
-        ${r.spilled > 0 ? `<div class="hi-stat"><span class="sk">Spilled</span><span class="sv ollama-tag">${r.spilled} block${r.spilled > 1 ? 's' : ''}</span></div>` : ''}
-        ${r.compacted > 0 ? `<div class="hi-stat"><span class="sk">Compacted</span><span class="sv ollama-tag">history</span></div>` : ''}
+        ${perf}
+        <div class="hi-stat"><span class="sk">Total</span><span class="sv">${fmtMs(r.elapsed_ms)}</span></div>
+        ${r.spilled > 0 ? `<div class="hi-stat"><span class="sk">Spilled</span><span class="sv ollama-tag">${r.spilled}</span></div>` : ''}
+        ${r.compacted > 0 ? `<div class="hi-stat"><span class="sk">Compacted</span><span class="sv ollama-tag">yes</span></div>` : ''}
       </div>`;
     }
-
     return `<div class="hist-item">
       <div class="hi-header">
         <span class="hi-time">${t}</span>
-        <span class="hi-model">${r.models && r.models.length ? r.models.map(m => friendlyModel(m.name)).join(' → ') : friendlyModel(r.model)}${local}${pro}${api}${auto}${err}</span>
+        <span class="hi-model">${chain}${tag}${err}</span>
       </div>
+      <div class="hi-prompt" title="${escHtml(r.userMsg)}">${escHtml(r.userMsg.split('\n')[0])}</div>
       ${bodyHtml}
     </div>`;
   }).join('');
@@ -1236,54 +1212,34 @@ function renderHistory() {
 async function loadMemory() {
   try {
     const d = await fetch('/memory').then(r => r.json());
-    memCount   = d.count;
     memEntries = d.entries || [];
     memLoaded  = true;
-    document.getElementById('mem-badge').textContent = memCount || '0';
-    if (memExpanded) renderMemList();
+    $('mem-badge').textContent = d.count || '0';
+    renderMemList();
   } catch {}
 }
-
 function memEntryHtml(m) {
-  const date  = (m.date || '').slice(0, 10);
+  const date  = (m.date || '').slice(5, 10);
   const title = escHtml(m.title || '—');
   const href  = '/memory/' + encodeURIComponent(m.id || '');
-  return `<a class="sub-bubble" href="${href}" target="_blank" rel="noopener" style="display:block;text-decoration:none;color:inherit">
-    <div class="sub-bubble-hdr" title="Open full memory in new tab">
-      <span style="font-size:.68rem;color:var(--subtext);white-space:nowrap">${date}</span>
-      <span style="flex:1;margin-left:6px;color:var(--text);font-size:.75rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${title}</span>
-      <span style="font-size:.7rem;color:var(--subtext);opacity:.6;margin-left:6px">↗</span>
-    </div>
-  </a>`;
+  return `<a class="mem-item" href="${href}" target="_blank" rel="noopener">
+    <span class="mdate">${date}</span><span class="mtitle">${title}</span><span class="marrow">↗</span></a>`;
 }
-
 function renderMemList() {
-  const list = document.getElementById('mem-list');
-  if (!memEntries.length) {
-    list.innerHTML = '<span class="d-empty">No memories yet</span>';
-    return;
-  }
-  const show = memEntries.slice(0, 5);
+  const list = $('mem-list');
+  if (!memEntries.length) { list.innerHTML = '<span class="d-empty">No memories yet</span>'; return; }
+  const show = memShowAll ? memEntries : memEntries.slice(0, 5);
   const more = memEntries.length - show.length;
-  list.innerHTML = show.map(memEntryHtml).join('')
-    + (more > 0 ? `<div style="font-size:.73rem;color:var(--subtext);text-align:center;cursor:pointer;padding:4px 0" onclick="showAllMemories()">Show ${more} more…</div>` : '');
-}
-
-function showAllMemories() {
-  document.getElementById('mem-list').innerHTML = memEntries.map(memEntryHtml).join('');
+  list.innerHTML = `<div style="display:flex;flex-direction:column;gap:4px">${show.map(memEntryHtml).join('')}</div>`
+    + (more > 0 ? `<div class="link-more" onclick="memShowAll=true;renderMemList()">Show ${more} more…</div>` : '');
 }
 
 async function fetchAuthStatus() {
-  const dot    = document.getElementById('auth-dot');
-  const label  = document.getElementById('auth-label');
-  const expiry = document.getElementById('auth-expiry');
-  const hint   = document.getElementById('auth-hint');
-  if (!dot) return;
+  const dot = $('auth-dot'), label = $('auth-label'), expiry = $('auth-expiry'), hint = $('auth-hint');
   try {
     const d = await fetch('/auth/status').then(r => r.json());
     hint.style.display = 'none';
     expiry.textContent = '';
-    // Billing is always API key — session line shows Claude Code login state
     if (d.claude_code_session) {
       dot.style.background = 'var(--green)';
       label.textContent    = `Claude Code · ${d.subscription_type || 'pro'}`;
@@ -1294,197 +1250,61 @@ async function fetchAuthStatus() {
         const m  = Math.floor((ms % 3_600_000) / 60_000);
         expiry.textContent = h > 0 ? `${h}h ${m}m` : `${m}m`;
         expiry.title = 'Claude Code session token — time until re-login is required';
-        expiry.style.cursor = 'help';
-        expiry.style.borderBottom = '1px dotted var(--subtext)';
       }
     } else {
-      dot.style.background = 'var(--subtext)';
+      dot.style.background = d.has_api_key ? 'var(--subtext)' : 'var(--red)';
       label.textContent    = d.has_api_key ? 'API key only' : 'No auth configured';
       label.style.color    = d.has_api_key ? 'var(--subtext)' : 'var(--red)';
+      if (!d.has_api_key) { hint.textContent = 'Claude requests will fail — log in with the claude CLI or set ANTHROPIC_API_KEY.'; hint.style.display = ''; }
     }
   } catch { label.textContent = '—'; }
 }
 
-const SECTION_STORE = 'bixai-sections';
-function _sectionStates() { try { return JSON.parse(localStorage.getItem(SECTION_STORE) || '{}'); } catch { return {}; } }
-function saveSectionState(id, open) { try { const s = _sectionStates(); s[id] = open; localStorage.setItem(SECTION_STORE, JSON.stringify(s)); } catch {} }
-
-function toggleDSection(id) {
-  const body = document.getElementById(id + '-body');
-  const chev = document.getElementById(id + '-chev');
-  if (!body) return;
-  const open = body.style.display !== 'none';
-  body.style.display = open ? 'none' : '';
-  if (chev) chev.style.transform = open ? '' : 'rotate(90deg)';
-  saveSectionState(id, !open);
-}
-
-function initSectionStates() {
-  const saved = _sectionStates();
-  ['router', 'system', 'curreq'].forEach(id => {
-    const open = saved[id] ?? false;
-    const body = document.getElementById(id + '-body');
-    const chev = document.getElementById(id + '-chev');
-    if (!body) return;
-    body.style.display = open ? '' : 'none';
-    if (chev) chev.style.transform = open ? 'rotate(90deg)' : '';
-  });
-}
-initSectionStates();
-
-// ── Staged-change context (/?staged=<id>) ─────────────────────────────────────
-// Opened from a staging detail page's "Chat about this" button. The context is
-// fetched once, shown as a collapsible notice, and merged into the first
-// message the user sends (see send()).
-async function loadStagedContext() {
-  const stagedId = new URLSearchParams(location.search).get('staged');
-  if (!stagedId) return;
-  try {
-    const r = await fetch(`/staging/${encodeURIComponent(stagedId)}/context`);
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const d = await r.json();
-    pendingContext = d.context;
-
-    const wrap = document.createElement('div');
-    wrap.className = 'msg user';
-    const group = document.createElement('div');
-    group.className = 'sub-bubbles';
-    const sb  = document.createElement('div');  sb.className = 'sub-bubble';
-    const hdr = document.createElement('div');  hdr.className = 'sub-bubble-hdr';
-    const bod = document.createElement('div');  bod.className = 'sub-bubble-body';
-    hdr.innerHTML = `<span class="chevron">▶</span><span class="sub-bubble-name">📄 Staged change loaded as context</span><span class="sub-bubble-args"></span>`;
-    hdr.querySelector('.sub-bubble-args').textContent = `${d.target_path} · ${d.status}`;
-    bod.textContent = d.context;
-    hdr.addEventListener('click', () => sb.classList.toggle('open'));
-    sb.append(hdr, bod);
-    group.appendChild(sb);
-    wrap.appendChild(group);
-    msgsIn.appendChild(wrap);
-    autoScroll();
-    inputEl.focus();
-  } catch (e) {
-    const marker = document.createElement('div');
-    marker.className = 'switch-marker';
-    marker.textContent = `Could not load staged change ${stagedId}: ${e.message}`;
-    msgsIn.appendChild(marker);
-  }
-}
-loadStagedContext();
-
-function renderAvgTtft() {
-  const el = document.getElementById('rs-avg-ttft');
-  if (!el) return;
-  const byModel = {};
-  for (const r of reqHistory) {
-    if (r.status === 'done' && r.ttft_ms > 0 && r.mode !== 'local') {
-      if (!byModel[r.model]) byModel[r.model] = {sum: 0, count: 0};
-      byModel[r.model].sum += r.ttft_ms;
-      byModel[r.model].count++;
-    }
-  }
-  const entries = Object.entries(byModel);
-  if (!entries.length) { el.innerHTML = ''; return; }
-  el.innerHTML = `<div class="d-title" style="margin-top:6px">Avg TTFT</div>
-    <div class="hi-stats" style="padding-top:5px;border-top:none">
-      ${entries.map(([m, d]) => `<div class="hi-stat"><span class="sk">${fmtModel(m)}</span><span class="sv">${Math.round(d.sum / d.count)}ms</span></div>`).join('')}
-    </div>`;
-}
-
-function toggleMemList() {
-  memExpanded = !memExpanded;
-  const list    = document.getElementById('mem-list');
-  const chevron = document.getElementById('mem-chevron');
-  list.style.display    = memExpanded ? 'flex' : 'none';
-  chevron.style.transform = memExpanded ? 'rotate(90deg)' : '';
-  if (memExpanded) {
-    if (!memLoaded) loadMemory(); else renderMemList();
-  }
-}
-
 // ── Ollama model management ───────────────────────────────────────────────────
-let modelsLoaded = false, modelsExpanded = false, modelPulling = false;
-
-function toggleModelsList() {
-  modelsExpanded = !modelsExpanded;
-  document.getElementById('models-body').style.display = modelsExpanded ? 'flex' : 'none';
-  document.getElementById('models-chevron').style.transform = modelsExpanded ? 'rotate(90deg)' : '';
-  if (modelsExpanded && !modelsLoaded) loadModels();
-}
-
 function showModelsError(msg) {
-  const el = document.getElementById('models-error');
+  const el = $('models-error');
   el.textContent = msg || '';
   el.style.display = msg ? 'block' : 'none';
 }
-
 function fmtGB(bytes) { return (bytes / 1e9).toFixed(1) + ' GB'; }
 
 async function loadModels() {
   try {
     const res = await fetch('/models/ollama');
     const data = await res.json();
-    if (!res.ok || data.ok === false) {
-      showModelsError(data.message || `HTTP ${res.status}`);
-      return;
-    }
+    if (!res.ok || data.ok === false) { showModelsError(data.message || `HTTP ${res.status}`); return; }
     modelsLoaded = true;
     showModelsError('');
-    renderModelsList(data.models || []);
-    populateModelPicker(data.models || []);
+    if (data.models && data.models.length) localModels = data.models;
+    renderModelsList(localModels);
+    // keep the remembered local model if it's still installed
+    if (!localModels.some(m => m.name === localModel)) localModel = localModels[0]?.name || localModel;
+    if (provider === 'local' && !localModels.some(m => m.name === model)) model = localModel;
+    renderChip();
+    if (sheetEl.classList.contains('open')) renderSheet();
   } catch (e) {
     showModelsError('Model list unavailable: ' + e.message);
   }
 }
 
 function renderModelsList(models) {
-  document.getElementById('models-badge').textContent = models.length || '—';
-  const list = document.getElementById('models-list');
+  $('models-badge').textContent = models.length || '—';
+  const list = $('models-list');
   list.textContent = '';
-  if (!models.length) {
-    list.innerHTML = '<span class="d-empty">No models installed</span>';
-    return;
-  }
+  if (!models.length) { list.innerHTML = '<span class="d-empty">No models installed</span>'; return; }
   for (const m of models) {
     const row = document.createElement('div');
-    row.style.cssText = 'display:flex;align-items:center;gap:7px;font-size:.75rem;padding:2px 0';
+    row.className = 'model-row';
     const dot = document.createElement('span');
-    dot.style.cssText = `width:6px;height:6px;border-radius:50%;flex-shrink:0;background:${m.loaded ? 'var(--yellow)' : 'var(--surface1)'}`;
+    dot.className = 'mdot' + (m.loaded ? ' loaded' : '');
     dot.title = m.loaded ? 'loaded in Ollama' : 'not loaded';
-    const name = document.createElement('span');
-    name.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)';
-    name.textContent = m.name;
-    const size = document.createElement('span');
-    size.style.cssText = 'color:var(--subtext);font-variant-numeric:tabular-nums;flex-shrink:0';
-    size.textContent = fmtGB(m.size);
-    const del = document.createElement('button');
-    del.textContent = '✕';
-    del.title = `Delete ${m.name}`;
-    del.style.cssText = 'background:transparent;border:none;color:var(--subtext);cursor:pointer;font-size:.75rem;padding:0 2px;flex-shrink:0';
-    del.addEventListener('mouseover', () => del.style.color = 'var(--red)');
-    del.addEventListener('mouseout',  () => del.style.color = 'var(--subtext)');
+    const name = document.createElement('span'); name.className = 'mname'; name.textContent = m.name;
+    const size = document.createElement('span'); size.className = 'msize'; size.textContent = m.size ? fmtGB(m.size) : '';
+    const del  = document.createElement('button'); del.className = 'mdel'; del.textContent = '✕'; del.title = `Delete ${m.name}`;
     del.addEventListener('click', () => deleteModel(m.name));
     row.append(dot, name, size, del);
     list.appendChild(row);
   }
-}
-
-function populateModelPicker(models) {
-  if (!models.length) return;   // keep the hardcoded fallback options
-  const group = [...document.querySelectorAll('#model-select optgroup')]
-    .find(g => g.label?.includes('local'));
-  if (!group) return;
-  const selected = modelSel.value;
-  group.textContent = '';
-  for (const m of models) {
-    const opt = document.createElement('option');
-    opt.value = m.name;
-    opt.textContent = m.name;
-    group.appendChild(opt);
-  }
-  refreshLocalModelValues();
-  // keep the current selection when it still exists (Claude options are untouched)
-  if ([...modelSel.options].some(o => o.value === selected)) modelSel.value = selected;
-  else { modelSel.value = model = modeDefaults.ai; if (mode === 'local') setMode('ai', false); }
 }
 
 async function deleteModel(name) {
@@ -1503,16 +1323,13 @@ async function deleteModel(name) {
 
 async function pullModel() {
   if (modelPulling) return;
-  const input = document.getElementById('model-pull-name');
+  const input = $('model-pull-name');
   const name = input.value.trim();
   if (!name) { input.focus(); return; }
-  const btn      = document.getElementById('model-pull-btn');
-  const progress = document.getElementById('model-pull-progress');
-  const statusEl = document.getElementById('model-pull-status');
-  const pctEl    = document.getElementById('model-pull-pct');
-  const bar      = document.getElementById('model-pull-bar');
+  const btn = $('model-pull-btn'), progress = $('model-pull-progress');
+  const statusEl = $('model-pull-status'), pctEl = $('model-pull-pct'), bar = $('model-pull-bar');
   modelPulling = true;
-  btn.disabled = true; btn.style.opacity = '.5';
+  btn.disabled = true;
   showModelsError('');
   progress.style.display = 'block';
   statusEl.textContent = 'checking registry…'; pctEl.textContent = ''; bar.style.width = '0%';
@@ -1525,39 +1342,20 @@ async function pullModel() {
       const data = await res.json().catch(() => ({}));
       throw new Error(data.message || `HTTP ${res.status}`);
     }
-    // Same SSE parse pattern as the chat reader.
-    const reader = res.body.getReader();
-    const dec = new TextDecoder();
-    let buf = '';
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      const blocks = buf.split('\n\n');
-      buf = blocks.pop();
-      for (const block of blocks) {
-        let evType = null, dataStr = null;
-        for (const line of block.split('\n')) {
-          if      (line.startsWith('event:')) evType  = line.slice(6).trim();
-          else if (line.startsWith('data:'))  dataStr = line.slice(5).trim();
+    for await (const [evType, data] of readSse(res)) {
+      if (evType === 'pull_progress') {
+        statusEl.textContent = data.status || '…';
+        if (data.total) {
+          const pct = Math.min(100, (data.completed || 0) / data.total * 100);
+          bar.style.width = pct.toFixed(1) + '%';
+          pctEl.textContent = pct.toFixed(0) + '%';
         }
-        if (!evType || !dataStr) continue;
-        let data;
-        try { data = JSON.parse(dataStr); } catch { continue; }
-        if (evType === 'pull_progress') {
-          statusEl.textContent = data.status || '…';
-          if (data.total) {
-            const pct = Math.min(100, (data.completed || 0) / data.total * 100);
-            bar.style.width = pct.toFixed(1) + '%';
-            pctEl.textContent = pct.toFixed(0) + '%';
-          }
-        } else if (evType === 'pull_done') {
-          statusEl.textContent = 'done'; bar.style.width = '100%'; pctEl.textContent = '100%';
-          input.value = '';
-          loadModels();
-        } else if (evType === 'error') {
-          throw new Error(data.message || 'pull failed');
-        }
+      } else if (evType === 'pull_done') {
+        statusEl.textContent = 'done'; bar.style.width = '100%'; pctEl.textContent = '100%';
+        input.value = '';
+        loadModels();
+      } else if (evType === 'error') {
+        throw new Error(data.message || 'pull failed');
       }
     }
   } catch (e) {
@@ -1565,8 +1363,33 @@ async function pullModel() {
     progress.style.display = 'none';
   } finally {
     modelPulling = false;
-    btn.disabled = false; btn.style.opacity = '';
+    btn.disabled = false;
     setTimeout(() => { if (!modelPulling) progress.style.display = 'none'; }, 4000);
+  }
+}
+
+// ── SSE reader (shared by chat + model pull) ──────────────────────────────────
+async function* readSse(res) {
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const blocks = buf.split('\n\n');
+    buf = blocks.pop();
+    for (const block of blocks) {
+      let evType = null, dataStr = null;
+      for (const line of block.split('\n')) {
+        if      (line.startsWith('event:')) evType  = line.slice(6).trim();
+        else if (line.startsWith('data:'))  dataStr = line.slice(5).trim();
+      }
+      if (!evType || !dataStr) continue;
+      let data;
+      try { data = JSON.parse(dataStr); } catch { continue; }
+      yield [evType, data];
+    }
   }
 }
 
@@ -1585,48 +1408,26 @@ async function saveMemoryInBackground() {
     });
     if (res.ok) {
       const data = await res.json();
-      if (data.ok && !data.skipped) {
-        memCount++;
-        memLoaded = false;
-        document.getElementById('mem-badge').textContent = memCount;
-        if (memExpanded) loadMemory();
-      }
+      if (data.ok && !data.skipped) { memLoaded = false; if ($('mem-body').style.display !== 'none') loadMemory(); }
     }
   } catch {}
-}
-
-// ── Background summarization ──────────────────────────────────────────────────
-async function summarizeInBackground(reqId, userMsg, assistantMsg) {
-  const localModel = _resolvedMode() === 'local' ? model : 'gemma4:e2b';
-  try {
-    const res = await fetch('/summarize', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ user_msg: userMsg, assistant_msg: assistantMsg, local_model: localModel }),
-    });
-    const data = await res.json();
-    const entry = reqHistory.find(r => r.id === reqId);
-    if (entry) {
-      entry.summary = data.summary || null;
-      entry.summarySource = data.source;
-      renderHistory();
-    }
-  } catch {
-    const entry = reqHistory.find(r => r.id === reqId);
-    if (entry) { entry.summary = null; renderHistory(); }
-  }
 }
 
 // ── Cancel ────────────────────────────────────────────────────────────────────
 function setBusy(val) {
   busy = val;
-  if (val) {
-    sendBtn.textContent = 'Cancel';
-    sendBtn.classList.add('is-cancel');
-  } else {
-    sendBtn.textContent = 'Send';
-    sendBtn.classList.remove('is-cancel');
-  }
+  sendBtn.textContent = val ? '■' : '↑';
+  sendBtn.setAttribute('aria-label', val ? 'Cancel' : 'Send');
+  sendBtn.classList.toggle('is-cancel', val);
+}
+
+function finishReq(status, errorMsg) {
+  if (!currentReq) return;
+  currentReq.status = status;
+  if (errorMsg) currentReq.errorMsg = errorMsg;
+  reqHistory.push({ ...currentReq });
+  renderCurrentStats();
+  renderHistory();
 }
 
 // ── Send ──────────────────────────────────────────────────────────────────────
@@ -1639,32 +1440,19 @@ async function send() {
   setBusy(true);
   setBudget(null);
 
-  // Staged-change context rides along inside the first sent message (a lone
-  // context turn would create consecutive user messages, which not every
-  // backend path accepts). The bubble shows only what the user typed.
-  const payloadText = pendingContext
-    ? pendingContext + '\n\n---\n\nMy thoughts:\n' + text
-    : text;
-  pendingContext = null;
-  lastUserMsg = payloadText;
-  const userMsg = payloadText;
-  convHistory.push({ role: 'user', content: payloadText });
+  lastUserMsg = text;
+  convHistory.push({ role: 'user', content: text });
   addBubble('user', false).bubble.textContent = text;
 
-  const resolvedMode = _resolvedMode();
+  const mode    = resolvedMode();
+  const isLocal = isLocalProvider();
   // A non-pro turn adds history the CLI session doesn't have — drop the
   // session so the next pro request replays the full text history instead.
-  if (resolvedMode !== 'pro') proSessionId = null;
-  // local + auto are local-first; auto's responder is the local model unless it
-  // escalates to Claude (handled on `fallback_triggered`).
-  const isLocal = (resolvedMode === 'local' || resolvedMode === 'auto');
-  const responderModel = isLocal
-    ? (resolvedMode === 'local' ? model : localModelName())
-    : model;
-  const { wrap, bubble } = addBubble('assistant', isLocal, responderModel);
-  const modeLabel  = modeName(resolvedMode);
-  const modelsUsed = [{ name: responderModel, isLocal }];
-  renderIndicator(wrap, modeLabel, modelsUsed);
+  if (mode !== 'pro') proSessionId = null;
+
+  const { wrap, bubble } = addBubble('assistant', isLocal);
+  const modelsUsed = [{ name: model, isLocal }];
+  renderIndicator(wrap, modelsUsed);
   let fullText        = '';
   let toolGroupEl     = null;
   let pendingTools    = 0;
@@ -1677,16 +1465,14 @@ async function send() {
   let currentTextNode = document.createTextNode('');
   bubble.appendChild(currentTextNode);
 
-  // Insert an inline marker in the bubble body at a model transition (offload /
-  // switch / escalation), then continue text into a fresh node. The marker is
-  // stored as a segment so the markdown rebuild on `metrics` preserves it.
+  // Inline marker at a model transition (offload / escalation), then continue
+  // text into a fresh node. Stored as a segment so the markdown rebuild keeps it.
   function addSwitch(labelText) {
-    const markerHtml = `<div class="switch-marker">${escHtml(labelText)}</div>`;
     const marker = document.createElement('div');
     marker.className = 'switch-marker';
     marker.textContent = labelText;
     bubble.appendChild(marker);
-    textSegments.push({ type: 'transition', html: markerHtml });
+    textSegments.push({ type: 'transition', html: `<div class="switch-marker">${escHtml(labelText)}</div>` });
     const node = document.createTextNode('');
     bubble.appendChild(node);
     currentTextNode = node;
@@ -1694,13 +1480,13 @@ async function send() {
   }
 
   reqSeq++;
-  const thisReqId = reqSeq;
   currentReq = {
-    id: thisReqId, timestamp: new Date(),
-    model, mode: resolvedMode, models: modelsUsed, status: 'running',
+    id: reqSeq, timestamp: new Date(), userMsg: text,
+    provider, model, mode, isLocal, models: modelsUsed, status: 'running',
+    history_messages: convHistory.length,
     input_tokens: 0, output_tokens: 0,
     ttft_ms: 0, elapsed_ms: 0, tps: 0,
-    preprocess_ms: 0, summarised: 0, spilled: 0, compacted: 0, skipped: 0, failed: 0,
+    preprocess_ms: 0, spilled: 0, compacted: 0, failed: 0,
   };
   renderCurrentStats();
   setStatus('checking', 'Checking…');
@@ -1712,282 +1498,206 @@ async function send() {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        messages: convHistory, model, mode: resolvedMode, tool_offload: toolOffload,
-        session_id: resolvedMode === 'pro' ? (proSessionId || '') : '',
+        messages: convHistory, model, mode, tool_offload: isLocal && toolOffload,
+        session_id: mode === 'pro' ? (proSessionId || '') : '',
       }),
       signal: abortCtrl.signal,
     });
 
     if (!res.ok) {
-      bubble.textContent = `HTTP ${res.status} — check server logs`;
+      let detail = `HTTP ${res.status}`;
+      try { const j = await res.json(); if (j.error) detail += ` — ${j.error}`; } catch {}
+      bubble.textContent = detail;
       setStatus('error', 'error');
-      currentReq.status = 'error';
-      currentReq.errorMsg = `HTTP ${res.status}`;
-      reqHistory.push({ ...currentReq, summary: null });
-      renderCurrentStats();
-      renderHistory();
+      finishReq('error', detail);
       setBusy(false);
       return;
     }
 
-    const reader = res.body.getReader();
-    const dec = new TextDecoder();
-    let buf = '';
+    for await (const [evType, data] of readSse(res)) {
+      if (evType === 'model_swap') {
+        modelSwap = data;
+        setStatus('checking', `↳ ${data.to} (tool-capable)`);
+        pushModel(modelsUsed, data.to, true);
+        renderIndicator(wrap, modelsUsed);
+        addSwitch(`⚙ offloaded to ${friendlyModel(data.to)} for tools`);
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      const blocks = buf.split('\n\n');
-      buf = blocks.pop();
+      } else if (evType === 'status') {
+        setStatus(data.stage, data.message);
 
-      for (const block of blocks) {
-        let evType = null, dataStr = null;
-        for (const line of block.split('\n')) {
-          if      (line.startsWith('event:')) evType  = line.slice(6).trim();
-          else if (line.startsWith('data:'))  dataStr = line.slice(5).trim();
+      } else if (evType === 'budget') {
+        setBudget(data);
+
+      } else if (evType === 'preprocess') {
+        Object.assign(currentReq, {
+          preprocess_ms: data.preprocess_ms,
+          spilled:       data.spilled   || 0,
+          compacted:     data.compacted || 0,
+          failed:        data.failed    || 0,
+        });
+        renderCurrentStats();
+
+      } else if (evType === 'input_tokens') {
+        currentReq.input_tokens = data.count;
+        renderCurrentStats();
+
+      } else if (evType === 'delta') {
+        fullText += data.text;
+        textSegments[textSegments.length - 1].content += data.text;
+        currentTextNode.textContent += data.text;
+        autoScroll();
+        currentReq.output_tokens = Math.round(fullText.length / 4);
+        renderCurrentStats();
+
+      } else if (evType === 'metrics') {
+        let html = '';
+        for (const seg of textSegments) {
+          if (seg.type === 'text' && seg.content) html += renderMd(seg.content);
+          else if (seg.type === 'transition') html += seg.html;
         }
-        if (!evType || !dataStr) continue;
-        let data;
-        try { data = JSON.parse(dataStr); } catch { continue; }
+        bubble.innerHTML = html;
+        addMeta(wrap, data, isLocal, model, mode);
+        setStatus('done', isLocal ? `${data.tps} tok/s` : fmtMs(data.elapsed_ms));
+        Object.assign(currentReq, {
+          input_tokens:  data.input_tokens,
+          output_tokens: data.output_tokens,
+          elapsed_ms:    data.elapsed_ms,
+          ttft_ms:       data.ttft_ms,
+          preprocess_ms: data.preprocess_ms,
+          tps:           data.tps,
+          spilled:       data.spilled || 0,
+          failed:        data.failed  || 0,
+        });
+        finishReq('done');
 
-        if (evType === 'model_swap') {
-          modelSwap = data;
-          setStatus('checking', `↳ ${data.to} (tool-capable)`);
-          if (isLocal) {   // e.g. local model offloaded to Qwen for reliable tool JSON
-            pushModel(modelsUsed, data.to, true);
-            renderIndicator(wrap, modeLabel, modelsUsed);
-            addSwitch(`⚙ offloaded to ${friendlyModel(data.to)} for tools`);
-          }
+      } else if (evType === 'fallback_triggered') {
+        // Server escalated to Claude — discard the partial and mark the switch.
+        pushModel(modelsUsed, model, false);
+        renderIndicator(wrap, modelsUsed);
+        fullText = '';
+        textSegments = [{type: 'text', content: ''}];
+        bubble.innerHTML = '';
+        addSwitch(`↪ escalated to Claude${data && data.reason ? ` (${data.reason})` : ''}`);
+        currentReq.output_tokens = 0;
+        renderCurrentStats();
+        autoScroll();
 
-        } else if (evType === 'status') {
-          setStatus(data.stage, data.message);
+      } else if (evType === 'tool_start') {
+        const newNode = document.createTextNode('');
+        bubble.appendChild(newNode);
+        currentTextNode = newNode;
+        textSegments.push({type: 'tool', name: toolFriendlyName(data.name)});
+        textSegments.push({type: 'text', content: ''});
 
-        } else if (evType === 'budget') {
-          setBudget(data);
+        pendingTools++;
+        totalTools++;
+        if (!toolGroupEl) {
+          toolGroupEl = document.createElement('div');
+          toolGroupEl.className = 'tool-group running';
+          const ghdr = document.createElement('div');
+          ghdr.className = 'tool-group-hdr';
+          ghdr.innerHTML = `<span class="chevron">▶</span><span class="tool-group-label"></span><span class="tool-group-dot"></span>`;
+          ghdr.addEventListener('click', () => toolGroupEl.classList.toggle('open'));
+          const gbod = document.createElement('div');
+          gbod.className = 'tool-group-body';
+          toolGroupEl.append(ghdr, gbod);
+          wrap.appendChild(toolGroupEl);
+        }
+        toolGroupEl.querySelector('.tool-group-label').textContent =
+          `⚙ ${totalTools} tool call${totalTools > 1 ? 's' : ''}${modelSwap ? ` · ${modelSwap.to}` : ''}`;
 
-        } else if (evType === 'preprocess') {
-          Object.assign(currentReq, {
-            preprocess_ms: data.preprocess_ms,
-            summarised:    data.summarised,
-            spilled:       data.spilled   || 0,
-            compacted:     data.compacted || 0,
-            skipped:       data.skipped,
-            failed:        data.failed,
-          });
-          renderCurrentStats();
+        const sb  = document.createElement('div');  sb.className = 'sub-bubble';
+        const hdr = document.createElement('div');  hdr.className = 'sub-bubble-hdr';
+        const bod = document.createElement('div');  bod.className = 'sub-bubble-body';
+        hdr.innerHTML = `<span class="chevron">▶</span><span class="sub-bubble-name"></span><span class="sub-bubble-args"></span>`;
+        hdr.querySelector('.sub-bubble-name').textContent = toolFriendlyName(data.name);
+        hdr.addEventListener('click', () => sb.classList.toggle('open'));
+        sb.append(hdr, bod);
+        toolGroupEl.querySelector('.tool-group-body').appendChild(sb);
+        toolBubbles[data.index] = { sb, hdr, bod, id: data.id };
+        if (data.id) toolBubblesById[data.id] = toolBubbles[data.index];
+        autoScroll();
 
-        } else if (evType === 'input_tokens') {
-          currentReq.input_tokens = data.count;
-          renderCurrentStats();
+      } else if (evType === 'tool_input') {
+        if (toolBubbles[data.index]) toolBubbles[data.index].bod.textContent += data.partial_json;
 
-        } else if (evType === 'delta') {
-          fullText += data.text;
-          textSegments[textSegments.length - 1].content += data.text;
-          currentTextNode.textContent += data.text;
-          autoScroll();
-          currentReq.output_tokens = Math.round(fullText.length / 4);
-          renderCurrentStats();
-
-        } else if (evType === 'metrics') {
-          let html = '';
-          for (const seg of textSegments) {
-            if (seg.type === 'text' && seg.content) html += renderMd(seg.content);
-            else if (seg.type === 'transition') html += seg.html;  // inline switch marker
-            // tool segments are shown in the tool-group block, not inline
-          }
-          bubble.innerHTML = html;
-          addMeta(wrap, data);
-          setStatus('done', `TTFT ${data.ttft_ms}ms · ${data.tps} tok/s`);
-          Object.assign(currentReq, {
-            status:        'done',
-            input_tokens:  data.input_tokens,
-            output_tokens: data.output_tokens,
-            elapsed_ms:    data.elapsed_ms,
-            ttft_ms:       data.ttft_ms,
-            preprocess_ms: data.preprocess_ms,
-            tps:           data.tps,
-            summarised:    data.summarised,
-            spilled:       data.spilled  || 0,
-            skipped:       data.skipped  || 0,
-            failed:        data.failed   || 0,
-          });
-          reqHistory.push({ ...currentReq, summary: undefined });
-          renderCurrentStats();
-          renderHistory();
-          // Kick off background summarization
-          summarizeInBackground(thisReqId, userMsg, fullText);
-
-        } else if (evType === 'fallback_triggered') {
-          // local attempt failed — discard the partial, escalate to Claude, and
-          // mark the switch point inline.
-          pushModel(modelsUsed, model, false);
-          renderIndicator(wrap, modeLabel, modelsUsed);
-          fullText = '';
-          textSegments = [{type: 'text', content: ''}];
-          bubble.innerHTML = '';
-          const reason = (data && data.reason) ? ` (${data.reason})` : '';
-          addSwitch(`↪ escalated to Claude${reason}`);
-          currentReq.output_tokens = 0;
-          renderCurrentStats();
-          autoScroll();
-
-        } else if (evType === 'tool_start') {
-          const newNode = document.createTextNode('');
-          bubble.appendChild(newNode);
-          currentTextNode = newNode;
-          textSegments.push({type: 'tool', name: toolFriendlyName(data.name)});
-          textSegments.push({type: 'text', content: ''});
-
-          pendingTools++;
-          totalTools++;
-          if (!toolGroupEl) {
-            toolGroupEl = document.createElement('div');
-            toolGroupEl.className = 'tool-group running';
-            const ghdr = document.createElement('div');
-            ghdr.className = 'tool-group-hdr';
-            const toolModelTag = modelSwap ? ` · ${modelSwap.to}` : '';
-            ghdr.innerHTML = `<span class="chevron">▶</span><span class="tool-group-label">⚙ Tool Use${toolModelTag} · 1 call</span><span class="tool-group-dot"></span>`;
-            ghdr.addEventListener('click', () => toolGroupEl.classList.toggle('open'));
-            const gbod = document.createElement('div');
-            gbod.className = 'tool-group-body';
-            toolGroupEl.append(ghdr, gbod);
-            wrap.appendChild(toolGroupEl);
-          } else {
-            toolGroupEl.querySelector('.tool-group-label').textContent = `⚙ Tool Use${modelSwap ? ` · ${modelSwap.to}` : ''} · ${totalTools} calls`;
-          }
-
-          const sb  = document.createElement('div');  sb.className = 'sub-bubble';
-          const hdr = document.createElement('div');  hdr.className = 'sub-bubble-hdr';
-          const bod = document.createElement('div');  bod.className = 'sub-bubble-body';
-          hdr.innerHTML = `<span class="chevron">▶</span><span class="sub-bubble-name">⚙ ${escHtml(data.name)}</span><span class="sub-bubble-args"></span>`;
-          hdr.addEventListener('click', () => sb.classList.toggle('open'));
-          sb.append(hdr, bod);
-          toolGroupEl.querySelector('.tool-group-body').appendChild(sb);
-          toolBubbles[data.index] = { sb, hdr, bod, id: data.id };
-          if (data.id) toolBubblesById[data.id] = toolBubbles[data.index];
-          autoScroll();
-
-        } else if (evType === 'tool_input') {
-          if (toolBubbles[data.index]) {
-            toolBubbles[data.index].bod.textContent += data.partial_json;
-          }
-
-        } else if (evType === 'tool_end') {
-          const tb = toolBubbles[data.index];
-          if (tb) {
-            try {
-              const parsed = JSON.parse(tb.bod.textContent);
-              tb.bod.textContent = JSON.stringify(parsed, null, 2);
-              const argsEl = tb.hdr.querySelector('.sub-bubble-args');
-              if (argsEl) {
-                const entries = Object.entries(parsed);
-                if (entries.length > 0) {
-                  const [, v] = entries[0];
-                  const val = typeof v === 'string' ? v : JSON.stringify(v);
-                  argsEl.textContent = val.length > 45 ? '…' + val.slice(-42) : val;
-                }
-              }
-            } catch {}
-          }
-          pendingTools = Math.max(0, pendingTools - 1);
-          if (pendingTools === 0 && toolGroupEl) toolGroupEl.classList.remove('running');
-
-        } else if (evType === 'tool_result') {
-          const tb = toolBubblesById[data.tool_use_id];
-          if (tb) {
-            let resultEl = tb.bod.querySelector('.tool-result');
-            if (!resultEl) {
-              resultEl = document.createElement('pre');
-              resultEl.className = 'tool-result';
-              tb.bod.appendChild(resultEl);
+      } else if (evType === 'tool_end') {
+        const tb = toolBubbles[data.index];
+        if (tb) {
+          try {
+            const parsed = JSON.parse(tb.bod.textContent);
+            tb.bod.textContent = JSON.stringify(parsed, null, 2);
+            const entries = Object.entries(parsed);
+            if (entries.length > 0) {
+              const [, v] = entries[0];
+              const val = typeof v === 'string' ? v : JSON.stringify(v);
+              tb.hdr.querySelector('.sub-bubble-args').textContent = val.length > 45 ? '…' + val.slice(-42) : val;
             }
-            if (data.is_error) resultEl.classList.add('error');
-            resultEl.textContent = data.content;
-          }
-
-        } else if (evType === 'history') {
-          // Clean-completion-only: server's canonical transformed history (tool
-          // turns, post-preprocess pointers) replaces convHistory wholesale so
-          // the next request carries the full tool evidence, not just text.
-          convHistory = data.messages;
-          historyReceived = true;
-
-        } else if (evType === 'pro_session') {
-          // Always adopt the latest id the server reports (resume may keep or
-          // fork the id) so the next pro request resumes with tool turns.
-          if (data.session_id) proSessionId = data.session_id;
-
-        } else if (evType === 'quota_exceeded') {
-          const banner = document.createElement('div');
-          banner.className = 'quota-banner';
-          banner.innerHTML = `Pro quota reached.
-            <button class="use-api-btn" onclick="retryWithApi()">Use API credits</button>
-            <span style="margin-left:auto;cursor:default;opacity:.7" title="View billing at console.anthropic.com">↗</span>`;
-          wrap.appendChild(banner);
-          autoScroll();
-          // mark request as quota-exhausted in history
-          if (currentReq) {
-            currentReq.status   = 'error';
-            currentReq.errorMsg = 'Pro quota reached';
-            reqHistory.push({ ...currentReq, summary: null });
-            renderCurrentStats();
-            renderHistory();
-          }
-          setStatus('', 'quota reached');
-          dotEl.className = 'dot';
-
-        } else if (evType === 'done') {
-          // pro path (subprocess) doesn't emit `history` — fall back to the
-          // text-only push so that mode still accumulates conversation context.
-          if (!historyReceived) {
-            convHistory.push({ role: 'assistant', content: fullText });
-          }
-          saveMemoryInBackground();
-
-        } else if (evType === 'error') {
-          bubble.textContent = 'Error: ' + data.message;
-          setStatus('error', 'error');
-          currentReq.status   = 'error';
-          currentReq.errorMsg = data.message;
-          reqHistory.push({ ...currentReq, summary: null });
-          renderCurrentStats();
-          renderHistory();
+          } catch {}
         }
+        pendingTools = Math.max(0, pendingTools - 1);
+        if (pendingTools === 0 && toolGroupEl) toolGroupEl.classList.remove('running');
+
+      } else if (evType === 'tool_result') {
+        const tb = toolBubblesById[data.tool_use_id];
+        if (tb) {
+          let resultEl = tb.bod.querySelector('.tool-result');
+          if (!resultEl) {
+            resultEl = document.createElement('pre');
+            resultEl.className = 'tool-result';
+            tb.bod.appendChild(resultEl);
+          }
+          if (data.is_error) resultEl.classList.add('error');
+          resultEl.textContent = data.content;
+        }
+
+      } else if (evType === 'history') {
+        // Clean-completion-only: server's canonical transformed history (tool
+        // turns, post-preprocess pointers) replaces convHistory wholesale.
+        convHistory = data.messages;
+        historyReceived = true;
+
+      } else if (evType === 'pro_session') {
+        if (data.session_id) proSessionId = data.session_id;
+
+      } else if (evType === 'quota_exceeded') {
+        const banner = document.createElement('div');
+        banner.className = 'quota-banner';
+        banner.innerHTML = `Pro quota reached. <button class="use-api-btn" onclick="retryWithApi()">Use API credits</button>`;
+        wrap.appendChild(banner);
+        autoScroll();
+        finishReq('error', 'Pro quota reached');
+        setStatus('', 'quota reached');
+
+      } else if (evType === 'done') {
+        // pro path (subprocess) doesn't emit `history` — fall back to the
+        // text-only push so that mode still accumulates conversation context.
+        if (!historyReceived) convHistory.push({ role: 'assistant', content: fullText });
+        saveMemoryInBackground();
+
+      } else if (evType === 'error') {
+        bubble.textContent = 'Error: ' + data.message;
+        setStatus('error', 'error');
+        finishReq('error', data.message);
       }
     }
 
   } catch (e) {
     if (e.name === 'AbortError') {
-      if (fullText) {
-        bubble.innerHTML = renderMd(fullText) + '<p><em style="opacity:.5">— cancelled</em></p>';
-      } else {
-        bubble.textContent = '— cancelled';
-      }
+      if (fullText) bubble.innerHTML = renderMd(fullText) + '<p><em style="opacity:.5">— cancelled</em></p>';
+      else          bubble.textContent = '— cancelled';
       setStatus('', 'cancelled');
-      dotEl.className = 'dot';
-      if (currentReq) {
-        currentReq.status = 'cancelled';
-        reqHistory.push({ ...currentReq, summary: null });
-        renderCurrentStats();
-        renderHistory();
-      }
+      finishReq('cancelled');
     } else {
       bubble.textContent = 'Connection error: ' + e.message;
       setStatus('error', 'error');
-      if (currentReq) {
-        currentReq.status   = 'error';
-        currentReq.errorMsg = e.message;
-        reqHistory.push({ ...currentReq, summary: null });
-        renderCurrentStats();
-        renderHistory();
-      }
+      finishReq('error', e.message);
     }
   }
 
   abortCtrl = null;
   setBusy(false);
-  inputEl.focus();
+  if (window.matchMedia('(min-width: 900px)').matches) inputEl.focus();
 }
 
 sendBtn.addEventListener('click', () => {
@@ -1995,12 +1705,23 @@ sendBtn.addEventListener('click', () => {
   else send();
 });
 inputEl.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+  // Enter sends on a keyboard; on touch devices the Enter key is a newline
+  // and the ↑ button (or the keyboard's "send" hint) sends.
+  if (e.key === 'Enter' && !e.shiftKey && !isCoarsePointer()) { e.preventDefault(); send(); }
 });
 inputEl.addEventListener('input', () => {
   inputEl.style.height = '';
-  inputEl.style.height = Math.min(inputEl.scrollHeight, 180) + 'px';
+  inputEl.style.height = Math.min(inputEl.scrollHeight, 160) + 'px';
 });
+function isCoarsePointer() { return window.matchMedia('(pointer: coarse)').matches; }
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+loadPrefs();
+if (provider === 'local' && !isLocalModelName(model)) model = localModel;
+if (provider === 'claude' && !CLAUDE_MODELS.some(m => m.id === model)) model = 'claude-sonnet-4-6';
+renderChip();
+initSectionStates();
+loadModels();
 </script>
 </body>
 </html>
