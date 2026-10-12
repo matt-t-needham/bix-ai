@@ -739,7 +739,6 @@
         <div id="auth-hint" class="d-note" style="display:none;color:var(--yellow)"></div>
         <div class="link-list">
           <a class="metrics-link" href="https://metrics.bix.computer" target="_blank" rel="noopener"><span>Internal metrics</span><span>↗</span></a>
-          <a class="metrics-link" href="/routing" target="_blank"><span>Routing log</span><span>↗</span></a>
           <a class="metrics-link" href="/blobs" target="_blank"><span>Blob store</span><span>↗</span></a>
         </div>
       </div>
@@ -1569,18 +1568,6 @@ async function send() {
           failed:        data.failed  || 0,
         });
         finishReq('done');
-
-      } else if (evType === 'fallback_triggered') {
-        // Server escalated to Claude — discard the partial and mark the switch.
-        pushModel(modelsUsed, model, false);
-        renderIndicator(wrap, modelsUsed);
-        fullText = '';
-        textSegments = [{type: 'text', content: ''}];
-        bubble.innerHTML = '';
-        addSwitch(`↪ escalated to Claude${data && data.reason ? ` (${data.reason})` : ''}`);
-        currentReq.output_tokens = 0;
-        renderCurrentStats();
-        autoScroll();
 
       } else if (evType === 'tool_start') {
         const newNode = document.createTextNode('');

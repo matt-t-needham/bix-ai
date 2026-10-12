@@ -34,13 +34,12 @@ except Exception:
 
 import blobstore  # noqa: E402 — after logging setup
 import model_admin  # noqa: E402 — after logging setup
-import routing_dash  # noqa: E402 — after logging setup
 import strategy  # noqa: E402 — after logging setup
 
 import config  # noqa: E402
 from config import (  # noqa: E402
     ANTHROPIC_API_KEY, ANTHROPIC_URL, BIX_PROXY_SECRET,
-    DEFAULT_MODEL, OLLAMA_DEFAULT_MODEL, OLLAMA_HOST, ROUTING_LOG,
+    DEFAULT_MODEL, OLLAMA_HOST,
     _ALLOWED_ANTHROPIC_BETAS, _ALLOWED_CLAUDE_MODELS,
     _MAX_BODY_BYTES, _MAX_TOKENS_CAP,
 )
@@ -48,7 +47,6 @@ from helpers import _agg, _claude_session, _write_routing_event, with_keepalive 
 from config import CONV_DIR                                          # noqa: E402
 from memory import _load_all_memories, save_memory_entry  # noqa: E402
 from streaming.claude import _stream_claude                       # noqa: E402
-from streaming.local_first import _stream_local_first             # noqa: E402
 from streaming.ollama import _stream_ollama                       # noqa: E402
 from streaming.pro import _stream_pro                             # noqa: E402
 
@@ -62,7 +60,7 @@ class ChatRequest(BaseModel):
     messages:     list[dict[str, Any]]
     model:        str = DEFAULT_MODEL
     max_tokens:   int = _MAX_TOKENS_CAP
-    mode:         str = "auto"
+    mode:         str = "local"
     tool_offload: bool = False
     # mode="pro" only: claude-CLI session to resume (from the pro_session SSE
     # event). Preserves tool turns across requests; empty = fresh session.
@@ -282,15 +280,6 @@ async def get_memory_entry(entry_id: str):
     return Response(html, media_type="text/html; charset=utf-8")
 
 
-# ── Routing dashboard ─────────────────────────────────────────────────────────
-
-@app.get("/routing")
-async def routing_dashboard():
-    events = await asyncio.to_thread(routing_dash.load_events, ROUTING_LOG)
-    agg = routing_dash.aggregate(events)
-    return Response(routing_dash.render_html(agg), media_type="text/html; charset=utf-8")
-
-
 # ── Blob store housekeeping ───────────────────────────────────────────────────
 
 # Shared stylesheet for the small server-rendered pages (Catppuccin Mocha).
@@ -485,7 +474,7 @@ async def chat(request: Request):
     mode         = body.mode
     tool_offload = body.tool_offload
 
-    if mode in ("api", "pro", "auto") and model not in _ALLOWED_CLAUDE_MODELS:
+    if mode in ("api", "pro") and model not in _ALLOWED_CLAUDE_MODELS:
         return Response(
             status_code=400,
             content=json.dumps({"error": f"Model not permitted: {model}"}),
@@ -515,11 +504,6 @@ async def chat(request: Request):
                     yield event
             elif mode == "api":
                 async for event in _stream_claude(messages, model, max_tokens, skip_preprocess=False, mode=mode):
-                    yield event
-            elif mode == "auto":
-                async for event in _stream_local_first(
-                    messages, OLLAMA_DEFAULT_MODEL, model, max_tokens, mode=mode,
-                ):
                     yield event
             else:
                 async for event in _stream_pro(messages, model, max_tokens, mode=mode,

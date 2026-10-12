@@ -3,10 +3,7 @@ injection, then delegates the agentic loop to streaming.loop.run_tool_loop
 via a (guardrailed) OllamaProvider. Patch points for tests (httpx, time,
 _execute_tool, budgets, routing) stay module attributes here, resolved at
 call time.
-
-Shared with mode=auto's local leg (via streaming.local_first) — mode only
-picks the backend + escalation policy; pre-pass, system prompt, tool
-definitions, and the turn-loop are identical regardless of caller."""
+"""
 import logging
 import time
 

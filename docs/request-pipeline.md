@@ -1,8 +1,9 @@
-# What happens on one chat turn (inventory, as of 2026-10-12)
+# What happens on one chat turn (inventory, as of 2026-10-12, pre-overhaul)
 
 Written to answer "what processes run and what stats come out of a single
-request" before the overhaul. Everything here is the *current* behaviour on
-`main`; `PLAN-overhaul.md` says what stays and what goes.
+request" before the overhaul. Everything here describes `main` as it was
+before PR 1; `PLAN-overhaul.md` says what stayed and what went (auto mode,
+staging, Steam, logs, `/summarize` and the memory title call are already gone).
 
 Legend: **[model]** = an LLM call, **[disk]** = a disk write, **[poll]** = a
 repeating fetch while the stats drawer is open.

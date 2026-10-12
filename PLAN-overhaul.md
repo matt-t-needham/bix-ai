@@ -79,8 +79,11 @@ Remove the retired hub features so the service is just a chat router:
 - Tests and docs for all of the above. The SSE golden fixtures must not
   change.
 
+Also removed in PR 1: `auto` mode and its router (`routing.py`,
+`local_first.py`, `routing_dash.py`, `/routing`). The per-turn
+`routing.ndjson` usage log stays — it's the cost record PR 2 reads.
 Not touched in PR 1 (PR 2 decides their fate): `strategy.py`, `compact.py`,
-`blobstore.py`, `routing.py`, `local_first.py`, `routing_dash.py`.
+`blobstore.py`.
 
 ## PR 2 — OpenRouter + server-owned history
 
@@ -119,10 +122,9 @@ Not touched in PR 1 (PR 2 decides their fate): `strategy.py`, `compact.py`,
   background local call). Memory recall stays a tool. The `metrics` event
   grows `history_messages` / `history_tokens` / `history_folded` so the
   drawer can show what went up.
-- Decide, with numbers from PR 1 usage: whether `strategy.py`'s spill pass
-  and the `routing.py` auto mode survive. Default position: spill stays
-  (only fires on huge pastes), auto routing and compaction are replaced by
-  the per-provider context assembly above.
+- Decide, with numbers from PR 1 usage, whether `strategy.py`'s spill pass
+  survives. Default position: spill stays (only fires on huge pastes);
+  compaction is replaced by the per-provider context assembly above.
 
 ## Open questions
 

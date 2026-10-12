@@ -34,7 +34,7 @@ forge-guardrails' standalone `rescue_tool_call`/`ErrorTracker`/`retry_nudge`
 — NOT `WorkflowRunner`, which owns its own competing loop/prompting). An
 ordinary clean text answer with no tool-call attempt at all is always
 accepted immediately; only a structurally-attempted-but-malformed tool call
-goes through rescue-then-retry. This is what lets mode=local and mode=auto's
+goes through rescue-then-retry. This is what lets mode=local's
 local leg share one implementation with no forced terminal tool.
 """
 import json
@@ -285,7 +285,9 @@ class OllamaProvider:
         self.client_factory = client_factory
         self._route = route
         self.system_sentinel = system_sentinel  # injected system msg to strip from history
-        self.on_exhausted = on_exhausted  # "best_effort" | "escalate"
+        # "best_effort" (answer with what we have) | "escalate" (raise so the
+        # caller can fail over to another provider — no caller since auto mode went).
+        self.on_exhausted = on_exhausted
         self.max_retries = max_retries
         self.progress_interval = PROGRESS_HEARTBEAT_SECONDS  # tests set 0 to force `working` events
         self._tool_names = [t["function"]["name"] for t in tools]
