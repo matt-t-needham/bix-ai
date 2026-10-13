@@ -115,11 +115,21 @@ def _to_ollama_wire(messages: list) -> list:
                 wire.append({"role": "user", "content": text})
             for b in content:
                 if isinstance(b, dict) and b.get("type") == "tool_result":
-                    wire.append({"role": "tool", "tool_call_id": b["tool_use_id"],
-                                "content": b.get("content", "")})
+                    content = b.get("content", "")
+                    # The OpenAI shape has no is_error flag; say it in the text.
+                    if b.get("is_error"):
+                        content = f"Error: {content}"
+                    wire.append({"role": "tool", "tool_call_id": b["tool_use_id"], "content": content})
         else:
             wire.append(m)
     return wire
+
+
+def _tool_result_block(tool_use_id: str, content: str, is_error: bool = False) -> dict:
+    block = {"type": "tool_result", "tool_use_id": tool_use_id, "content": content}
+    if is_error:
+        block["is_error"] = True
+    return block
 
 
 class AnthropicProvider:
@@ -253,10 +263,7 @@ class AnthropicProvider:
         messages.append({"role": "assistant", "content": content})
 
     def append_tool_results(self, messages: list, results: list) -> None:
-        messages.append({"role": "user", "content": [
-            {"type": "tool_result", "tool_use_id": tid, "content": content}
-            for tid, content in results
-        ]})
+        messages.append({"role": "user", "content": [_tool_result_block(*r) for r in results]})
 
     def history_messages(self, messages: list) -> list:
         return messages
@@ -558,10 +565,7 @@ class OllamaProvider:
         messages.append({"role": "assistant", "content": content})
 
     def append_tool_results(self, messages: list, results: list) -> None:
-        messages.append({"role": "user", "content": [
-            {"type": "tool_result", "tool_use_id": tid, "content": content}
-            for tid, content in results
-        ]})
+        messages.append({"role": "user", "content": [_tool_result_block(*r) for r in results]})
 
     def history_messages(self, messages: list) -> list:
         if (messages and messages[0].get("role") == "system"

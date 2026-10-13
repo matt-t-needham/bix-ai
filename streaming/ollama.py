@@ -28,7 +28,7 @@ OLLAMA_SYSTEM = identity_system_prompt(
 async def _stream_ollama(
     messages: list, model: str, mode: str = "local",
     skip_preprocess: bool = False,
-    route_reason: str = "", on_exhausted: str = "best_effort",
+    route_reason: str = "", on_exhausted: str = "best_effort", agent_session=None,
 ):
     _agg["requests"] += 1
     stats         = {"summarised": 0, "skipped": 0, "failed": 0, "spilled": 0}
@@ -67,8 +67,9 @@ async def _stream_ollama(
         })
         yield sse("status", {"stage": "streaming", "message": f"Streaming from Ollama ({model})…"})
 
+    system = agent_session.system(OLLAMA_SYSTEM) if agent_session else OLLAMA_SYSTEM
     if not current_messages or current_messages[0].get("role") != "system":
-        current_messages.insert(0, {"role": "system", "content": OLLAMA_SYSTEM})
+        current_messages.insert(0, {"role": "system", "content": system})
 
     async def _route(input_tokens, output_tokens, ttft_ms, elapsed_ms,
                       guardrail_rescues=0, guardrail_retries=0, guardrail_exhausted=False):
@@ -80,21 +81,25 @@ async def _stream_ollama(
 
     provider = OllamaProvider(
         model=model,
-        tools=OLLAMA_TOOLS,
+        tools=agent_session.ollama_tools() if agent_session else OLLAMA_TOOLS,
         client_factory=lambda: httpx.AsyncClient(timeout=None),
         route=_route,
-        system_sentinel=OLLAMA_SYSTEM,
+        system_sentinel=system,
         on_exhausted=on_exhausted,
     )
     # with_progress covers the fully-silent gaps the provider can't see from
     # inside a blocked read — chiefly prompt eval, which runs minutes on this
     # host's Vulkan setup before the first chunk arrives.
+
+    # Late-bound module-global lookup (tests patch _execute_tool).
+    execute = lambda n, i: _execute_tool(n, with_actor(n, i, f"{mode}:{model}"))  # noqa: E731
     async for event in with_progress(
         run_tool_loop(
             provider, current_messages,
-            # Late-bound module-global lookup (tests patch _execute_tool).
-            execute_tool=lambda n, i: _execute_tool(n, with_actor(n, i, f"{mode}:{model}")),
-            max_tokens_budget=LOOP_MAX_TOKENS, max_seconds=LOOP_MAX_SECONDS,
+            execute_tool=agent_session.executor(execute) if agent_session else execute,
+            gate=agent_session,
+            max_tokens_budget=agent_session.token_budget(LOOP_MAX_TOKENS) if agent_session else LOOP_MAX_TOKENS,
+            max_seconds=LOOP_MAX_SECONDS,
             stats=stats,
             preprocess_ms=preprocess_ms,
             clock=time.monotonic,

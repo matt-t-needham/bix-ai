@@ -28,7 +28,7 @@ OPENROUTER_SYSTEM = identity_system_prompt(
 
 
 async def _stream_openrouter(messages: list, model: str, mode: str = "openrouter",
-                             route_reason: str = ""):
+                             skip_preprocess: bool = False, route_reason: str = "", agent_session=None):
     _agg["requests"] += 1
     if not openrouter.configured():
         yield sse("error", {"message": "OpenRouter is not configured (OPENROUTER_API_KEY is empty)."})
@@ -37,28 +37,29 @@ async def _stream_openrouter(messages: list, model: str, mode: str = "openrouter
     stats = {"summarised": 0, "skipped": 0, "failed": 0, "spilled": 0}
     preprocess_ms = 0
     req_body = {"messages": list(messages)}
-    if strategy.has_oversized_blocks(req_body):
-        yield sse("status", {"stage": "summarising", "message": "Preparing context…"})
-    else:
-        yield sse("status", {"stage": "checking", "message": "Checking…"})
-    t0 = time.monotonic()
-    try:
-        req_body, stats = await strategy.preprocess(req_body, ollama_chat)
-        log.info("preprocess spilled=%d skipped=%d failed=%d",
-                 stats["spilled"], stats["skipped"], stats["failed"])
-    except Exception as e:
-        log.warning("preprocess error: %s", e)
-    preprocess_ms = round((time.monotonic() - t0) * 1000)
+    if not skip_preprocess:
+        if strategy.has_oversized_blocks(req_body):
+            yield sse("status", {"stage": "summarising", "message": "Preparing context…"})
+        else:
+            yield sse("status", {"stage": "checking", "message": "Checking…"})
+        t0 = time.monotonic()
+        try:
+            req_body, stats = await strategy.preprocess(req_body, ollama_chat)
+            log.info("preprocess spilled=%d skipped=%d failed=%d",
+                     stats["spilled"], stats["skipped"], stats["failed"])
+        except Exception as e:
+            log.warning("preprocess error: %s", e)
+        preprocess_ms = round((time.monotonic() - t0) * 1000)
+        _agg["spilled"]       += stats["spilled"]
+        _agg["checked"]       += stats["spilled"] + stats["skipped"]
+        _agg["preprocess_ms"] += preprocess_ms
+        _agg["failed"]        += stats["failed"]
+        yield sse("preprocess", {
+            "summarised": 0, "spilled": stats["spilled"], "compacted": 0,
+            "skipped": stats["skipped"], "failed": stats["failed"],
+            "preprocess_ms": preprocess_ms,
+        })
     current_messages = list(req_body["messages"])
-    _agg["spilled"]       += stats["spilled"]
-    _agg["checked"]       += stats["spilled"] + stats["skipped"]
-    _agg["preprocess_ms"] += preprocess_ms
-    _agg["failed"]        += stats["failed"]
-    yield sse("preprocess", {
-        "summarised": 0, "spilled": stats["spilled"], "compacted": 0,
-        "skipped": stats["skipped"], "failed": stats["failed"],
-        "preprocess_ms": preprocess_ms,
-    })
 
     # Spend caps — checked before anything is sent. The projection is the
     # listed prompt price on the estimated request size plus a nominal
@@ -67,7 +68,8 @@ async def _stream_openrouter(messages: list, model: str, mode: str = "openrouter
     if info is None and not openrouter.is_valid_model_id(model):
         yield sse("error", {"message": f"OpenRouter: '{model}' is not a valid model id."})
         return
-    est_in = strategy.estimate_tokens(OPENROUTER_SYSTEM) + sum(
+    system = agent_session.system(OPENROUTER_SYSTEM) if agent_session else OPENROUTER_SYSTEM
+    est_in = strategy.estimate_tokens(system) + sum(
         strategy.estimate_tokens(strategy.block_text(b) if isinstance(b, dict) else str(b))
         for m in current_messages
         for b in (m.get("content") if isinstance(m.get("content"), list) else [m.get("content", "")])
@@ -81,7 +83,7 @@ async def _stream_openrouter(messages: list, model: str, mode: str = "openrouter
         return
 
     if not current_messages or current_messages[0].get("role") != "system":
-        current_messages.insert(0, {"role": "system", "content": OPENROUTER_SYSTEM})
+        current_messages.insert(0, {"role": "system", "content": system})
     yield sse("status", {"stage": "streaming", "message": f"Streaming from OpenRouter ({model})…"})
 
     async def _route(input_tokens, output_tokens, ttft_ms, elapsed_ms,
@@ -98,18 +100,21 @@ async def _stream_openrouter(messages: list, model: str, mode: str = "openrouter
 
     provider = OpenRouterProvider(
         model=model,
-        tools=OLLAMA_TOOLS,
+        tools=agent_session.ollama_tools() if agent_session else OLLAMA_TOOLS,
         client_factory=lambda: httpx.AsyncClient(timeout=None),
         route=_route,
-        system_sentinel=OPENROUTER_SYSTEM,
+        system_sentinel=system,
         url=config.OPENROUTER_URL,
         headers=openrouter.headers(),
         cost_fn=lambda i, o: openrouter.estimate_cost_usd(info, i, o),
     )
+    execute = lambda n, i: _execute_tool(n, with_actor(n, i, f"{mode}:{model}"))  # noqa: E731
     async for event in run_tool_loop(
         provider, current_messages,
-        execute_tool=lambda n, i: _execute_tool(n, with_actor(n, i, f"{mode}:{model}")),
-        max_tokens_budget=LOOP_MAX_TOKENS, max_seconds=LOOP_MAX_SECONDS,
+        execute_tool=agent_session.executor(execute) if agent_session else execute,
+        gate=agent_session,
+        max_tokens_budget=agent_session.token_budget(LOOP_MAX_TOKENS) if agent_session else LOOP_MAX_TOKENS,
+        max_seconds=LOOP_MAX_SECONDS,
         stats=stats, preprocess_ms=preprocess_ms,
         clock=time.monotonic,
     ):

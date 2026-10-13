@@ -28,11 +28,11 @@ _IDENTITY_PROMPT = identity_system_prompt(
 async def _stream_claude(
     messages: list, model: str, max_tokens: int,
     skip_preprocess: bool, mode: str = "api",
-    route_reason: str = "",
+    route_reason: str = "", agent_session=None,
 ):
     _agg["requests"] += 1
     req_body   = {"model": model, "max_tokens": max_tokens, "messages": messages}
-    req_body["system"] = _IDENTITY_PROMPT
+    req_body["system"] = agent_session.system(_IDENTITY_PROMPT) if agent_session else _IDENTITY_PROMPT
     stats         = {"summarised": 0, "skipped": 0, "failed": 0, "spilled": 0}
     preprocess_ms = 0
     log.debug("claude request model=%s msgs=%d skip_preprocess=%s", model, len(messages), skip_preprocess)
@@ -83,15 +83,18 @@ async def _stream_claude(
     provider = AnthropicProvider(
         req_body={k: v for k, v in req_body.items() if k != "messages"},
         headers=headers,
-        tools=FS_TOOLS,
+        tools=agent_session.anthropic_tools() if agent_session else FS_TOOLS,
         client_factory=lambda: httpx.AsyncClient(timeout=None),
         route=_route,
     )
+    # Late-bound module-global lookup (tests patch _execute_tool).
+    execute = lambda n, i: _execute_tool(n, with_actor(n, i, f"{mode}:{model}"))  # noqa: E731
     async for event in run_tool_loop(
         provider, req_body["messages"],
-        # Late-bound module-global lookup (tests patch _execute_tool).
-        execute_tool=lambda n, i: _execute_tool(n, with_actor(n, i, f"{mode}:{model}")),
-        max_tokens_budget=LOOP_MAX_TOKENS, max_seconds=LOOP_MAX_SECONDS,
+        execute_tool=agent_session.executor(execute) if agent_session else execute,
+        gate=agent_session,
+        max_tokens_budget=agent_session.token_budget(LOOP_MAX_TOKENS) if agent_session else LOOP_MAX_TOKENS,
+        max_seconds=LOOP_MAX_SECONDS,
         stats=stats, preprocess_ms=preprocess_ms,
         clock=time.monotonic,
     ):

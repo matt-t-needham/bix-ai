@@ -4,17 +4,21 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 MCP_SCRIPT = str(Path(__file__).parent.parent / "bix_mcp.py")
 
 
-def _spawn(read_paths: str | None = None, fs_root: str | None = None, data_dir: str | None = None):
+def _spawn(read_paths: str | None = None, fs_root: str | None = None, data_dir: str | None = None,
+           extra_env: dict | None = None):
     """Start the MCP server as a subprocess with optional path overrides."""
-    env = {**os.environ}
+    env = {k: v for k, v in os.environ.items() if not k.startswith("BIX_AGENT_")}
     if read_paths is not None: env["MCP_READ_PATHS"] = read_paths
     if fs_root    is not None: env["FS_ROOT"]        = fs_root
     if data_dir   is not None: env["DATA_DIR"]       = data_dir
+    env.update(extra_env or {})
     return subprocess.Popen(
         [sys.executable, MCP_SCRIPT],
         stdin=subprocess.PIPE,
@@ -170,3 +174,48 @@ def test_mcp_write_tools_tag_with_bix_actor(tmp_path):
         assert not (tmp_path / "escape.md").exists()
     finally:
         proc.terminate()
+
+
+# ── Agent tools (Pro mode, agent chats) ───────────────────────────────────────
+
+def test_agent_tools_are_listed_and_forwarded_to_ai_router():
+    """With a run token, the agent tools come from ai-router's internal route
+    and every call goes back there."""
+    calls = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def _reply(self, payload):
+            data = json.dumps(payload).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_GET(self):
+            calls.append(("GET", self.path, self.headers.get("X-Bix-Agent-Token"), None))
+            self._reply({"tools": [{"name": "run_command", "description": "d", "inputSchema": {"type": "object"}}]})
+
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            calls.append(("POST", self.path, self.headers.get("X-Bix-Agent-Token"), body))
+            self._reply({"text": "Not run: denied by matt.", "is_error": True})
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    proc = _spawn(extra_env={"BIX_AGENT_TOKEN": "tok", "BIX_AGENT_URL": f"http://127.0.0.1:{server.server_port}",
+                             "BIX_AGENT_TIMEOUT": "10"})
+    try:
+        _init(proc)
+        names = {t["name"] for t in _send(proc, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]}
+        assert "run_command" in names and "read_file" in names
+        resp = _send(proc, {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                            "params": {"name": "run_command", "arguments": {"script": "make"}}})
+        assert resp["result"]["isError"] is True
+        assert resp["result"]["content"][0]["text"] == "Not run: denied by matt."
+        assert calls[-1] == ("POST", "/internal/agent/tool", "tok", {"name": "run_command", "arguments": {"script": "make"}})
+    finally:
+        proc.terminate()
+        server.shutdown()

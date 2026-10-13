@@ -93,3 +93,24 @@ BUILT_AT = os.environ.get("BUILT_AT", "unknown")
 # Not derived into a BLOB_DIR constant here — blobstore.py reads config.DATA_DIR
 # at call time (mirrors FS_ROOT) so tests can monkeypatch it.
 BLOB_STORE_MAX_BYTES = int(os.environ.get("BLOB_STORE_MAX_BYTES", str(500_000_000)))
+
+# Agent mode (agent.py): the runner's socket (bix-infra
+# scripts/systemd/bix-agent-runner.socket, mounted in by compose).
+AGENT_RUNNER_SOCKET     = os.environ.get("AGENT_RUNNER_SOCKET", "/run/bix-agent-runner/runner.sock")
+AGENT_APPROVAL_TIMEOUT  = float(os.environ.get("AGENT_APPROVAL_TIMEOUT", "600"))
+# Pro mode's MCP server calls back into this app for agent tools (agent.run_tool).
+AGENT_INTERNAL_URL      = os.environ.get("AGENT_INTERNAL_URL", "http://127.0.0.1:8000")
+# Hand-off reviews (handoff.py): matt's repos, the runner's bundles (mounted
+# read-only), and the fresh-eyes-review skill whose prompts the reviewers get.
+AGENT_APPS_ROOT      = Path(os.environ.get("AGENT_APPS_ROOT", "/home/matt/apps"))
+AGENT_OUT_DIR        = Path(os.environ.get("AGENT_OUT_DIR", "/srv/bixagent/out"))
+HANDOFFS_DIR         = DATA_DIR / "handoffs"
+REVIEW_SKILL         = AGENT_APPS_ROOT / "bix-infra/skills/fresh-eyes-review/SKILL.md"
+REVIEW_MAX_TOKENS    = int(os.environ.get("REVIEW_MAX_TOKENS", "16000"))
+# Context Ollama loads models with on this host (measured: 0.21.2 loads at
+# 32768 and its OpenAI endpoint ignores options.num_ctx). Local reviews check
+# it after the fact (handoff._confirm_local_context).
+REVIEW_LOCAL_CONTEXT = int(os.environ.get("REVIEW_LOCAL_CONTEXT", "32768"))
+# Cloudflare Access for ai.bix.computer (access.py).
+ACCESS_TEAM_DOMAIN = os.environ.get("ACCESS_TEAM_DOMAIN", "bixcomputer.cloudflareaccess.com")
+ACCESS_AUD         = os.environ.get("ACCESS_AUD", "")

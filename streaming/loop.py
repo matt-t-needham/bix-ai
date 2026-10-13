@@ -8,10 +8,18 @@ parsing and message shapes live behind the streaming.providers seam.
 `execute_tool`, `clock`, and the budget limits are injected by the adapter
 module (resolved from its globals at call time) so tests keep patching
 streaming.claude / streaming.ollama attributes exactly as before.
+
+`gate` (agent mode only) holds a tool call until matt approves it: the loop
+emits `approval_required` with a fresh approval id, waits on gate.wait(), and
+runs the tool only if approved.
+
+`execute_tool` returns the result text, or (text, is_error) when the tool can
+fail; is_error reaches both the UI and the model.
 """
 import logging
 import time
 
+import approvals
 from config import LOOP_MAX_TURNS as MAX_TURNS
 from helpers import sse
 
@@ -39,16 +47,17 @@ async def run_tool_loop(
     execute_tool,
     max_tokens_budget: int, max_seconds: float,
     stats: dict, preprocess_ms: int = 0,
-    clock=None,
+    clock=None, gate=None,
 ):
     clock = clock or time.monotonic
     start = clock()
+    waited = 0.0
     ttft_ms = None
     current_messages = list(messages)
     tools_run: list[str] = []
 
     for turn in range(MAX_TURNS):
-        elapsed_so_far = clock() - start
+        elapsed_so_far = clock() - start - waited
         budget = provider.budget_tokens(current_messages)
         if budget > max_tokens_budget or elapsed_so_far > max_seconds:
             log.warning("loop budget exceeded provider=%s turn=%d tokens=%d elapsed=%.1fs",
@@ -110,7 +119,7 @@ async def run_tool_loop(
             log.warning("turn truncated mid-tool-call provider=%s turn=%d tools=%s",
                         provider.name, turn,
                         ",".join(tc["name"] for tc in turn_end["tool_calls"]))
-            elapsed = clock() - start
+            elapsed = clock() - start - waited
             yield sse("metrics", _metrics(
                 provider.final_token_fields(elapsed),
                 round(elapsed * 1000), ttft_ms, preprocess_ms, stats,
@@ -119,7 +128,7 @@ async def run_tool_loop(
             return
 
         if turn_end is None or not turn_end["tool_use"]:
-            elapsed = clock() - start
+            elapsed = clock() - start - waited
             token_fields = provider.final_token_fields(elapsed)
             yield sse("metrics", _metrics(
                 token_fields, round(elapsed * 1000), ttft_ms, preprocess_ms, stats,
@@ -146,15 +155,29 @@ async def run_tool_loop(
             log.info("tool call name=%s path=%s", tc["name"],
                      tc["input"].get("path") or tc["input"].get("target_path", ""))
             tools_run.append(tc["name"])
-            yield sse("status", {"stage": "checking", "message": f"Running {tc['name']}…"})
+            refusal = None
+            if gate is not None and gate.needs_approval(tc["name"], tc["input"]):
+                approval_id = gate.open_request()
+                yield sse("approval_required", {"approval_id": approval_id, "tool_use_id": tc["id"],
+                                                "name": tc["name"], "input": tc["input"]})
+                t_wait = clock()
+                refusal = await gate.wait(approval_id)
+                waited += clock() - t_wait
             t_tool = clock()
-            result = await execute_tool(tc["name"], tc["input"])
+            if refusal:
+                log.info("tool refused name=%s reason=%s", tc["name"], refusal)
+                result, is_error = approvals.not_run(refusal), True
+            else:
+                yield sse("status", {"stage": "checking", "message": f"Running {tc['name']}…"})
+                result, is_error = await execute_tool(tc["name"], tc["input"]), False
+                if isinstance(result, tuple):
+                    result, is_error = result
             log.debug("tool done name=%s elapsed_ms=%d result_len=%d",
                       tc["name"], round((clock() - t_tool) * 1000), len(result))
-            results.append((tc["id"], result))
+            results.append((tc["id"], result, is_error))
             sse_content = result if len(result) <= 4000 else result[:4000] + "\n…(truncated)"
             yield sse("tool_result", {
-                "tool_use_id": tc["id"], "content": sse_content, "is_error": False,
+                "tool_use_id": tc["id"], "content": sse_content, "is_error": is_error,
             })
         provider.append_tool_results(current_messages, results)
 

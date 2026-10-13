@@ -18,6 +18,7 @@ from unittest.mock import patch
 
 import pytest
 
+import agent
 from streaming import claude as claude_mod
 from streaming import loop as loop_mod
 from streaming import ollama as ollama_mod
@@ -151,13 +152,34 @@ def _ollama_two_tool_turn():
 
 # ── Scenarios: (name, runner) ─────────────────────────────────────────────────
 
-def _run_claude(turns, messages, extra_patches=(), client_kwargs=None):
+class StubAgentSession(agent.AgentSession):
+    """Agent mode with a fixed approval id and a scripted decision, so the
+    approval_required → tool_result sequence can be pinned."""
+
+    def __init__(self, refusal=None):
+        super().__init__("conv1", "api:test", hand_off=None)   # the fixtures never hand off
+        self.refusal = refusal
+
+    def needs_approval(self, name, tool_input):
+        return name == "run_command"
+
+    def open_request(self):
+        return "approval-1"
+
+    async def wait(self, approval_id):
+        return self.refusal
+
+    def executor(self, execute):
+        return execute
+
+
+def _run_claude(turns, messages, extra_patches=(), client_kwargs=None, **call_kwargs):
     fake_client = FakeClient(turns, **(client_kwargs or {}))
     routing = RoutingRecorder()
     ps = _claude_patches(fake_client, routing, extra_patches)
     try:
         chunks = run(collect(claude_mod._stream_claude(
-            messages, "claude-sonnet-4-6", 4096, skip_preprocess=True,
+            messages, "claude-sonnet-4-6", 4096, skip_preprocess=True, **call_kwargs,
         )))
     finally:
         _stop(ps)
@@ -179,6 +201,16 @@ def _run_ollama(turns, messages, extra_patches=(), client_kwargs=None, **call_kw
 
 
 SCENARIOS = {
+    "claude_agent_approved": lambda: _run_claude(
+        [_claude_tool_turn("run_command", args='{"script": "make test"}'), _claude_text_turn("done")],
+        [{"role": "user", "content": "run the tests"}],
+        agent_session=StubAgentSession(),
+    ),
+    "claude_agent_denied": lambda: _run_claude(
+        [_claude_tool_turn("run_command", args='{"script": "make test"}'), _claude_text_turn("ok")],
+        [{"role": "user", "content": "run the tests"}],
+        agent_session=StubAgentSession(refusal="denied by matt"),
+    ),
     "claude_text": lambda: _run_claude(
         [_claude_text_turn()],
         [{"role": "user", "content": "hello"}],

@@ -1,0 +1,174 @@
+{
+  "events": [
+    {
+      "event": "status",
+      "data": {
+        "stage": "streaming",
+        "message": "Streaming from Claude\u2026"
+      }
+    },
+    {
+      "event": "budget",
+      "data": {
+        "turn": 1,
+        "max_turns": 50,
+        "elapsed_s": 0,
+        "max_seconds": 1200,
+        "tokens": 0,
+        "max_tokens": 1000000
+      }
+    },
+    {
+      "event": "input_tokens",
+      "data": {
+        "count": 12
+      }
+    },
+    {
+      "event": "tool_start",
+      "data": {
+        "index": 0,
+        "name": "run_command",
+        "id": "toolu_1"
+      }
+    },
+    {
+      "event": "tool_input",
+      "data": {
+        "index": 0,
+        "partial_json": "{\"script\": \"make test\"}"
+      }
+    },
+    {
+      "event": "tool_end",
+      "data": {
+        "index": 0
+      }
+    },
+    {
+      "event": "approval_required",
+      "data": {
+        "approval_id": "approval-1",
+        "tool_use_id": "toolu_1",
+        "name": "run_command",
+        "input": {
+          "script": "make test"
+        }
+      }
+    },
+    {
+      "event": "status",
+      "data": {
+        "stage": "checking",
+        "message": "Running run_command\u2026"
+      }
+    },
+    {
+      "event": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_1",
+        "content": "RESULT[run_command:{\"script\": \"make test\"}]",
+        "is_error": false
+      }
+    },
+    {
+      "event": "status",
+      "data": {
+        "stage": "streaming",
+        "message": "Streaming from Claude\u2026"
+      }
+    },
+    {
+      "event": "budget",
+      "data": {
+        "turn": 2,
+        "max_turns": 50,
+        "elapsed_s": 0,
+        "max_seconds": 1200,
+        "tokens": 21,
+        "max_tokens": 1000000
+      }
+    },
+    {
+      "event": "delta",
+      "data": {
+        "text": "done"
+      }
+    },
+    {
+      "event": "metrics",
+      "data": {
+        "input_tokens": 22,
+        "output_tokens": 4,
+        "elapsed_ms": 0,
+        "ttft_ms": 0,
+        "preprocess_ms": 0,
+        "tps": 0,
+        "summarised": 0,
+        "spilled": 0,
+        "skipped": 0,
+        "failed": 0
+      }
+    },
+    {
+      "event": "history",
+      "data": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "run the tests"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_1",
+                "name": "run_command",
+                "input": {
+                  "script": "make test"
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "toolu_1",
+                "content": "RESULT[run_command:{\"script\": \"make test\"}]"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "done"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "event": "done",
+      "data": {}
+    }
+  ],
+  "routing": [
+    {
+      "mode": "api",
+      "model": "claude-sonnet-4-6",
+      "reason": "forced:api",
+      "summarised": 0,
+      "preprocess_ms": 0,
+      "input_tokens": 22,
+      "output_tokens": 4,
+      "ttft_ms": 0,
+      "elapsed_ms": 0
+    }
+  ]
+}

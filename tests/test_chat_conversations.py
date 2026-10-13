@@ -134,7 +134,7 @@ def test_errored_turn_keeps_transcript_alternating(env, client, monkeypatch):
 
 
 def test_pro_turn_persists_text_and_session(env, client, monkeypatch):
-    async def fake_pro(messages, model, max_tokens, mode="pro", session_id=""):
+    async def fake_pro(messages, model, max_tokens, mode="pro", session_id="", agent_session=None):
         yield sse("pro_session", {"session_id": "abcd-1234"})
         yield sse("delta", {"text": "pro says hi"})
         yield sse("metrics", {"input_tokens": 0, "output_tokens": 3, "elapsed_ms": 1, "ttft_ms": 1,
@@ -152,7 +152,7 @@ def test_pro_turn_persists_text_and_session(env, client, monkeypatch):
     # Resume: only the newest message goes to the CLI, context says so.
     seen = {}
 
-    async def spy(messages, model, max_tokens, mode="pro", session_id=""):
+    async def spy(messages, model, max_tokens, mode="pro", session_id="", agent_session=None):
         seen["messages"], seen["session_id"] = list(messages), session_id
         async for ev in fake_pro(messages, model, max_tokens, mode, session_id):
             yield ev

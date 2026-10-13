@@ -4,11 +4,16 @@
 outbox/, via workspace.py). Stdlib-only — it runs inside the `claude` CLI
 subprocess, not the FastAPI app. BIX_ACTOR (set per run by streaming/pro.py)
 names the model in each write's tag; the write tools' schemas mirror
-tools.TOOL_TABLE (tests/test_mcp.py keeps them in step)."""
+tools.TOOL_TABLE (tests/test_mcp.py keeps them in step).
+
+In an agent-mode chat, pro.py also sets BIX_AGENT_TOKEN: the agent tools are
+then listed from, and every call to one forwarded to, ai-router's
+/internal/agent/* routes."""
 import json
 import os
 import pathlib
 import sys
+import urllib.request
 
 import workspace
 from fs_core import is_denied_path, list_directory, read_file
@@ -16,6 +21,29 @@ from fs_core import is_denied_path, list_directory, read_file
 READ_ROOTS  = [pathlib.Path(p).resolve() for p in os.environ.get("MCP_READ_PATHS",  "/home/matt/apps").split(":") if p]
 DATA_DIR    = pathlib.Path(os.environ.get("DATA_DIR", "/app/data"))
 MEM_DIR     = DATA_DIR / "memories"
+# Set together by streaming/pro.py, for agent-mode chats only.
+AGENT_TOKEN   = os.environ.get("BIX_AGENT_TOKEN", "")
+AGENT_URL     = os.environ.get("BIX_AGENT_URL", "")
+AGENT_TIMEOUT = float(os.environ.get("BIX_AGENT_TIMEOUT", "0"))
+_agent_tools: list[dict] = []
+
+
+def _agent_request(path: str, payload: dict | None = None) -> dict:
+    """This server handles one request at a time, so a call queued behind an
+    open approval card waits for it; the timeout covers one card plus one command."""
+    req = urllib.request.Request(
+        AGENT_URL + path, data=json.dumps(payload).encode() if payload is not None else None,
+        headers={"X-Bix-Agent-Token": AGENT_TOKEN, "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=AGENT_TIMEOUT) as resp:
+        return json.loads(resp.read())
+
+
+def _list_agent_tools() -> list[dict]:
+    """Fetched once from ai-router; a failure is a JSON-RPC error, not a quiet
+    tool list with the agent tools missing."""
+    if AGENT_TOKEN and not _agent_tools:
+        _agent_tools.extend(_agent_request("/internal/agent/tools")["tools"])
+    return _agent_tools
 
 
 def _is_under(path: pathlib.Path, roots: list) -> bool:
@@ -270,6 +298,15 @@ def _execute(name: str, args: dict) -> dict:
         except OSError as e:
             return _tool_error(f"Not written — the write failed: {e}")
 
+    if name in {t["name"] for t in _list_agent_tools()}:
+        try:
+            reply = _agent_request("/internal/agent/tool", {"name": name, "arguments": args})
+        except (OSError, ValueError) as e:   # URLError is an OSError
+            return _tool_error(f"Not run — ai.Bix's agent route failed: {e}")
+        if reply["is_error"]:
+            return _tool_error(reply["text"])
+        return _tool_ok(reply["text"])
+
     return _tool_error(f"Unknown tool: {name}")
 
 
@@ -287,7 +324,7 @@ def _handle(req: dict) -> dict | None:
         return None  # notification — no response
 
     if method == "tools/list":
-        return {"tools": TOOL_DEFS}
+        return {"tools": TOOL_DEFS + _list_agent_tools()}
 
     if method == "tools/call":
         params = req.get("params", {})

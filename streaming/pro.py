@@ -6,6 +6,8 @@ import re
 import time
 from pathlib import Path
 
+import agent
+import config
 import strategy
 
 from helpers import _write_routing_event, ollama_chat, sse
@@ -22,12 +24,49 @@ _PRO_IDENTITY_PROMPT = identity_system_prompt(
 MCP_CONFIG_PATH = Path(__file__).resolve().parent.parent / "mcp.json"
 
 
-def _mcp_config(model: str) -> str:
+# An agent tool call can wait AGENT_APPROVAL_TIMEOUT for matt, then run for
+# up to the runner's cap; the CLI must not give up on it first (+120 s slack).
+MCP_TOOL_TIMEOUT_MS = round((config.AGENT_APPROVAL_TIMEOUT + agent.RUNNER_MAX_TIMEOUT_S + 120) * 1000)
+
+
+def _mcp_config(model: str, agent_token: str = "") -> str:
     """mcp.json with BIX_ACTOR set for this run, passed to the CLI inline, so
-    the MCP server can tag workspace writes with the model making them."""
+    the MCP server can tag workspace writes with the model making them. An
+    agent-mode run also gets the token, URL and timeout its agent tools call back with."""
     cfg = json.loads(MCP_CONFIG_PATH.read_text())
-    cfg["mcpServers"]["bix"].setdefault("env", {})["BIX_ACTOR"] = f"pro:{model}"
+    env = cfg["mcpServers"]["bix"].setdefault("env", {})
+    env["BIX_ACTOR"] = f"pro:{model}"
+    if agent_token:
+        env.update(BIX_AGENT_TOKEN=agent_token, BIX_AGENT_URL=config.AGENT_INTERNAL_URL,
+                   BIX_AGENT_TIMEOUT=str(MCP_TOOL_TIMEOUT_MS // 1000))
     return json.dumps(cfg)
+
+
+async def _lines_and_events(stream, events: asyncio.Queue | None):
+    """The CLI's stdout lines as (line, None), with (None, sse) for each event
+    the agent run queues meanwhile: an approval card has to reach the chat
+    while the CLI sits silent, waiting on that very tool call."""
+    if events is None:
+        async for raw in stream:
+            yield raw, None
+        return
+    line_task = asyncio.ensure_future(stream.readline())
+    event_task = asyncio.ensure_future(events.get())
+    try:
+        while True:
+            done, _ = await asyncio.wait({line_task, event_task}, return_when=asyncio.FIRST_COMPLETED)
+            if event_task in done:
+                yield None, event_task.result()
+                event_task = asyncio.ensure_future(events.get())
+            if line_task in done:
+                raw = line_task.result()
+                if not raw:
+                    return
+                yield raw, None
+                line_task = asyncio.ensure_future(stream.readline())
+    finally:
+        line_task.cancel()
+        event_task.cancel()
 
 
 class _SessionGone(Exception):
@@ -57,7 +96,7 @@ def _build_pro_prompt(messages: list) -> str:
 
 async def _run_claude_once(
     prompt: str, system_prompt: str, model: str,
-    resume_session_id: str, state: dict,
+    resume_session_id: str, state: dict, agent_run: agent.AgentRun | None = None,
 ):
     """One `claude -p` subprocess run, yielded as SSE events.
 
@@ -72,7 +111,7 @@ async def _run_claude_once(
         "--output-format", "stream-json",
         "--verbose",
         "--system-prompt", system_prompt,
-        "--mcp-config", _mcp_config(model),
+        "--mcp-config", _mcp_config(model, agent_run.token if agent_run else ""),
         "--allowedTools", "mcp__bix__*",
         "--model", model,
     ]
@@ -92,6 +131,7 @@ async def _run_claude_once(
     try:
         proc_env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
         proc_env["HOME"] = "/home/matt"
+        proc_env["MCP_TOOL_TIMEOUT"] = str(MCP_TOOL_TIMEOUT_MS)
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -100,7 +140,10 @@ async def _run_claude_once(
             limit=2**22,  # 4MB — default 64KB is too small for large Claude JSON events
         )
 
-        async for raw in proc.stdout:
+        async for raw, queued in _lines_and_events(proc.stdout, agent_run.events if agent_run else None):
+            if queued is not None:
+                yield queued
+                continue
             line = raw.decode("utf-8", errors="replace").strip()
             if not line:
                 continue
@@ -237,7 +280,7 @@ async def _run_claude_once(
 
 async def _stream_pro(
     messages: list, model: str, max_tokens: int,
-    mode: str = "pro", session_id: str = "",
+    mode: str = "pro", session_id: str = "", agent_session=None,
 ):
     stats         = {"summarised": 0, "skipped": 0, "failed": 0, "spilled": 0}
     preprocess_ms = 0
@@ -267,7 +310,7 @@ async def _stream_pro(
     })
     yield sse("status", {"stage": "streaming", "message": "Streaming via Claude Pro…"})
 
-    system_prompt = _PRO_IDENTITY_PROMPT
+    system_prompt = agent_session.system(_PRO_IDENTITY_PROMPT) if agent_session else _PRO_IDENTITY_PROMPT
 
     # Resuming a CLI session: the session already holds the full history
     # (including tool turns the text-only prompt replay would lose), so only
@@ -292,10 +335,11 @@ async def _stream_pro(
         "start": time.monotonic(),
     }
 
+    agent_run = agent.open_run(agent_session) if agent_session else None
     try:
         try:
             async for ev in _run_claude_once(prompt, system_prompt, model,
-                                             resume_sid, state):
+                                             resume_sid, state, agent_run):
                 yield ev
         except _SessionGone as e:
             log.warning("pro resume failed (session gone), retrying fresh: %s", e)
@@ -304,12 +348,15 @@ async def _stream_pro(
             state.update(input_tokens=0, output_tokens=0, ttft_ms=None,
                          session_id=None, failed=False)
             async for ev in _run_claude_once(prompt_full, system_prompt, model,
-                                             "", state):
+                                             "", state, agent_run):
                 yield ev
     except Exception as e:
         log.error("pro stream error: %s", e)
         yield sse("error", {"message": str(e)})
         return
+    finally:
+        if agent_run:
+            agent.close_run(agent_run.token)
 
     if state["failed"]:
         return

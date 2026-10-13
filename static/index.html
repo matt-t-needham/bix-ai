@@ -237,6 +237,40 @@
       font-size: .9em;
     }
 
+    .approval-card {
+      background: color-mix(in srgb, var(--mauve) 12%, var(--surface0));
+      border: 1px solid var(--mauve);
+      border-radius: 10px;
+      padding: 10px 12px;
+      margin-top: 8px;
+      display: flex; flex-direction: column; gap: 8px;
+      font-size: .85em;
+      max-width: 88%;
+    }
+    .approval-card pre, .handoff-round > pre {
+      margin: 0; white-space: pre-wrap; word-break: break-word;
+      font-family: ui-monospace, 'Cascadia Code', 'Fira Code', Menlo, monospace; color: var(--text);
+    }
+    .approval-actions { display: flex; gap: 8px; }
+    .approval-actions button { min-height: var(--tap); }
+    .approval-outcome { color: var(--subtext); }
+
+    .handoff-card {
+      background: var(--surface0); border: 1px solid var(--surface1); border-radius: 10px;
+      padding: 10px 12px; margin-top: 10px; max-width: 88%;
+      display: flex; flex-direction: column; gap: 8px; font-size: .85em;
+    }
+    .handoff-head { font-size: .75rem; color: var(--subtext); }
+    .handoff-title { font-size: 1rem; }
+    .handoff-intent, .handoff-note { color: var(--subtext); }
+    .handoff-round { border-top: 1px solid var(--surface1); padding-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+    .handoff-report summary { cursor: pointer; color: var(--subtext); }
+    .handoff-report .bubble { padding: 6px 0 0; max-width: 100%; }
+    .handoff-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .handoff-actions select { min-height: var(--tap); max-width: 100%; background: var(--bg); color: var(--text);
+                              border: 1px solid var(--surface1); border-radius: 6px; padding: 0 8px; }
+    .handoff-actions button { min-height: var(--tap); }
+
     /* ── tool groups ── */
     .tool-group { margin-top: 6px; width: 100%; max-width: 88%; }
     @media (min-width: 600px) { .tool-group { max-width: min(70ch, 85%); } }
@@ -327,7 +361,7 @@
     }
     .composer-inner { max-width: 820px; margin: 0 auto; display: flex; flex-direction: column; gap: 6px; }
     @media (min-width: 600px) { .composer { padding-top: 10px; } .composer-inner { gap: 8px; } }
-    .composer-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .composer-row { display: flex; align-items: center; gap: 8px; min-width: 0; position: relative; }
     .model-chip {
       display: inline-flex; align-items: center; gap: 7px;
       min-height: 32px; padding: 0 12px;
@@ -354,6 +388,24 @@
     }
     .chip-tag.visible { display: inline-block; }
     .chip-tag.on { color: var(--yellow); border-color: var(--yellow); }
+    .agent-toggle {
+      font-size: .7rem; color: var(--subtext); background: none;
+      border: 1px solid var(--surface1); border-radius: 6px;
+      padding: 3px 8px; white-space: nowrap;
+    }
+    .agent-toggle[aria-pressed="true"] { color: var(--mauve); border-color: var(--mauve); }
+    .info-btn {
+      width: 18px; height: 18px; flex-shrink: 0; padding: 0;
+      border-radius: 50%; border: 1px solid var(--surface1); background: none;
+      color: var(--subtext); font-size: .65rem; line-height: 1;
+    }
+    .info-tip {
+      display: none; position: absolute; bottom: calc(100% + 6px); left: 0;
+      max-width: 320px; padding: 8px 10px; z-index: 20;
+      background: var(--surface0); border: 1px solid var(--surface1); border-radius: 8px;
+      color: var(--text); font-size: .75rem; line-height: 1.4;
+    }
+    .info-btn:hover + .info-tip, .info-btn:focus-visible + .info-tip, .info-tip.open { display: block; }
     .input-row { display: flex; gap: 8px; align-items: flex-end; }
     textarea {
       flex: 1;
@@ -664,6 +716,12 @@
           <span class="caret">▼</span>
         </button>
         <span class="chip-tag" id="api-mode-badge" title="Using API credits (Pro quota reached)">API credits</span>
+        <button class="agent-toggle" id="agent-toggle" aria-pressed="false" aria-describedby="agent-info">Sandbox off</button>
+        <button class="info-btn" id="agent-info-btn" aria-label="What sandbox mode does" aria-expanded="false">i</button>
+        <div class="info-tip" id="agent-info" role="tooltip">
+          Allow the agent to clone and work in a sandbox. You can review and approve
+          its changes later. Allows for more dangerous CLI commands and broader edits.
+        </div>
       </div>
       <div class="input-row">
         <textarea id="input" placeholder="Message…" rows="1" enterkeyhint="send"></textarea>
@@ -850,6 +908,7 @@ const MODEL_RATES = {
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let conversationId = null;   // server-owned chat; the browser keeps only the id
+let agentMode    = false;    // per conversation: restored from the record, off for a new chat
 let provider     = 'claude';
 let model        = 'claude-sonnet-4-6';
 let localModel   = 'gemma4:26b';        // remembered separately so switching back is one tap
@@ -1240,6 +1299,8 @@ document.addEventListener('visibilitychange', () => {
 // shows as source in .math-pending spans, which ensureKatex() typesets once
 // loaded. Inline $…$ needs something LaTeX-like inside, so "$5 or $10" stays text.
 marked.setOptions({ gfm: true, breaks: true });
+// Tags that fetch on their own (media, stylesheets): model text has no use for them.
+const PURIFY = { FORBID_TAGS: ['style', 'video', 'audio', 'source', 'track'] };
 DOMPurify.addHook('afterSanitizeAttributes', node => {
   if (node.tagName === 'A') { node.setAttribute('target', '_blank'); node.setAttribute('rel', 'noopener noreferrer'); }
 });
@@ -1292,7 +1353,7 @@ function typesetPending() {
     document.querySelectorAll('.math-pending').forEach(el => {
       const html = mathHtml({ tex: el.dataset.tex, display: el.dataset.display === '1' });
       const tmp = document.createElement('span');
-      tmp.innerHTML = DOMPurify.sanitize(html);
+      tmp.innerHTML = DOMPurify.sanitize(html, PURIFY);
       el.replaceWith(...tmp.childNodes);
     });
   }).catch(err => {
@@ -1304,11 +1365,11 @@ function typesetPending() {
 
 function renderMd(text) {
   const { text: body, math } = extractMath(text);
-  let html = DOMPurify.sanitize(marked.parse(body));
+  let html = DOMPurify.sanitize(marked.parse(body), PURIFY);
   if (math.length) {
     // Sanitise again: math lands after the first pass, and a placeholder can
     // sit anywhere marked put it (even inside an attribute).
-    html = DOMPurify.sanitize(html.replace(/@@BIXMATH(\d+)@@/g, (_, n) => mathHtml(math[+n])));
+    html = DOMPurify.sanitize(html.replace(/@@BIXMATH(\d+)@@/g, (_, n) => mathHtml(math[+n])), PURIFY);
     if (!window.katex) queueMicrotask(typesetPending);
   }
   return html;
@@ -1682,12 +1743,203 @@ function renderChats() {
   }
 }
 function clearMessages() {
-  msgsIn.querySelectorAll('.msg').forEach(el => el.remove());
+  msgsIn.querySelectorAll('.msg, .handoff-card').forEach(el => el.remove());
   if (emptyState) emptyState.style.display = '';
 }
+function setAgentMode(on) {
+  agentMode = on;
+  const btn = $('agent-toggle');
+  btn.setAttribute('aria-pressed', String(on));
+  btn.textContent = on ? 'Sandbox on' : 'Sandbox off';
+}
+// Approve/Deny card for a command the agent is waiting on. Everything from the
+// model goes in as text, never HTML. Returns retire(note): called when the
+// call's result arrives or the stream ends, so no stale card stays clickable.
+function showApproval(wrap, data) {
+  const convId = conversationId;
+  const card = document.createElement('div'); card.className = 'approval-card';
+  const label = document.createElement('div');
+  const detail = document.createElement('pre');
+  const input = data.input || {};
+  if (data.name === 'run_command') {
+    label.textContent = `Run in ${input.repo ? input.repo + (input.cwd ? '/' + input.cwd : '') : 'the agent\'s home'}:`;
+    detail.textContent = input.script || '';
+  } else if (data.name === 'clone_repo') {
+    label.textContent = `Replace the agent's clone of ${input.repo}? Everything in it is discarded.`;
+  } else {
+    label.textContent = `${toolFriendlyName(data.name)}:`;
+    detail.textContent = JSON.stringify(input, null, 2);
+  }
+  const actions = document.createElement('div'); actions.className = 'approval-actions';
+  const outcome = document.createElement('div'); outcome.className = 'approval-outcome';
+  const decide = async approve => {
+    actions.querySelectorAll('button').forEach(b => { b.disabled = true; });
+    try {
+      const res = await fetch(`/conversations/${encodeURIComponent(convId)}/approvals/${encodeURIComponent(data.approval_id)}`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ approve }),
+      });
+      if (!res.ok) {
+        let msg = `HTTP ${res.status}`;
+        try { const j = await res.json(); if (j.error) msg += ` — ${j.error}`; } catch {}
+        throw new Error(msg);
+      }
+      actions.remove();
+      outcome.textContent = approve ? 'Approved' : 'Denied';
+    } catch (e) {
+      actions.querySelectorAll('button').forEach(b => { b.disabled = false; });
+      outcome.textContent = `Not sent: ${e.message}`;
+    }
+  };
+  for (const [text, approve] of [['Approve', true], ['Deny', false]]) {
+    const b = document.createElement('button'); b.className = 'use-api-btn'; b.textContent = text;
+    b.addEventListener('click', () => decide(approve));
+    actions.appendChild(b);
+  }
+  card.append(label);
+  if (detail.textContent) card.append(detail);
+  card.append(actions, outcome);
+  wrap.appendChild(card);
+  autoScroll();
+  return note => {
+    if (!actions.isConnected) return;
+    actions.remove();
+    outcome.textContent = note;
+  };
+}
+// Hand-off cards: one per hand_off the agent made in this chat, with its
+// review rounds. Re-rendered in place from GET …/handoffs; polled while a
+// review runs. Model text goes through renderMd (sanitised) or textContent.
+let handoffTimer = null;
+async function loadHandoffs() {
+  clearTimeout(handoffTimer);
+  const convId = conversationId;
+  if (!convId) return;
+  let list;
+  try {
+    const res = await fetch(`/conversations/${encodeURIComponent(convId)}/handoffs`);
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(`HTTP ${res.status}${j.error ? ' — ' + j.error : ''}`);
+    list = j.handoffs || [];
+  } catch (e) {
+    list = null;
+    renderHandoffError(`Couldn't load hand-offs: ${e.message}`);
+  }
+  if (convId !== conversationId || !list) return;
+  for (const h of list) renderHandoff(h);
+  if (list.some(h => h.rounds[h.rounds.length - 1].status === 'running')) {
+    handoffTimer = setTimeout(loadHandoffs, 4000);
+  }
+}
+function renderHandoffError(text) {
+  let el = document.getElementById('handoff-error');
+  if (!el) { el = document.createElement('div'); el.id = 'handoff-error'; el.className = 'handoff-card'; msgsIn.appendChild(el); }
+  el.textContent = text;
+}
+const ROUND_STATUS = {
+  waiting: '○ Waiting for you to start the review',
+  running: '… Reviewing',
+  done:    '✓ Reviewed',
+  failed:  '! Review failed',
+};
+function reviewerOptions(agentActor) {
+  // Reviews run through ai.Bix's own tool loop, which pro mode doesn't use:
+  // a pro agent's default reviewer is the same model through the API.
+  const def = agentActor.replace(/^pro:/, 'api:');
+  const viaApi = def !== agentActor;
+  const opts = [[def, `${def} (the agent's model${viaApi ? ', via the API' : ''})`]];
+  for (const m of CLAUDE_MODELS) opts.push([`api:${m.id}`, `Claude API · ${m.name}`]);
+  for (const m of localModels) opts.push([`local:${m.name}`, `Local · ${m.name}`]);
+  if (openrouterModel) opts.push([`openrouter:${openrouterModel}`, `OpenRouter · ${openrouterModel}`]);
+  return opts.filter(([v], i) => opts.findIndex(([w]) => w === v) === i);
+}
+function renderHandoff(h) {
+  const id = `handoff-${h.id}`;
+  let card = document.getElementById(id);
+  const fresh = !card;
+  if (fresh) { card = document.createElement('div'); card.id = id; card.className = 'handoff-card'; }
+  const openReports = new Set([...card.querySelectorAll('details[open]')].map(d => d.dataset.key));
+  card.replaceChildren();
+  const add = (tag, cls, text) => {
+    const el = document.createElement(tag); if (cls) el.className = cls;
+    if (text !== undefined) el.textContent = text;
+    return el;
+  };
+  card.append(add('div', 'handoff-head', `Hand-off · ${h.repo}`), add('div', 'handoff-title', h.title),
+              add('div', 'handoff-intent', h.intent));
+  h.rounds.forEach((r, i) => {
+    const latest = i === h.rounds.length - 1;
+    const sec = add('div', 'handoff-round');
+    sec.append(add('div', '', `Round ${r.n} · ${ROUND_STATUS[r.status] || r.status}` +
+                             (r.reviewer ? ` · ${r.reviewer}` : '')));
+    if (r.status === 'failed' && r.error) sec.append(add('pre', '', r.error));
+    if (r.binary && r.binary.length) {
+      sec.append(add('div', 'handoff-note', `! Binary files changed, not reviewed: ${r.binary.join(', ')}`));
+    }
+    for (const rev of r.reviews) {
+      const det = add('details', 'handoff-report'); det.dataset.key = `${r.n}-${rev.label}`;
+      det.open = latest && (fresh || openReports.has(det.dataset.key));
+      const body = add('div', 'bubble'); body.innerHTML = renderMd(rev.text);
+      det.append(add('summary', '', rev.label), body);
+      sec.append(det);
+    }
+    if (r.status === 'done') {
+      sec.append(add('div', 'handoff-note', `Fetch this round's branch (sha256-checked against what was reviewed):`));
+      const cmd = add('pre', '', r.fetch);
+      const actions = add('div', 'handoff-actions');
+      const copy = add('button', 'use-api-btn', 'Copy command');
+      copy.addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(r.fetch); copy.textContent = 'Copied'; }
+        catch (e) { copy.textContent = 'Copy failed — select it by hand'; }
+      });
+      actions.append(copy);
+      if (latest) {
+        const back = add('button', 'use-api-btn', 'Send to agent');
+        back.title = 'Puts both reports in the message box, with sandbox mode on, for you to add to and send';
+        back.addEventListener('click', () => {
+          setAgentMode(true);
+          inputEl.value = r.feedback;
+          inputEl.dispatchEvent(new Event('input'));
+          inputEl.focus();
+        });
+        actions.append(back);
+      }
+      sec.append(cmd, actions);
+    }
+    if (latest && (r.status === 'waiting' || r.status === 'failed')) {
+      const actions = add('div', 'handoff-actions');
+      const pick = add('select'); pick.setAttribute('aria-label', 'Reviewer model');
+      for (const [value, label] of reviewerOptions(h.actor)) pick.append(new Option(label, value));
+      const run = add('button', 'use-api-btn', r.status === 'failed' ? 'Retry review' : 'Run review');
+      const note = add('span', 'approval-outcome');
+      run.addEventListener('click', async () => {
+        run.disabled = true;
+        const sep = pick.value.indexOf(':');
+        try {
+          const res = await fetch(`/conversations/${encodeURIComponent(h.conversation)}/handoffs/${encodeURIComponent(h.id)}/review`, {
+            method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ mode: pick.value.slice(0, sep), model: pick.value.slice(sep + 1) }),
+          });
+          const j = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(`HTTP ${res.status}${j.error ? ' — ' + j.error : ''}`);
+          loadHandoffs();
+        } catch (e) {
+          run.disabled = false;
+          note.textContent = `Not started: ${e.message}`;
+        }
+      });
+      actions.append(pick, run, note);
+      sec.append(actions);
+    }
+    card.append(sec);
+  });
+  if (fresh) { msgsIn.appendChild(card); autoScroll(); }
+}
+
 function newChat() {
   if (busy) return;
   conversationId = null; proSessionId = null;
+  setAgentMode(false);
   savePrefs();
   clearMessages();
   renderChats();
@@ -1763,9 +2015,11 @@ async function openChat(id) {
     const rec = await res.json();
     conversationId = rec.id;
     proSessionId = rec.pro_session_id || null;
+    setAgentMode(!!rec.agent);
     savePrefs();
     renderStored(rec);
     renderChats();
+    if (rec.agent) loadHandoffs();
   } catch (e) {
     conversationId = null; savePrefs();
     clearMessages();
@@ -1817,6 +2071,7 @@ async function send() {
   let totalTools      = 0;
   let thinkingEl      = null;
   let thinkingText    = '';
+  const openCards       = [];   // retire functions of approval cards still showing buttons
   const toolBubbles     = {};
   const toolBubblesById = {};
   let textSegments    = [{type: 'text', content: ''}];
@@ -1847,6 +2102,7 @@ async function send() {
         conversation_id: conversationId || 'new',
         model, mode,
         session_id: mode === 'pro' ? (proSessionId || '') : '',
+        agent: agentMode,
       }),
       signal: abortCtrl.signal,
     });
@@ -1983,6 +2239,8 @@ async function send() {
         if (pendingTools === 0 && toolGroupEl) toolGroupEl.classList.remove('running');
 
       } else if (evType === 'tool_result') {
+        // Tool calls run one at a time, so the oldest open card is this call's.
+        if (openCards.length) openCards.shift()(data.is_error ? data.content : 'Ran');
         const tb = toolBubblesById[data.tool_use_id];
         if (tb) {
           let resultEl = tb.bod.querySelector('.tool-result');
@@ -1994,6 +2252,9 @@ async function send() {
           if (data.is_error) resultEl.classList.add('error');
           resultEl.textContent = data.content;
         }
+
+      } else if (evType === 'approval_required') {
+        openCards.push(showApproval(wrap, data));
 
       } else if (evType === 'history') {
         // Server owns the transcript now; nothing to keep client-side.
@@ -2013,6 +2274,7 @@ async function send() {
       } else if (evType === 'done') {
         if (mode === 'openrouter') loadSpend();
         loadChats();
+        if (agentMode) loadHandoffs();
 
       } else if (evType === 'error') {
         bubble.textContent = 'Error: ' + data.message;
@@ -2034,6 +2296,7 @@ async function send() {
     }
   }
 
+  while (openCards.length) openCards.shift()('Stream ended before a decision — not run');
   abortCtrl = null;
   setBusy(false);
   if (window.matchMedia('(min-width: 900px)').matches) inputEl.focus();
@@ -2064,6 +2327,17 @@ initSectionStates();
 loadModels();
 loadOpenRouter();
 $('new-chat-btn').addEventListener('click', newChat);
+$('agent-toggle').addEventListener('click', () => { if (!busy) setAgentMode(!agentMode); });
+// Hover and focus show the tip in CSS; a tap toggles it for touch screens.
+$('agent-info-btn').addEventListener('click', e => {
+  const open = $('agent-info').classList.toggle('open');
+  e.currentTarget.setAttribute('aria-expanded', String(open));
+});
+document.addEventListener('click', e => {
+  if (e.target.id === 'agent-info-btn') return;
+  $('agent-info').classList.remove('open');
+  $('agent-info-btn').setAttribute('aria-expanded', 'false');
+});
 if (conversationId) openChat(conversationId);
 </script>
 </body>

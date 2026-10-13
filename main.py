@@ -33,9 +33,13 @@ try:
 except Exception:
     pass
 
+import access  # noqa: E402 — after logging setup
+import agent  # noqa: E402 — after logging setup
+import approvals  # noqa: E402 — after logging setup
 import blobstore  # noqa: E402 — after logging setup
 import context  # noqa: E402 — after logging setup
 import conversations  # noqa: E402 — after logging setup
+import handoff  # noqa: E402 — after logging setup
 import model_admin  # noqa: E402 — after logging setup
 import openrouter  # noqa: E402 — after logging setup
 import strategy  # noqa: E402 — after logging setup
@@ -62,6 +66,29 @@ psutil.cpu_percent()  # prime the psutil cpu counter
 
 app = FastAPI()
 
+
+_POLICY = b"img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'"
+
+
+class _FetchPolicy:
+    """Images, media, fonts and stylesheets only from this origin: rendered
+    model text (chat replies, review reports) can't leak what a model read
+    through a remote URL. Plain ASGI, so streamed responses pass through
+    untouched."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        async def send_with_policy(message):
+            if message["type"] == "http.response.start":
+                message["headers"] = [*message.get("headers", []), (b"content-security-policy", _POLICY)]
+            await send(message)
+        await self.app(scope, receive, send_with_policy if scope["type"] == "http" else send)
+
+
+app.add_middleware(_FetchPolicy)
+
 # ── Request models ────────────────────────────────────────────────────────────
 
 class ChatRequest(BaseModel):
@@ -79,6 +106,22 @@ class ChatRequest(BaseModel):
     # event). Preserves tool turns across requests; empty = fresh session.
     # With a conversation_id the server remembers it too.
     session_id:      str = ""
+    # Agent mode: shell/edit tools in the runner's sandbox (agent.py).
+    agent:           bool = False
+
+
+class ApprovalDecision(BaseModel):
+    approve: bool
+
+
+class ReviewStart(BaseModel):
+    mode: str
+    model: str
+
+
+class InternalToolCall(BaseModel):
+    name: str
+    arguments: dict = {}
 
 # ── GPU response cache (3 s TTL) ──────────────────────────────────────────────
 _gpu_cache: dict = {"data": None, "ts": 0.0}
@@ -474,6 +517,79 @@ async def conversation_delete(conv_id: str):
     return JSONResponse({"ok": ok}, status_code=200 if ok else 404)
 
 
+@app.post("/conversations/{conv_id}/approvals/{approval_id}")
+async def conversation_approval(conv_id: str, approval_id: str, decision: ApprovalDecision, request: Request):
+    """matt's Approve/Deny for a command the agent is waiting on."""
+    if not access.allowed(request):
+        return _json_error(403, "Approvals need a Cloudflare Access login on ai.bix.computer")
+    if not approvals.decide(conv_id, approval_id, decision.approve):
+        return _json_error(409, "Nothing is waiting on that approval (already decided or timed out)")
+    log.info("approval conv=%s approval=%s approved=%s", conv_id, approval_id, decision.approve)
+    return JSONResponse({"ok": True})
+
+
+@app.get("/conversations/{conv_id}/handoffs")
+async def conversation_handoffs(conv_id: str, request: Request):
+    """The agent's hand-offs in this chat, with their review rounds."""
+    if not access.allowed(request):
+        return _json_error(403, "Hand-offs need a Cloudflare Access login on ai.bix.computer")
+    # Sync file I/O on purpose: hand-off record changes stay on the event
+    # loop so they can't interleave (handoff.py).
+    return JSONResponse({"handoffs": handoff.list_for(conv_id)})
+
+
+@app.post("/conversations/{conv_id}/handoffs/{handoff_id}/review")
+async def conversation_handoff_review(conv_id: str, handoff_id: str, body: ReviewStart, request: Request):
+    """matt starts a hand-off's review with the reviewer model he picked."""
+    if not access.allowed(request):
+        return _json_error(403, "Reviews need a Cloudflare Access login on ai.bix.computer")
+    if body.mode not in handoff.REVIEW_MODES:
+        return _json_error(400, f"Reviews aren't available in {body.mode} mode")
+    refused = await _model_refusal(body.mode, body.model)
+    if refused:
+        return refused
+    reason = handoff.start_review(conv_id, handoff_id, body.mode, body.model)
+    if reason:
+        return _json_error(409, reason)
+    log.info("hand-off review started conv=%s handoff=%s reviewer=%s:%s", conv_id, handoff_id, body.mode, body.model)
+    return JSONResponse({"ok": True}, status_code=202)
+
+
+# Pro mode's MCP server calls these for agent tools, over the container's loopback, with
+# the run's token (agent.open_run). Other containers on the bix network aren't
+# loopback, and anything that came through the tunnel is refused outright.
+_INTERNAL_CLIENTS = {"127.0.0.1"}
+_TUNNEL_HEADERS = ("cf-connecting-ip", "cf-ray", "x-forwarded-for")
+
+
+def _open_run_token(request: Request) -> str | None:
+    """The request's run token, or None unless it's an open run's and the
+    request came from inside the container."""
+    if (request.client is None or request.client.host not in _INTERNAL_CLIENTS
+            or any(h in request.headers for h in _TUNNEL_HEADERS)):
+        return None
+    token = request.headers.get("x-bix-agent-token", "")
+    return token if agent.is_open_run(token) else None
+
+
+@app.get("/internal/agent/tools")
+async def internal_agent_tools(request: Request):
+    if _open_run_token(request) is None:
+        return _json_error(403, "Not an open agent run")
+    return JSONResponse({"tools": agent.AGENT_MCP_TOOLS})
+
+
+@app.post("/internal/agent/tool")
+async def internal_agent_tool(call: InternalToolCall, request: Request):
+    token = _open_run_token(request)
+    # run_tool's None covers the run closing while the call was on its way.
+    result = await agent.run_tool(token, call.name, call.arguments) if token else None
+    if result is None:
+        return _json_error(403, "Not an open agent run")
+    text, is_error = result
+    return JSONResponse({"text": text, "is_error": is_error})
+
+
 @app.post("/conversations/{conv_id}/remember")
 async def conversation_remember(conv_id: str):
     """Explicit memory save for one conversation (replaces the old per-turn
@@ -555,6 +671,22 @@ def _json_error(status: int, message: str) -> Response:
                     media_type="application/json")
 
 
+async def _model_refusal(mode: str, model: str) -> JSONResponse | None:
+    """The error for a model this mode doesn't allow; None when it's allowed."""
+    if mode in ("api", "pro") and model not in _ALLOWED_CLAUDE_MODELS:
+        return _json_error(400, f"Model not permitted: {model}")
+    # Dynamic allowlist: any installed Ollama model (static-config fallback
+    # inside is_allowed_local_model when Ollama is down).
+    if mode == "local" and not await model_admin.is_allowed_local_model(model):
+        return _json_error(400, f"Model not permitted: {model}")
+    if mode == "openrouter":
+        if not openrouter.configured():
+            return _json_error(503, "OpenRouter is not configured")
+        if not openrouter.is_valid_model_id(model):
+            return _json_error(400, f"Model not permitted: {model}")
+    return None
+
+
 @app.post("/chat")
 async def chat(request: Request):
     raw = await request.body()
@@ -568,17 +700,16 @@ async def chat(request: Request):
     max_tokens   = min(body.max_tokens, _MAX_TOKENS_CAP)
     mode         = body.mode
 
-    if mode in ("api", "pro") and model not in _ALLOWED_CLAUDE_MODELS:
-        return _json_error(400, f"Model not permitted: {model}")
-    # Dynamic allowlist: any installed Ollama model (static-config fallback
-    # inside is_allowed_local_model when Ollama is down).
-    if mode == "local" and not await model_admin.is_allowed_local_model(model):
-        return _json_error(400, f"Model not permitted: {model}")
-    if mode == "openrouter":
-        if not openrouter.configured():
-            return _json_error(503, "OpenRouter is not configured")
-        if not openrouter.is_valid_model_id(model):
-            return _json_error(400, f"Model not permitted: {model}")
+    refused = await _model_refusal(mode, model)
+    if refused:
+        return refused
+    if body.agent:
+        if not body.conversation_id:
+            return _json_error(400, "Sandbox mode needs a conversation")
+        if mode not in agent.MODES:
+            return _json_error(400, f"Sandbox mode isn't available in {mode} mode")
+        if not access.allowed(request):
+            return _json_error(403, "Sandbox mode needs a Cloudflare Access login on ai.bix.computer")
 
     # ── Server-owned history ──
     conv = None
@@ -593,14 +724,16 @@ async def chat(request: Request):
                 return _json_error(404, f"Unknown conversation: {body.conversation_id}")
         for m in body.messages:
             conversations.append_user(conv, m)
-        conv["model"], conv["mode"] = model, mode
+        conv["model"], conv["mode"], conv["agent"] = model, mode, body.agent
         await asyncio.to_thread(conversations.save, conv)
         session_id = body.session_id or conv.get("pro_session_id", "")
     else:
         session_id = body.session_id
 
-    log.info("chat mode=%s model=%s conv=%s msgs=%d", mode, model,
-             conv["id"] if conv else "-", len(body.messages))
+    log.info("chat mode=%s model=%s conv=%s msgs=%d agent=%s", mode, model,
+             conv["id"] if conv else "-", len(body.messages), body.agent)
+    agent_session = (agent.AgentSession(conv["id"], f"{mode}:{model}", hand_off=handoff.request)
+                     if body.agent else None)
 
     async def stream():
         nonlocal conv
@@ -641,13 +774,14 @@ async def chat(request: Request):
         error_msg = ""
         try:
             if mode == "local":
-                gen = _stream_ollama(messages, model, mode=mode)
+                gen = _stream_ollama(messages, model, mode=mode, agent_session=agent_session)
             elif mode == "api":
-                gen = _stream_claude(messages, model, max_tokens, skip_preprocess=False, mode=mode)
+                gen = _stream_claude(messages, model, max_tokens, skip_preprocess=False, mode=mode, agent_session=agent_session)
             elif mode == "openrouter":
-                gen = _stream_openrouter(messages, model, mode=mode)
+                gen = _stream_openrouter(messages, model, mode=mode, agent_session=agent_session)
             else:
-                gen = _stream_pro(messages, model, max_tokens, mode=mode, session_id=session_id)
+                gen = _stream_pro(messages, model, max_tokens, mode=mode, session_id=session_id,
+                                  agent_session=agent_session)
             async for event in gen:
                 if conv is not None:
                     ev = parse_sse_event(event)

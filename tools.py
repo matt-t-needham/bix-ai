@@ -447,14 +447,11 @@ FS_TOOLS = [
 ]
 
 
-OLLAMA_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name":        t["name"],
-            "description": t["description"],
-            "parameters":  t["input_schema"],
-        },
-    }
-    for t in TOOL_TABLE
-]
+def ollama_wire(tools: list[dict]) -> list[dict]:
+    """Anthropic-shaped tool specs in the OpenAI function shape Ollama and OpenRouter take."""
+    return [{"type": "function", "function": {"name": t["name"], "description": t["description"],
+                                              "parameters": t["input_schema"]}}
+            for t in tools]
+
+
+OLLAMA_TOOLS = ollama_wire(FS_TOOLS)
