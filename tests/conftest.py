@@ -1,4 +1,4 @@
-"""Fixtures shared by the agent-mode and hand-off tests."""
+"""Fixtures shared across the suite."""
 import json
 import socketserver
 import sys
@@ -11,6 +11,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config  # noqa: E402
+import prompt_store  # noqa: E402
 
 
 @pytest.fixture
@@ -45,3 +46,19 @@ def fake_runner(tmp_path, monkeypatch):
     yield seen, replies
     server.shutdown()
     server.server_close()
+
+
+@pytest.fixture(autouse=True)
+def isolated_data_dir(tmp_path, monkeypatch):
+    """Every test gets a scratch config.DATA_DIR.
+
+    The adapters read the custom prompt (prompt_store.py) out of DATA_DIR on
+    every request, so without this a prompt saved on the machine would change
+    what the suite sees — the SSE golden fixtures pin a token estimate of the
+    system prompt, which would make the Docker test gate depend on whatever is
+    in data/prompt/custom.md. Only the call-time readers (prompt_store,
+    blobstore) follow this; the DATA_DIR-derived constants in config are fixed
+    at import, and tests that need their own layout monkeypatch it again.
+    """
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path / "data")
+    prompt_store._cache.update(key=None, text="")

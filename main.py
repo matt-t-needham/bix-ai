@@ -5,6 +5,7 @@ import logging.handlers
 import re
 import secrets
 import time
+import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -39,9 +40,13 @@ import approvals  # noqa: E402 — after logging setup
 import blobstore  # noqa: E402 — after logging setup
 import context  # noqa: E402 — after logging setup
 import conversations  # noqa: E402 — after logging setup
+import convstate  # noqa: E402 — after logging setup
 import handoff  # noqa: E402 — after logging setup
+import identity  # noqa: E402 — after logging setup
 import model_admin  # noqa: E402 — after logging setup
 import openrouter  # noqa: E402 — after logging setup
+import prompt_store  # noqa: E402 — after logging setup
+import prompt_ui  # noqa: E402 — after logging setup
 import strategy  # noqa: E402 — after logging setup
 
 import config  # noqa: E402
@@ -136,6 +141,27 @@ async def healthz():
 
 
 _STARTED_AT = datetime.now(timezone.utc).isoformat(timespec="seconds")
+_STARTED_MONO = time.monotonic()
+
+
+def _uptime() -> str:
+    mins = int((time.monotonic() - _STARTED_MONO) // 60)
+    return f"{mins // 60}h{mins % 60:02d}m" if mins >= 60 else f"{mins}m"
+
+
+def _runtime_state(mode: str, model: str, agent_on: bool) -> dict:
+    """The facts identity.runtime_state_block renders into every system prompt:
+    what is answering, in which mode, on which build. Built here because this
+    is the only place that knows all of it; the adapters add what only they
+    know (OpenRouter's spend), and stream() sets "tagged" once it knows whether
+    the transcript it is sending actually carries model tags."""
+    return {
+        "mode":    mode,
+        "model":   model,
+        "agent":   bool(agent_on),
+        "tagged":  False,
+        "service": identity.service_line(config.GIT_SHA, config.BUILT_AT, _uptime()),
+    }
 
 
 @app.get("/version")
@@ -423,6 +449,107 @@ async def blob_delete(blob_hash: str):
     ok = await asyncio.to_thread(blobstore.delete, blob_hash)
     log.info("blob delete hash=%s ok=%s", blob_hash[:16], ok)
     return RedirectResponse("/blobs", status_code=303)
+
+
+# ── Custom prompt (the human-edited half of every system prompt) ──────────────
+# Editing this changes what every future chat turn is told, on every backend,
+# so the three writing routes need the same Cloudflare Access check as agent
+# approvals: any container on the bix network can reach us directly and set
+# any header. Reading the page is left open, like /blobs — Access fronts the
+# origin. A dev run without ACCESS_AUD can't save here (access.allowed fails
+# closed by design); edit data/prompt/custom.md directly instead.
+
+# Raw urlencoded bodies are parsed here rather than with fastapi's Form(),
+# which would pull in python-multipart for three small forms.
+_PROMPT_BODY_MAX = prompt_store.MAX_CHARS * 8
+
+
+async def _form_fields(request: Request) -> dict[str, str] | None:
+    """The urlencoded form as a flat dict; None when the body is oversized."""
+    raw = await request.body()
+    if len(raw) > _PROMPT_BODY_MAX:
+        return None
+    parsed = urllib.parse.parse_qs(raw.decode("utf-8", "replace"), keep_blank_values=True)
+    return {k: v[0] for k, v in parsed.items() if v}
+
+
+def _prompt_forbidden() -> Response:
+    """These routes are browser form targets, so the refusal is a page (the
+    /blobs bad-hash precedent), not the JSON the API routes return."""
+    return Response(
+        '<h1>Not allowed</h1><p>Editing the prompt needs a Cloudflare Access '
+        'login on ai.bix.computer.</p><p><a href="/prompt">← back</a></p>',
+        status_code=403, media_type="text/html; charset=utf-8",
+    )
+
+
+def _prompt_redirect(*, saved: bool = False, error: str = "") -> RedirectResponse:
+    if error:
+        return RedirectResponse(
+            "/prompt?error=" + urllib.parse.quote(error[:200]), status_code=303)
+    return RedirectResponse("/prompt?saved=1" if saved else "/prompt", status_code=303)
+
+
+@app.get("/prompt")
+async def prompt_page(preview: str = "", saved: str = "", error: str = ""):
+    state = await asyncio.to_thread(prompt_store.load)
+    revs  = await asyncio.to_thread(prompt_store.revisions)
+    html_page = prompt_ui.render(
+        state, revs, preview or prompt_ui.DEFAULT_PREVIEW_MODE, _PAGE_CSS,
+        error=error, saved=bool(saved),
+    )
+    return Response(html_page, media_type="text/html; charset=utf-8")
+
+
+@app.get("/prompt/raw")
+async def prompt_raw():
+    return await asyncio.to_thread(prompt_store.load)
+
+
+@app.post("/prompt")
+async def prompt_save(request: Request):
+    if not access.allowed(request):
+        return _prompt_forbidden()
+    fields = await _form_fields(request)
+    if fields is None:
+        return _prompt_redirect(error="That prompt is far too large to save.")
+    try:
+        state = await asyncio.to_thread(prompt_store.save, fields.get("text", ""))
+    except prompt_store.PromptError as e:
+        log.warning("custom prompt refused: %s", e)
+        return _prompt_redirect(error=str(e))
+    log.info("custom prompt updated chars=%d", state["chars"])
+    return _prompt_redirect(saved=True)
+
+
+@app.post("/prompt/reset")
+async def prompt_reset(request: Request):
+    if not access.allowed(request):
+        return _prompt_forbidden()
+    try:
+        await asyncio.to_thread(prompt_store.reset)
+    except prompt_store.PromptError as e:
+        log.warning("custom prompt reset refused: %s", e)
+        return _prompt_redirect(error=str(e))
+    log.info("custom prompt cleared")
+    return _prompt_redirect(saved=True)
+
+
+@app.post("/prompt/restore")
+async def prompt_restore(request: Request):
+    if not access.allowed(request):
+        return _prompt_forbidden()
+    fields = await _form_fields(request)
+    if fields is None:
+        return _prompt_redirect(error="Bad request.")
+    try:
+        state = await asyncio.to_thread(
+            prompt_store.restore, fields.get("revision_id", ""))
+    except prompt_store.PromptError as e:
+        log.warning("custom prompt restore refused: %s", e)
+        return _prompt_redirect(error=str(e))
+    log.info("custom prompt restored chars=%d", state["chars"])
+    return _prompt_redirect(saved=True)
 
 
 # ── Ollama model management ───────────────────────────────────────────────────
@@ -734,6 +861,9 @@ async def chat(request: Request):
              conv["id"] if conv else "-", len(body.messages), body.agent)
     agent_session = (agent.AgentSession(conv["id"], f"{mode}:{model}", hand_off=handoff.request)
                      if body.agent else None)
+    state = _runtime_state(mode, model, body.agent)
+    # Where this turn's assistant output will start, for the `turns` sidecar.
+    turn_starts_at = len(conv["messages"]) if conv else 0
 
     async def stream():
         nonlocal conv
@@ -769,19 +899,31 @@ async def chat(request: Request):
         pinned = strategy.referenced_blob_hashes(messages)
         blobstore.pin(pinned)
         head_len = len(messages) - (len(conv["messages"]) - sent_base) if conv else 0
+        if conv is not None:
+            # Attribute each earlier turn to the model that wrote it, so this
+            # model reads the transcript as a conversation with other
+            # assistants rather than as its own work. Tagged on the way out
+            # only — the `history` fold below strips them before storing, and
+            # the rolling summary is built from untagged text above.
+            tail   = messages[head_len:]
+            tagged = convstate.tag_messages(tail, conv.get("turns"), offset=sent_base)
+            if tagged != tail:
+                messages = messages[:head_len] + tagged
+                state["tagged"] = True
         reply_text = ""
         history_applied = False
         error_msg = ""
         try:
             if mode == "local":
-                gen = _stream_ollama(messages, model, mode=mode, agent_session=agent_session)
+                gen = _stream_ollama(messages, model, mode=mode, agent_session=agent_session, state=state)
             elif mode == "api":
-                gen = _stream_claude(messages, model, max_tokens, skip_preprocess=False, mode=mode, agent_session=agent_session)
+                gen = _stream_claude(messages, model, max_tokens, skip_preprocess=False, mode=mode,
+                                     agent_session=agent_session, state=state)
             elif mode == "openrouter":
-                gen = _stream_openrouter(messages, model, mode=mode, agent_session=agent_session)
+                gen = _stream_openrouter(messages, model, mode=mode, agent_session=agent_session, state=state)
             else:
                 gen = _stream_pro(messages, model, max_tokens, mode=mode, session_id=session_id,
-                                  agent_session=agent_session)
+                                  agent_session=agent_session, state=state)
             async for event in gen:
                 if conv is not None:
                     ev = parse_sse_event(event)
@@ -791,7 +933,8 @@ async def chat(request: Request):
                         # Canonical transformed list: summary pair + sent tail
                         # (post-preprocess) + new assistant/tool turns.
                         conversations.replace_tail(
-                            conv, sent_base, parse_sse_data(event).get("messages", [])[head_len:])
+                            conv, sent_base, convstate.strip_tags(
+                                parse_sse_data(event).get("messages", [])[head_len:]))
                         history_applied = True
                     elif ev == "pro_session":
                         conv["pro_session_id"] = parse_sse_data(event).get("session_id", "") or conv.get("pro_session_id", "")
@@ -801,12 +944,18 @@ async def chat(request: Request):
         finally:
             blobstore.unpin(pinned)
             if conv is not None:
+                persisted = history_applied
                 if not history_applied:
                     # Pro (no history event) or an errored turn: keep what we
                     # got so the transcript stays alternating and honest.
                     text = reply_text or (f"(no reply — {error_msg})" if error_msg else "")
                     if text:
                         conversations.append_assistant_text(conv, text)
+                        persisted = True
+                if persisted:
+                    # Attribute what was just written, so a later turn on
+                    # another model can tell it wasn't its own work.
+                    conversations.append_turn(conv, model, mode, turn_starts_at)
                 await asyncio.to_thread(conversations.save, conv)
 
     return StreamingResponse(with_keepalive(stream()), media_type="text/event-stream")

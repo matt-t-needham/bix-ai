@@ -8,7 +8,16 @@ Record shape:
     {id, created, updated, title, model, mode,
      messages: [...canonical...],
      summary: {"text": str, "through": int},   # covers messages[:through]
+     turns: [{"model", "mode", "at", "from"}],  # who answered what
      pro_session_id: str}
+
+`turns` is a sidecar, never a key on a message: replace_tail rewrites the
+message list wholesale from the loop's `history` event, and those dicts ride
+to the provider, where an unknown key on a message is a 400. Each entry's
+"from" is the index in `messages` where that turn's assistant output starts,
+so a reader maps a message to its model by taking the last entry whose "from"
+is at or below it. convstate.py reads this; model/mode above stay the latest
+turn's, for the conversation list.
 
 Stdlib-only, synchronous file I/O — callers run it under asyncio.to_thread.
 Writes are atomic (tmp + os.replace). config.CONVERSATIONS_DIR is read at
@@ -77,6 +86,7 @@ def create(model: str = "", mode: str = "") -> dict:
         "mode":     mode,
         "messages": [],
         "summary":  {"text": "", "through": 0},
+        "turns":    [],
         "pro_session_id": "",
     }
     save(rec)
@@ -154,6 +164,29 @@ def replace_tail(rec: dict, start: int, tail: list) -> None:
     event carries after the summary pair: the (possibly pointered) turns
     that were sent plus the new assistant/tool turns."""
     rec["messages"] = rec["messages"][:start] + list(tail)
+
+
+def append_turn(rec: dict, model: str, mode: str, at_index: int) -> None:
+    """Record which model produced the assistant output starting at
+    `at_index`. Called once a turn has actually been persisted.
+
+    `at_index` is counted before the turn ran, so it is snapped forward to the
+    first assistant message at or after it. Today the two always agree (the
+    pre-pass rewrites content in place and never drops a message), and this
+    keeps attribution pointing at real output if that ever stops being true.
+    """
+    msgs = rec.get("messages") or []
+    start = max(int(at_index), 0)
+    for i in range(start, len(msgs)):
+        if isinstance(msgs[i], dict) and msgs[i].get("role") == "assistant":
+            start = i
+            break
+    rec.setdefault("turns", []).append({
+        "model": str(model),
+        "mode":  str(mode),
+        "at":    _now(),
+        "from":  start,
+    })
 
 
 def append_assistant_text(rec: dict, text: str) -> None:

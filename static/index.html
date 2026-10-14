@@ -160,6 +160,17 @@
     .thinking { margin: 0 0 8px; width: fit-content; max-width: 100%; }
     .thinking .sub-bubble-name { color: var(--subtext); }
     .ind-arrow { color: var(--surface1); margin: 0 5px; }
+    .model-switch {
+      display: flex; align-items: center; gap: 10px; margin: 20px 2px 12px;
+      font-size: .7rem; color: var(--subtext); font-variant-numeric: tabular-nums;
+    }
+    .model-switch::before, .model-switch::after {
+      content: ''; flex: 1; height: 1px; background: var(--surface1);
+    }
+    .model-switch .to { color: var(--subtext); }
+    .model-switch.local .to { color: var(--yellow); }
+    .model-switch.cloud .to { color: var(--mauve); }
+    .model-switch.openrouter .to { color: var(--blue); }
     .bubble {
       padding: 10px 14px;
       border-radius: 16px;
@@ -869,6 +880,7 @@
         <div class="link-list">
           <a class="metrics-link" href="https://metrics.bix.computer" target="_blank" rel="noopener"><span>Internal metrics</span><span>↗</span></a>
           <a class="metrics-link" href="/blobs" target="_blank"><span>Blob store</span><span>↗</span></a>
+          <a class="metrics-link" href="/prompt" target="_blank"><span>Custom prompt</span><span>↗</span></a>
         </div>
       </div>
     </div>
@@ -1020,6 +1032,23 @@ function pushModel(chain, name, isLocal) {
   if (!last || last.name !== name) chain.push({ name, isLocal });
 }
 // Responder label atop a bubble: every model used, in order (local yellow, cloud mauve).
+// Which model produced the message at `idx`: the last `turns` entry that
+// started at or before it. Records written before the sidecar existed fall
+// back to the conversation's latest model, which is what we used to show for
+// every turn regardless.
+function turnAt(rec, idx) {
+  let found = null;
+  for (const t of (rec.turns || [])) {
+    if ((t.from ?? 0) <= idx) found = t; else break;
+  }
+  return found || { model: rec.model, mode: rec.mode };
+}
+function addModelSwitch(ind) {
+  const el = document.createElement('div');
+  el.className = 'model-switch ' + indicatorClass(ind);
+  el.innerHTML = `<span class="to">${escHtml(friendlyModel(ind.name))} answered from here</span>`;
+  msgsIn.appendChild(el);
+}
 function renderIndicator(wrap, chain) {
   const rl = wrap.querySelector('.role-label');
   if (!rl) return;
@@ -1743,7 +1772,7 @@ function renderChats() {
   }
 }
 function clearMessages() {
-  msgsIn.querySelectorAll('.msg, .handoff-card').forEach(el => el.remove());
+  msgsIn.querySelectorAll('.msg, .handoff-card, .model-switch').forEach(el => el.remove());
   if (emptyState) emptyState.style.display = '';
 }
 function setAgentMode(on) {
@@ -1958,8 +1987,9 @@ function blockText(b) { return typeof b === 'string' ? b : (b && b.type === 'tex
 function renderStored(rec) {
   clearMessages();
   const msgs = rec.messages || [];
-  let lastAssistant = null, lastTools = {};
-  for (const m of msgs) {
+  let lastAssistant = null, lastTools = {}, shownModel = null;
+  for (let i = 0; i < msgs.length; i++) {
+    const m = msgs[i];
     const content = m.content;
     if (m.role === 'user') {
       if (Array.isArray(content) && content.some(b => b && b.type === 'tool_result')) {
@@ -1976,9 +2006,14 @@ function renderStored(rec) {
       addBubble('user', false).bubble.textContent = text;
       continue;
     }
-    const isLocal = rec.mode === 'local';
-    const { wrap, bubble } = addBubble('assistant', isLocal, rec.mode);
-    renderIndicator(wrap, [{ name: rec.model, isLocal, provider: rec.mode === 'openrouter' ? 'openrouter' : rec.mode }]);
+    const turn = turnAt(rec, i);
+    const isLocal = turn.mode === 'local';
+    const ind = { name: turn.model, isLocal,
+                  provider: turn.mode === 'openrouter' ? 'openrouter' : turn.mode };
+    if (shownModel && turn.model !== shownModel) addModelSwitch(ind);
+    shownModel = turn.model;
+    const { wrap, bubble } = addBubble('assistant', isLocal, turn.mode);
+    renderIndicator(wrap, [ind]);
     const blocks = typeof content === 'string' ? [{ type: 'text', text: content }] : (content || []);
     const text = blocks.filter(b => b && b.type === 'text').map(b => b.text).join('\n\n');
     bubble.innerHTML = renderMd(text);

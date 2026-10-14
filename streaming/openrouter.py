@@ -14,21 +14,24 @@ import openrouter
 import strategy
 from config import LOOP_MAX_SECONDS, LOOP_MAX_TOKENS
 from helpers import _agg, _write_routing_event, ollama_chat, sse
-from identity import identity_system_prompt
+from identity import identity_system_prompt, resolved_system
 from streaming.loop import run_tool_loop
 from streaming.providers import OpenRouterProvider
 from tools import OLLAMA_TOOLS, _execute_tool, with_actor
 
 log = logging.getLogger("router")
 
+# Immutable half, fixed at import; resolved_system() appends the
+# human-edited half (prompt_store.py) per request.
 OPENROUTER_SYSTEM = identity_system_prompt(
     tool_names=[t["function"]["name"] for t in OLLAMA_TOOLS],
-    doc_topics=["memory", "blobs", "modes", "workspace"],
+    doc_topics=["memory", "blobs", "modes", "workspace", "prompt"],
 )
 
 
 async def _stream_openrouter(messages: list, model: str, mode: str = "openrouter",
-                             skip_preprocess: bool = False, route_reason: str = "", agent_session=None):
+                             skip_preprocess: bool = False, route_reason: str = "", agent_session=None,
+                             state: dict | None = None):
     _agg["requests"] += 1
     if not openrouter.configured():
         yield sse("error", {"message": "OpenRouter is not configured (OPENROUTER_API_KEY is empty)."})
@@ -68,15 +71,21 @@ async def _stream_openrouter(messages: list, model: str, mode: str = "openrouter
     if info is None and not openrouter.is_valid_model_id(model):
         yield sse("error", {"message": f"OpenRouter: '{model}' is not a valid model id."})
         return
-    system = agent_session.system(OPENROUTER_SYSTEM) if agent_session else OPENROUTER_SYSTEM
+    # Today's spend is read before the prompt is composed so the model can be
+    # told where it stands against the daily cap; check_caps below still gates
+    # the call itself, before any HTTP.
+    spent  = await asyncio.to_thread(openrouter.spent_today_usd)
+    base   = await resolved_system(OPENROUTER_SYSTEM, {
+        **state, "spend_today": spent, "spend_cap": config.OPENROUTER_MAX_USD_PER_DAY,
+    } if state else state)
+    system = agent_session.system(base) if agent_session else base
     est_in = strategy.estimate_tokens(system) + sum(
         strategy.estimate_tokens(strategy.block_text(b) if isinstance(b, dict) else str(b))
         for m in current_messages
         for b in (m.get("content") if isinstance(m.get("content"), list) else [m.get("content", "")])
     )
     projected = openrouter.estimate_cost_usd(info, est_in, 1000)
-    spent = await asyncio.to_thread(openrouter.spent_today_usd)
-    refusal = openrouter.check_caps(projected, spent)
+    refusal   = openrouter.check_caps(projected, spent)
     if refusal:
         log.warning("openrouter cap refusal model=%s projected=%.4f spent=%.4f", model, projected, spent)
         yield sse("error", {"message": refusal})

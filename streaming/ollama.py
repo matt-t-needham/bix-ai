@@ -12,16 +12,18 @@ import httpx
 import strategy
 from config import LOOP_MAX_SECONDS, LOOP_MAX_TOKENS, PROGRESS_HEARTBEAT_SECONDS
 from helpers import _agg, _write_routing_event, ollama_chat, sse, with_progress
-from identity import identity_system_prompt
+from identity import identity_system_prompt, resolved_system
 from streaming.loop import run_tool_loop
 from streaming.providers import OllamaProvider
 from tools import OLLAMA_TOOLS, _execute_tool, with_actor
 
 log = logging.getLogger("router")
 
+# Immutable half, fixed at import; resolved_system() appends the
+# human-edited half (prompt_store.py) per request.
 OLLAMA_SYSTEM = identity_system_prompt(
     tool_names=[t["function"]["name"] for t in OLLAMA_TOOLS],
-    doc_topics=["memory", "blobs", "modes", "workspace"],
+    doc_topics=["memory", "blobs", "modes", "workspace", "prompt"],
 )
 
 
@@ -29,6 +31,7 @@ async def _stream_ollama(
     messages: list, model: str, mode: str = "local",
     skip_preprocess: bool = False,
     route_reason: str = "", on_exhausted: str = "best_effort", agent_session=None,
+    state: dict | None = None,
 ):
     _agg["requests"] += 1
     stats         = {"summarised": 0, "skipped": 0, "failed": 0, "spilled": 0}
@@ -67,7 +70,8 @@ async def _stream_ollama(
         })
         yield sse("status", {"stage": "streaming", "message": f"Streaming from Ollama ({model})…"})
 
-    system = agent_session.system(OLLAMA_SYSTEM) if agent_session else OLLAMA_SYSTEM
+    base   = await resolved_system(OLLAMA_SYSTEM, state)
+    system = agent_session.system(base) if agent_session else base
     if not current_messages or current_messages[0].get("role") != "system":
         current_messages.insert(0, {"role": "system", "content": system})
 

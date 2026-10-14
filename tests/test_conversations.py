@@ -70,3 +70,25 @@ def test_list_is_newest_first(env):
     (config.CONVERSATIONS_DIR / f"{b['id']}.json").write_text(json.dumps(b))
     assert [c["id"] for c in conversations.list_all()][0] == b["id"]
     assert a["id"] in [c["id"] for c in conversations.list_all()]
+
+
+def test_append_turn_points_at_real_assistant_output(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "CONVERSATIONS_DIR", tmp_path / "conversations")
+    rec = conversations.create("gemma4:26b", "local")
+    rec["messages"] = [
+        {"role": "user", "content": "q"},
+        {"role": "user", "content": "merged follow-up"},
+        {"role": "assistant", "content": "the answer"},
+    ]
+    # The index was taken before the turn ran; it snaps forward to the output.
+    conversations.append_turn(rec, "gemma4:26b", "local", at_index=1)
+    assert rec["turns"][0]["from"] == 2
+    assert rec["messages"][rec["turns"][0]["from"]]["role"] == "assistant"
+
+
+def test_append_turn_keeps_the_index_when_there_is_no_assistant_turn(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "CONVERSATIONS_DIR", tmp_path / "conversations")
+    rec = conversations.create("gemma4:26b", "local")
+    rec["messages"] = [{"role": "user", "content": "q"}]
+    conversations.append_turn(rec, "gemma4:26b", "local", at_index=1)
+    assert rec["turns"][0]["from"] == 1

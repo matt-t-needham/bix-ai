@@ -134,7 +134,7 @@ def test_errored_turn_keeps_transcript_alternating(env, client, monkeypatch):
 
 
 def test_pro_turn_persists_text_and_session(env, client, monkeypatch):
-    async def fake_pro(messages, model, max_tokens, mode="pro", session_id="", agent_session=None):
+    async def fake_pro(messages, model, max_tokens, mode="pro", session_id="", agent_session=None, **kw):
         yield sse("pro_session", {"session_id": "abcd-1234"})
         yield sse("delta", {"text": "pro says hi"})
         yield sse("metrics", {"input_tokens": 0, "output_tokens": 3, "elapsed_ms": 1, "ttft_ms": 1,
@@ -152,7 +152,7 @@ def test_pro_turn_persists_text_and_session(env, client, monkeypatch):
     # Resume: only the newest message goes to the CLI, context says so.
     seen = {}
 
-    async def spy(messages, model, max_tokens, mode="pro", session_id="", agent_session=None):
+    async def spy(messages, model, max_tokens, mode="pro", session_id="", agent_session=None, **kw):
         seen["messages"], seen["session_id"] = list(messages), session_id
         async for ev in fake_pro(messages, model, max_tokens, mode, session_id):
             yield ev
@@ -255,11 +255,144 @@ def test_real_loop_round_trip_keeps_the_reply(env, client, monkeypatch):
         _post(client, {"messages": [{"role": "user", "content": "and then?"}],
                        "conversation_id": conv_id, "model": "gemma4:26b", "mode": "local"})
 
-    # Turn two went up with turn one's answer in it, after the system prompt.
+    # Turn two went up with turn one's answer in it, after the system prompt,
+    # attributed to the model that wrote it.
     sent = [m for m in fake.sent[-1] if m["role"] != "system"]
     assert [m["role"] for m in sent] == ["user", "assistant", "tool", "assistant", "user"]
-    assert sent[3]["content"] == "first answer"
+    assert sent[3]["content"] == "[router-model gemma4:26b]\nfirst answer"
+    # …while the stored record stays clean.
+    assert "router-model" not in json.dumps(conversations.get(conv_id)["messages"])
     assert sent[-1]["content"] == "and then?"
     rec = conversations.get(conv_id)
     assert [m["role"] for m in rec["messages"]] == ["user", "assistant", "user", "assistant", "user", "assistant"]
     assert rec["messages"][-1]["content"] == [{"type": "text", "text": "second answer"}]
+
+
+# ── Per-turn model attribution (the `turns` sidecar) ──────────────────────────
+
+def test_each_turn_records_the_model_that_answered(env, client, monkeypatch):
+    monkeypatch.setattr(main, "_stream_ollama", _fake_local("local answer"))
+    events = _post(client, {"messages": [{"role": "user", "content": "first question"}],
+                            "conversation_id": "new", "model": "gemma4:26b", "mode": "local"})
+    conv_id = events[0][1]["id"]
+    turns = conversations.get(conv_id)["turns"]
+    assert len(turns) == 1
+    assert turns[0]["model"] == "gemma4:26b" and turns[0]["mode"] == "local"
+    # "from" points at where that turn's assistant output starts.
+    rec = conversations.get(conv_id)
+    assert rec["messages"][turns[0]["from"]]["role"] == "assistant"
+
+    # A second turn on another model is recorded separately — the record now
+    # says which model wrote which part.
+    async def fake_claude(messages, model, max_tokens, **kw):
+        async for ev in _fake_local("claude answer")(messages, model, **kw):
+            yield ev
+    monkeypatch.setattr(main, "_stream_claude", fake_claude)
+    _post(client, {"messages": [{"role": "user", "content": "second question"}],
+                   "conversation_id": conv_id, "model": "claude-opus-4-7", "mode": "api"})
+    turns = conversations.get(conv_id)["turns"]
+    assert [t["model"] for t in turns] == ["gemma4:26b", "claude-opus-4-7"]
+    assert turns[1]["from"] > turns[0]["from"]
+
+
+def test_the_sidecar_never_reaches_the_provider(env, client, monkeypatch):
+    # An unknown key on a message is a 400 at Anthropic, so `turns` must stay
+    # beside the messages, never on them.
+    seen = {}
+
+    async def spy(messages, model, **kw):
+        seen["messages"] = list(messages)
+        async for ev in _fake_local("ok")(messages, model, **kw):
+            yield ev
+    monkeypatch.setattr(main, "_stream_ollama", spy)
+    events = _post(client, {"messages": [{"role": "user", "content": "q"}],
+                            "conversation_id": "new", "model": "gemma4:26b", "mode": "local"})
+    conv_id = events[0][1]["id"]
+    _post(client, {"messages": [{"role": "user", "content": "q2"}],
+                   "conversation_id": conv_id, "model": "gemma4:26b", "mode": "local"})
+    assert all(set(m) <= {"role", "content"} for m in seen["messages"])
+    assert "turns" not in json.dumps(seen["messages"])
+
+
+def test_an_errored_turn_is_still_attributed(env, client, monkeypatch):
+    async def failing(messages, model, **kw):
+        yield sse("delta", {"text": "partial"})
+        yield sse("error", {"message": "Ollama: boom"})
+    monkeypatch.setattr(main, "_stream_ollama", failing)
+    events = _post(client, {"messages": [{"role": "user", "content": "q"}],
+                            "conversation_id": "new", "model": "gemma4:26b", "mode": "local"})
+    rec = conversations.get(events[0][1]["id"])
+    assert [t["model"] for t in rec["turns"]] == ["gemma4:26b"]
+
+
+def test_an_earlier_turn_goes_up_tagged_with_the_model_that_wrote_it(env, client, monkeypatch):
+    monkeypatch.setattr(main, "_stream_ollama", _fake_local("local answer"))
+    question = "What is the best way to cache an expensive call in Python?"
+    events = _post(client, {"messages": [{"role": "user", "content": question}],
+                            "conversation_id": "new", "model": "gemma4:26b", "mode": "local"})
+    conv_id = events[0][1]["id"]
+
+    seen = {}
+
+    async def spy(messages, model, max_tokens, **kw):
+        seen["messages"], seen["state"] = list(messages), kw.get("state")
+        async for ev in _fake_local("claude answer")(messages, model, **kw):
+            yield ev
+    monkeypatch.setattr(main, "_stream_claude", spy)
+    # The same question again, on a different model.
+    _post(client, {"messages": [{"role": "user", "content": question}],
+                   "conversation_id": conv_id, "model": "claude-opus-4-7", "mode": "api"})
+
+    assistant = [m for m in seen["messages"] if m["role"] == "assistant"]
+    assert assistant, "the earlier turn should have ridden along"
+    assert assistant[0]["content"][0]["text"].startswith("[router-model gemma4:26b]")
+    # And the prompt is told to expect tags, only because there are some.
+    assert seen["state"]["tagged"] is True
+    assert seen["state"]["model"] == "claude-opus-4-7" and seen["state"]["mode"] == "api"
+
+
+def test_tags_are_never_written_back_to_the_record(env, client, monkeypatch):
+    # The loop's `history` carries the sent (tagged) messages back; folding them
+    # in untouched would persist a tag and then tag it again next turn.
+    monkeypatch.setattr(main, "_stream_ollama", _fake_local("first"))
+    events = _post(client, {"messages": [{"role": "user", "content": "q1"}],
+                            "conversation_id": "new", "model": "gemma4:26b", "mode": "local"})
+    conv_id = events[0][1]["id"]
+    for i in range(2):
+        monkeypatch.setattr(main, "_stream_ollama", _fake_local(f"reply {i}"))
+        _post(client, {"messages": [{"role": "user", "content": f"q{i + 2}"}],
+                       "conversation_id": conv_id, "model": "gemma4:26b", "mode": "local"})
+    rec = conversations.get(conv_id)
+    assert "router-model" not in json.dumps(rec["messages"])
+    assert len(rec["turns"]) == 3
+
+
+def test_the_first_turn_of_a_conversation_is_not_tagged(env, client, monkeypatch):
+    # Nothing has been answered yet, so there is nothing to attribute and the
+    # prompt must not tell the model to look for tags.
+    seen = {}
+
+    async def spy(messages, model, **kw):
+        seen["messages"], seen["state"] = list(messages), kw.get("state")
+        async for ev in _fake_local("ok")(messages, model, **kw):
+            yield ev
+    monkeypatch.setattr(main, "_stream_ollama", spy)
+    _post(client, {"messages": [{"role": "user", "content": "q"}],
+                   "conversation_id": "new", "model": "gemma4:26b", "mode": "local"})
+    assert "router-model" not in json.dumps(seen["messages"])
+    assert seen["state"]["tagged"] is False
+
+
+def test_a_stateless_call_still_gets_the_static_state(env, client, monkeypatch):
+    seen = {}
+
+    async def spy(messages, model, **kw):
+        seen["state"] = kw.get("state")
+        async for ev in _fake_local("ok")(messages, model, **kw):
+            yield ev
+    monkeypatch.setattr(main, "_stream_ollama", spy)
+    r = client.post("/chat", json={"messages": [{"role": "user", "content": "q"}],
+                                   "model": "gemma4:26b", "mode": "local"})
+    assert r.status_code == 200
+    assert seen["state"]["model"] == "gemma4:26b"
+    assert seen["state"]["tagged"] is False      # no record, nothing to attribute

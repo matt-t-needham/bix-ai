@@ -14,7 +14,7 @@
         "max_turns": 50,
         "elapsed_s": 0,
         "max_seconds": 1200,
-        "tokens": 713,
+        "tokens": 723,
         "max_tokens": 1000000
       }
     },
@@ -110,7 +110,7 @@
         "max_turns": 50,
         "elapsed_s": 0,
         "max_seconds": 1200,
-        "tokens": 837,
+        "tokens": 847,
         "max_tokens": 1000000
       }
     },

@@ -11,14 +11,16 @@ import config
 import strategy
 
 from helpers import _write_routing_event, ollama_chat, sse
-from identity import identity_system_prompt
+from identity import identity_system_prompt, resolved_system
 
 log = logging.getLogger("router")
 
+# Immutable half, fixed at import; resolved_system() appends the
+# human-edited half (prompt_store.py) per request.
 _PRO_IDENTITY_PROMPT = identity_system_prompt(
     tool_names=["list_directory", "read_file", "recall_memories",
                 "add_todo", "add_plan", "complete_todo", "write_outbox"],
-    doc_topics=["memory", "modes", "workspace"],
+    doc_topics=["memory", "modes", "workspace", "prompt"],
 )
 
 MCP_CONFIG_PATH = Path(__file__).resolve().parent.parent / "mcp.json"
@@ -281,6 +283,7 @@ async def _run_claude_once(
 async def _stream_pro(
     messages: list, model: str, max_tokens: int,
     mode: str = "pro", session_id: str = "", agent_session=None,
+    state: dict | None = None,
 ):
     stats         = {"summarised": 0, "skipped": 0, "failed": 0, "spilled": 0}
     preprocess_ms = 0
@@ -310,7 +313,8 @@ async def _stream_pro(
     })
     yield sse("status", {"stage": "streaming", "message": "Streaming via Claude Pro…"})
 
-    system_prompt = agent_session.system(_PRO_IDENTITY_PROMPT) if agent_session else _PRO_IDENTITY_PROMPT
+    base          = await resolved_system(_PRO_IDENTITY_PROMPT, state)
+    system_prompt = agent_session.system(base) if agent_session else base
 
     # Resuming a CLI session: the session already holds the full history
     # (including tool turns the text-only prompt replay would lose), so only
