@@ -244,7 +244,7 @@ async def _run_claude_once(
             if (resume_session_id and state["output_tokens"] == 0
                     and _looks_session_gone(err_text)):
                 raise _SessionGone(err_text.strip())
-            log.error("pro subprocess exit=%d stderr=%s", proc.returncode, err_text[:500])
+            log.error("pro subprocess exit=%d stderr=%r", proc.returncode, err_text[:500])
             state["failed"] = True
             if "quota" in lower or "rate limit" in lower or "usage limit" in lower or "529" in lower:
                 yield sse("quota_exceeded", {})
@@ -255,7 +255,7 @@ async def _run_claude_once(
         if state["input_tokens"] == 0 and state["output_tokens"] == 0:
             if resume_session_id and _looks_session_gone(err_text):
                 raise _SessionGone(err_text.strip())
-            log.error("pro subprocess produced no output exit=0 stderr=%s", err_text[:500])
+            log.error("pro subprocess produced no output exit=0 stderr=%r", err_text[:500])
             state["failed"] = True
             if "quota" in lower or "rate limit" in lower or "usage limit" in lower or "529" in lower:
                 yield sse("quota_exceeded", {})

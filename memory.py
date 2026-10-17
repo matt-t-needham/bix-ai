@@ -214,7 +214,8 @@ async def save_memory_entry(
     }
 
     await asyncio.to_thread(_append_memory, entry)
-    log.info("memory saved title=%r tags=%s file=%s", title, tags, conv_filename)
+    # No title or tags: both are the user's words, and logs carry no conversation content.
+    log.info("memory saved id=%s tags=%d file=%s", entry["id"], len(tags), conv_filename)
 
     all_m = await asyncio.to_thread(_load_all_memories)
     if len(all_m) > 0 and len(all_m) % 10 == 0:

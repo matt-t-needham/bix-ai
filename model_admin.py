@@ -126,6 +126,7 @@ async def pull_events(name: str):
             async with client.stream("POST", f"{config.OLLAMA_HOST}/api/pull",
                                      json={"model": name, "stream": True}) as r:
                 if r.status_code != 200:
+                    log.error("model pull failed name=%s status=%d", name, r.status_code)
                     yield sse("error", {"message": f"Ollama returned HTTP {r.status_code}"})
                     return
                 async for line in r.aiter_lines():
@@ -137,6 +138,7 @@ async def pull_events(name: str):
                     except ValueError:
                         continue
                     if data.get("error"):
+                        log.error("model pull failed name=%s err=%s", name, data["error"])
                         yield sse("error", {"message": str(data["error"])})
                         return
                     payload = {"status": str(data.get("status", ""))}
@@ -147,6 +149,7 @@ async def pull_events(name: str):
                     if payload["status"] == "success":
                         break
     except (httpx.HTTPError, OSError) as e:
+        log.error("model pull failed name=%s err=%s: %s", name, e.__class__.__name__, e)
         yield sse("error", {"message": f"pull failed: {e.__class__.__name__}: {e}"})
         return
     invalidate_cache()

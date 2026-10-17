@@ -21,6 +21,9 @@ from pydantic import BaseModel
 
 # Logging must be configured before local imports so all modules inherit handlers.
 _fmt = "%(asctime)s %(levelname)s %(name)s %(message)s"
+# Log stamps are UTC whatever the container's TZ is (suite log standard): the
+# nightly compiler windows app.log by them.
+logging.Formatter.converter = time.gmtime
 logging.basicConfig(level=logging.INFO, format=_fmt)
 log = logging.getLogger("router")
 _log_dir = Path("logs")
@@ -32,7 +35,8 @@ try:
     _fh.setFormatter(logging.Formatter(_fmt))
     logging.getLogger().addHandler(_fh)
 except Exception:
-    pass
+    # Keep serving with stdout logging (dumped nightly), but say app.log is gone.
+    log.exception("app.log handler setup failed path=%s; logging to stdout only", _log_dir / "app.log")
 
 import access  # noqa: E402 — after logging setup
 import agent  # noqa: E402 — after logging setup
@@ -604,9 +608,13 @@ async def models_ollama_delete(body: ModelNameRequest):
     try:
         ok, message = await model_admin.delete_model(body.name)
     except (httpx.HTTPError, OSError) as e:
+        log.error("model delete failed name=%s: Ollama unreachable: %s", body.name, e)
         return JSONResponse({"ok": False, "message": f"Ollama unreachable: {e}"},
                             status_code=502)
-    log.info("model delete name=%s ok=%s", body.name, ok)
+    if ok:
+        log.info("model delete name=%s ok=%s", body.name, ok)
+    else:
+        log.error("model delete failed name=%s: %s", body.name, message)
     return JSONResponse({"ok": ok, "message": message}, status_code=200 if ok else 502)
 
 
