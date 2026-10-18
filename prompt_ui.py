@@ -177,7 +177,7 @@ def render(state: dict, revisions: list[dict], preview_mode: str, css: str,
     return (
         '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        f'<title>Custom prompt</title><style>{css}{EXTRA_CSS}</style></head><body>'
+        f'<title>Custom prompt</title><link rel="icon" type="image/svg+xml" href="https://bix.computer/favicon.svg"><style>{css}{EXTRA_CSS}</style></head><body>'
 
         '<div class="hdr"><h1>Custom prompt</h1><div class="meta">'
         f'<span>{state["chars"]:,} of {cap:,} characters</span>'

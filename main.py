@@ -286,6 +286,7 @@ def _render_memory_html(entry: dict, convo: dict | None) -> str:
     return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
 <title>{title} — memory</title>
+<link rel="icon" type="image/svg+xml" href="https://bix.computer/favicon.svg">
 <style>
 :root {{
   --bg:#1e1e2e; --surface0:#313244; --surface1:#45475a;
@@ -423,7 +424,7 @@ code { font-size:.82em; }
 """
     return (
         f'<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">'
-        f'<title>Blob store</title><style>{_PAGE_CSS}{extra_css}</style></head><body>'
+        f'<title>Blob store</title><link rel="icon" type="image/svg+xml" href="https://bix.computer/favicon.svg"><style>{_PAGE_CSS}{extra_css}</style></head><body>'
         f'<div class="hdr"><h1>Blob store</h1>'
         f'<div class="meta"><span>{len(blobs)} blob(s)</span>'
         f'<span>{total:,} of {cap:,} bytes ({pct:.1f}%)</span>'
