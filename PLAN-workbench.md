@@ -1,6 +1,6 @@
 # Plan: the ai.Bix workbench
 
-Status: **direction agreed, nothing built** (2026-11-18). Open decisions are in §2.
+Status: **agreed, nothing built** (2026-11-18). §2 records the decisions.
 
 **This is the new way of working.** The workbench replaces the terminal as the primary
 interface for development on bix. Matt already runs Claude Code as himself from the
@@ -64,12 +64,12 @@ engine for every task. Other models are a secondary choice.
   collide), an engine (Claude Code on Pro by default, Opus/Sonnet/Haiku via `--model`;
   "Other models" = ai.Bix's own loop on Ollama/OpenRouter/API) and a first message.
 
-## 2. Decisions for Matt
+## 2. Decisions
 
 1. **Driving sessions as matt from the web.** **Decided 2026-11-18: sessions run as
    matt.** That's a remote shell as matt behind Access, an explicit exception to "no single
    compromise may reach the host as matt", accepted the way deploy-api was. It gets its own
-   SECURITY.md entry when phase 3 is built. **Still open: how a send is authorised.**
+   SECURITY.md entry when phase 3 is built.
    **Decided: Access alone**, since anything more is too slow for a daily interface. The
    broker checks your Access JWT itself on every action, so it doesn't trust the
    container's word. The accepted risk: a compromised workbench container could replay
@@ -83,7 +83,7 @@ engine for every task. Other models are a secondary choice.
    transcript text (code, command output, anything a command printed) behind Access. So
    far only names and status lines have left the host. This is fine for bix work, with a
    best-effort secret-redaction pass. The work laptop instance stays local-only either way.
-3. **Where it lives.** You suggested an addition to ai.Bix. I recommend: **one product
+3. **Where it lives.** **Decided 2026-11-18:** **one product
    named ai.Bix, two origins.**
    - The workbench grows out of jobs.bix.computer, which already has the right split: a
      host process reads `~/.claude`, and a minimal container serves the page. It could
@@ -190,14 +190,27 @@ The conversation lives on disk, so it survives the move.
 | web → terminal | **Continue in terminal**: the broker ends its process once the session is idle, and the page shows `cd <cwd> && claude --resume <id>` to copy |
 | terminal → web | **Continue here**: if the terminal session is idle, the broker stops that `claude` process (after a confirm: it closes it in your terminal) and resumes it under the broker. If it's mid-turn, it waits for the turn to end, or offers "interrupt and take over" |
 | background → web | `claude stop <id>` (the conversation is kept), then resume under the broker |
-| web or terminal → Claude app | **Open in Claude app**: the broker restarts the session with Remote Control enabled, so it appears in the Claude app on the phone and the Mac |
+| web or terminal → Claude app | **Open in Claude app**: the broker restarts the session with Remote Control enabled (Matt confirmed 2026-11-18 that a host program can do this), so it appears in the Claude app on the phone and the Mac. The `remoteControlAtStartup` setting would instead make every session reachable from the app from the start (offered, not set) |
 | Claude app → web or terminal | the same as from a terminal: stop the Remote Control process, then resume |
 
-The collector works out the driver from the broker's own list of processes, the session
-file's `kind` and `entrypoint`, and Remote Control state. The `entrypoint` values other
-than `cli` haven't been seen yet (§7). New sessions are started by the broker, but can
-be picked up in a terminal at any time, so neither the web nor the terminal is
-privileged.
+**Always cleanly resumable.** This is a requirement, not a nicety: the connection from a
+phone won't be perfect.
+- The broker owns the session process. A browser disconnect never stops the work.
+- The page reconnects and replays from the last event it saw. Events carry a
+  per-session sequence number, and the broker keeps a ring of recent ones.
+- Every send carries a client-made id, so a retried send after a dropped connection is
+  delivered once.
+- A move between drivers waits for the end of a turn (or is an explicit "interrupt"),
+  and only reports success once the next driver has resumed the same session id.
+- If a resume fails, the session stays where it was, with an error. It's never left
+  with no driver.
+- Phase 3 tests this by killing the browser, the broker and the network mid-turn, and
+  checking the session continues and no message is lost or doubled.
+
+Where a session was started (web, terminal, app, background) is recorded for the hold
+metrics, but nothing depends on it. The driver comes from the broker's own list of
+processes, else the session file's `kind`, else "terminal". New sessions are started by
+the broker, but can be picked up in a terminal at any time.
 
 ## 5. Phases
 
@@ -264,9 +277,9 @@ It starts with phase 1, because the collector already sees every status change.
   percentages or reset times, and `policy-limits.json` doesn't exist on bix. Candidates
   for the limits: the data Claude Code gives a status line, the `/usage` command, and
   the reset time in a rate-limited job's `needs` text ("resets 11:30pm").
-- Whether a session can be restarted with Remote Control from a non-interactive parent
-  (the broker), and whether the Claude app then lists it.
-- Whether stopping an idle terminal `claude` process from outside leaves the conversation
-  cleanly resumable. `claude stop` documents it for background sessions only.
+- How to stop an idle terminal `claude` process from outside so the conversation resumes
+  cleanly (`claude stop` documents this for background sessions only). Clean resume is
+  required (§4), so phase 3 starts by testing this, and a signal is used only if it
+  passes.
 - The session file's `entrypoint` values for `-p`, background and Remote Control
-  sessions. Only `cli` has been seen.
+  sessions (nice to have; only `cli` has been seen).
