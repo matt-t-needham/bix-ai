@@ -13,6 +13,69 @@ every agent task on bix in one list, a viewport showing what the selected task i
 and an **Open** view to continue it. Claude Code on the Pro subscription is the default
 engine for every task. Other models are a secondary choice.
 
+## 0. Start here (for the session that builds this)
+
+**Read first**, in this order:
+1. This file.
+2. `jobs/DESIGN.md`: data sources, status rules, styling (§8), hold-up metrics (§11).
+3. `jobs/CLAUDE.md`: commands, modules, gotchas.
+4. The suite `CLAUDE.md` (design system, security, commits and the **Needs sudo** flag).
+5. `bix-infra/SECURITY.md` before phase 3.
+
+**What exists today (2026-11-18):**
+- jobs.bix.computer is live, behind Access, port 3018:
+  - **Host collector:** `jobs/collector.py`, run by systemd unit `jobs-collector` as
+    matt with no network, writing `~/jobs/snapshot/state.json`.
+  - **Container:** `jobs`, FastAPI with SSE, which checks the Access JWT itself.
+    `ACCESS_AUD` is in compose.
+  - **Hooks:** user-level in `~/.claude/settings.json`, writing events to `~/jobs/spool`
+    through `jobs/hook.py`. The collector drains the spool.
+  - **Tests:** 47, run by `docker build --target test`.
+  - The repo `matt-t-needham/jobs` is **public**. Keep security design and work details
+    out of it. This plan lives in `bix-ai` (also public) under the same rule: no secrets,
+    no IPs.
+- ai.Bix (`bix-ai/`) is unchanged: the chat page, Pro mode through the `claude` CLI
+  (`streaming/pro.py`, the pattern the broker reuses), agent mode in the `bixagent`
+  sandbox, and approval cards (`approvals.py`).
+- Nothing in phases 1–5 is built.
+
+**Begin with phase 1 (§5).** It extends the existing jobs code (collector, `web.py`,
+`static/`) into the list-plus-viewport layout. It needs no new privileges. The
+workbench lives on the jobs origin (decision 3).
+
+**Things already learned. Don't rediscover them:**
+- **Session `status` lags.** On 2.1.327 a session file can say `idle` mid-turn. The
+  collector treats a transcript written more than 10 s after the status change as
+  working. Hooks are the better signal now that they're installed.
+- **Old job files never go away.** Job `state.json` files stay for months, including a
+  "working" one from May. Only jobs updated within `jobMaxAgeHours` (7 days) are shown.
+- **Never copy whole records.** Job `state.json` carries `providerEnv` (it can hold
+  credentials) and `suggestedReply`. Copy fields by name only; there's a test for it.
+- **No progress to read.** No transcript on bix contains task-list tool calls
+  (TaskCreate/TodoWrite), so progress needs the status card (§3).
+- **No plan-limit source yet.** `stats-cache.json` has tokens per model and per day;
+  `policy-limits.json` doesn't exist. Plan-limit percentages need another source (§8).
+- **Supported CLI surface on 2.1.327:**
+  - `claude agents --json`: running sessions, with `cwd`, `id`, `kind`, `name`,
+    `sessionId`, `startedAt`, `state`, `status`, `pid`;
+  - `--bg`, `attach`, `logs`, `stop` (keeps the conversation), `respawn`;
+  - `-p --resume … --input-format stream-json --output-format stream-json
+    --include-partial-messages`;
+  - `--permission-prompt-tool` and `--permission-prompts host|none`;
+  - `--remote-control [name]`, `--fork-session`, `-w` (worktree), `-n` (name),
+    `--model`.
+  
+  The binary is `~/.local/bin/claude`, which isn't on the non-interactive shell's PATH.
+- **Hook payloads.** `Notification` `notification_type` names (`permission_prompt`,
+  `idle_prompt`, …) are from the docs and haven't been seen on bix yet. Check the first
+  real ones that arrive.
+- **Root-only steps** (systemd units, `/etc/cloudflared`): Claude has no sudo. Write the
+  exact command under **Needs sudo**. The DNS route can be done as matt with
+  `cloudflared tunnel route dns`. Access apps are created by Matt in the dashboard.
+- **Git:** commits and pushes are allowed. None of the four repos (`bix-infra`, `bix`,
+  `bix-ai`, `jobs`) enforces a PR rule, so a direct push to `main` works. Keep each
+  `main` level with origin, because the 4am pull is `--ff-only`.
+
 ## 1. What Matt sees
 
 ```
