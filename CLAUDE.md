@@ -12,6 +12,16 @@ write area — todo entries and outbox drafts (`workspace.py`); oversized pastes
 a content-addressed blob store and replaced in-band with a verbatim excerpt +
 retrieval pointer.
 
+**Direction (agreed 2026-11-18): ai.Bix is becoming the workbench.** The workbench is
+the primary interface for development on bix. It replaces the terminal: every Claude Code
+task in a list, a viewport showing each one's goal, progress, what it's blocked on (you,
+or something else) and screenshots/videos of what changed, and **Open** to continue the
+session. Sessions run as matt on the Pro subscription; other models are secondary. The
+plan is `PLAN-workbench.md`. Judge new ai.Bix work against it. The chat UI described
+below is what exists today, not the target, and its palette notes (mauve accent, own
+variables) predate the suite design system that the workbench follows. This file gets
+rewritten around the workbench as it lands (`bix-infra/todos/bix-ai.md`).
+
 **Overhaul (2026-10):** `PLAN-overhaul.md` is the plan; `docs/request-pipeline.md`
 is the pre-overhaul audit of what ran on one turn. The self-modification/staging/
 deploy machinery, Steam, log tools, auto-mode routing, conversation compaction and
