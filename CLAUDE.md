@@ -121,9 +121,8 @@ export OLLAMA_HOST=http://localhost:11434
 pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 
-# Tests
-pip install pytest==8.3.4   # not in requirements.txt — only installed in the Docker test stage
-pytest -q
+# Tests (canonical run: the Docker test stage, not the local .venv)
+docker build --target test /home/matt/apps/bix-ai
 
 # Production rebuild (from repo root)
 docker compose build ai-router && docker compose up -d ai-router
@@ -171,13 +170,6 @@ The UI JS handles all of these. Do not reorder or rename without updating both s
 
 ## Frontend — design standards
 
-**Mobile first.** Design at 390 px, then let it widen; this is the convention for
-every bix.computer site. Rules the chat UI follows and new pages should too:
-`100dvh` + `overflow: hidden` on body with scrolling inside the content region;
-tap targets ≥ 44 px (`--tap`); inputs at `font-size: 16px` so iOS doesn't zoom;
-`env(safe-area-inset-*)` on anything pinned to an edge; one breakpoint at 900 px
-for a side panel, below it sheets not sidebars; no horizontal page scroll at 360 px.
-
 The UI uses the **Catppuccin Mocha** palette via CSS variables. Do not introduce new colours or override the palette for one-off styling; use the existing variables:
 
 ```css
@@ -197,11 +189,9 @@ The UI uses the **Catppuccin Mocha** palette via CSS variables. Do not introduce
 
 **Avoid:**
 - Inter as the hero typeface — the UI uses `system-ui, -apple-system, sans-serif` intentionally
-- Space Grotesk, Geist, or Instrument Serif as go-to pairings
-- Serif italic accent words as a stylistic trick within an otherwise-sans context
 
 **Do instead:**
-- Stick to the system font stack; vary scale and weight meaningfully
+- Stick to the system font stack
 - Use `font-variant-numeric: tabular-nums` on all metric values so they don't jump width while updating
 
 ### Color
@@ -209,7 +199,6 @@ The UI uses the **Catppuccin Mocha** palette via CSS variables. Do not introduce
 **Avoid:**
 - Adding a new accent colour for a new feature — map to an existing palette variable
 - Medium-grey body text that barely passes WCAG AA — use `--text` or `--subtext` only
-- Gradient backgrounds, coloured glows, or large box-shadows in brand colours
 
 **Do instead:**
 - Use colour to carry meaning that's already established: yellow = local model, blue = live/streaming, green = success, red = error, mauve = brand/user action
@@ -218,13 +207,10 @@ The UI uses the **Catppuccin Mocha** palette via CSS variables. Do not introduce
 ### Layout
 
 **Avoid:**
-- Identical cards with icon-top / heading / body — vary density
-- Sidebar nav items with emoji icons prepended (the drawer uses text labels)
 - All-caps labels as the only typographic hierarchy — the UI already uses `.d-title` for that; don't proliferate the pattern
-- Glassmorphism (`backdrop-filter: blur()`) — not used anywhere, don't introduce it
 
 **Do instead:**
-- Let content hierarchy determine structure; match existing spacing (the drawer uses `gap: 9px` sections, `gap: 20px` between sections)
+- Match existing spacing (the drawer uses `gap: 9px` sections, `gap: 20px` between sections)
 - New drawer sections should use `.d-section` + `.d-title` to stay visually consistent
 - New stat displays should use `.hi-stat` / `.hi-stats` grid unless there's a strong reason not to
 
@@ -238,23 +224,19 @@ The UI uses the **Catppuccin Mocha** palette via CSS variables. Do not introduce
 
 ## Backend — code standards
 
-Imported and adapted from the shared project standards:
-
 - **Fail gracefully; surface every failure; never patch over one — even temporarily.**
   A limit breach or upstream failure must never masquerade as success (no clean
   `done` after a truncated tool call) and should degrade the turn, not the whole
   stream: report what happened, what already ran, and leave partial work visible.
   Governor caps (`LOOP_MAX_TURNS`/`SECONDS`/`TOKENS`) are runaway backstops sized
   so legitimate work never hits them; the per-turn `budget` SSE event exists so
-  limits are visible *before* they bite. "Temporarily" ignoring an error (a bare
-  `except: pass` to ship something, a TODO to surface it later) is how failures
-  get permanently invisible — surface it now or don't merge it.
+  limits are visible *before* they bite.
 - **Never swallow errors silently.** Log via `log.error()` or `log.warning()`, then emit `sse("error", {"message": str(e)})` so the client knows. Don't return a 200 with a silent failure.
 - **Never hide preprocessing failures.** If `strategy.preprocess()` raises, log the error and forward the original body — don't silently drop messages.
 - **Never interpolate variables into log messages with `%s` and then use f-strings** — pick one style per call site. The codebase uses `log.info("msg key=%s", val)` style throughout; keep it consistent.
 - **Prefer `async` throughout.** All route handlers and helpers are async. Don't introduce sync blocking calls (file I/O, `requests`, `time.sleep`) on the event loop.
 - **httpx only.** All outbound HTTP (Anthropic, Ollama) uses `httpx.AsyncClient`. Don't add `requests` or `aiohttp`.
-- **Don't catch exceptions broadly then continue as if nothing happened.** The `except Exception: pass` pattern in `system_metrics()` is intentional (GPU stats are best-effort). Elsewhere, handle or re-raise with context.
+- **Don't catch exceptions broadly then continue as if nothing happened.** The `except Exception: pass` pattern in `system_metrics()` is intentional (GPU stats are best-effort).
 - **Strategy is pure logic.** `strategy.py` takes a body dict and an `ollama_chat` callable — it has no imports from `main.py`. Importing leaf modules like `config.py` is fine; keep it decoupled from `main.py` and the FastAPI app so it stays unit-testable in isolation.
 - **One write path, and only one.** Outside its own data (`DATA_DIR`: memories,
   conversations, blobs) and `logs/`, bix-ai itself writes only through `workspace.py`,
@@ -272,7 +254,7 @@ Imported and adapted from the shared project standards:
 
 - **Container rebuild required for any change.** `static/index.html` is `COPY`-ed at build time — there is no volume mount for it. Always rebuild after editing frontend or backend files.
 - **`OPENROUTER_API_KEY` is read from the environment** (put it in `bix-infra/.env` and map it in the compose file like the Anthropic key). Without it `mode=openrouter` returns 503 and the picker says "not configured". The spend caps default to $0.50/request and $5/day (`OPENROUTER_MAX_USD_PER_*`); 0 disables a cap. Today's total is computed from `routing.ndjson`, so deleting the log resets it.
-- **`ANTHROPIC_API_KEY` comes from `bix-infra/.env` (as `BIX_AI_API_KEY`)**, not from a `.env` inside `bix-ai/`. If Claude requests fail, check the key is present in the running container: `docker exec apps-ai-router-1 env | grep ANTHROPIC`. Symptom of a missing/bad key used to be a silent zero-token "done" — since Phase 6 a 401 surfaces as an `error` SSE event.
+- **`ANTHROPIC_API_KEY` comes from `bix-infra/.env` (as `BIX_AI_API_KEY`)**, not from a `.env` inside `bix-ai/`. If Claude requests fail, check the key is present in the running container without printing it: `docker exec apps-ai-router-1 sh -c 'test -n "$ANTHROPIC_API_KEY" && echo set || echo missing'`. Symptom of a missing/bad key used to be a silent zero-token "done" — since Phase 6 a 401 surfaces as an `error` SSE event.
 - **Ollama unreachable from container** unless `OLLAMA_HOST=0.0.0.0` is set in the Ollama systemd override (yes, this is a different `OLLAMA_HOST` — Ollama's own bind-address env var, not this repo's `config.OLLAMA_HOST` client-side knob; same name, opposite side of the connection). The container reaches Ollama via `host.docker.internal:11434` by default; running outside Docker, set this repo's `OLLAMA_HOST=http://localhost:11434`.
 - **AMD GPU (RX 6600M / gfx1032) uses the Vulkan backend, not ROCm.** Ollama's bundled rocBLAS has never shipped gfx1032 kernels (checked through v0.24.0 — preset includes gfx1030 but not gfx1032). The old `HSA_OVERRIDE_GFX_VERSION=10.3.0` spoof made the GPU pretend to be gfx1030 so it could borrow those kernels — it worked silently until Ollama 0.21 tightened GPU discovery, after which the spoofed device hangs the ROCm probe for 30s every cold start and Ollama falls back to CPU. Required env vars in the systemd override (`/etc/systemd/system/ollama.service.d/override.conf`):
     - `OLLAMA_VULKAN=1` — enable the Vulkan backend
@@ -280,10 +262,10 @@ Imported and adapted from the shared project standards:
     - Do NOT set `HSA_OVERRIDE_GFX_VERSION` or any `*_VISIBLE_DEVICES` envs — they trigger an "override visible devices" warning and don't help.
 
     Symptom of regression: `curl localhost:11434/api/ps` shows `size_vram: 0` after loading a model, and `journalctl -u ollama` shows `failure during GPU discovery` or `inference compute id=cpu library=cpu` at startup. Expected healthy state: startup log line `inference compute id=gpu0 library=vulkan ...` and `size_vram > 0` after model load. Vulkan delivers ~70-90% of theoretical ROCm perf on RDNA2 for chat workloads — fine for this use case.
-- **`gemma4:e2b` fails to load on this host** (llama runner exit status 2, any prompt size, even with nothing else resident — broken since the Vulkan backend switch). It is still the *code default* for `SUMMARY_LOCAL_MODEL`, so the pre-pass classify/salience fallback silently fails open unless `SUMMARY_LOCAL_MODEL` is overridden. (Context summaries don't use it — they run on the answering provider.) The compose file sets `SUMMARY_LOCAL_MODEL=gemma4:26b` for the container; export it yourself for dev runs. Fix or re-pull e2b to get the fast summariser back.
+- **`gemma4:e2b` is gone from this host** (it never loaded after the Vulkan backend switch and was deleted 2026-08-05). `config.py` still defaults `SUMMARY_LOCAL_MODEL` to `gemma4:e2b`, so the pre-pass classify/salience fallback silently fails open unless the variable is overridden. (Context summaries don't use it — they run on the answering provider.) The compose file sets `SUMMARY_LOCAL_MODEL=gemma4:26b` for the container; export it yourself for dev runs.
 - **Ollama unloads models** after ~5 minutes idle. The GPU section in the sidebar shows "idle" when this happens — that's expected.
 - **SSE golden fixtures:** `tests/fixtures/sse/*.json` pin the exact event sequences the claude/ollama loops emit (recorded pre-Phase-4-refactor). If `tests/test_sse_fixtures.py` fails, the SSE contract drifted — that's usually a bug, not a fixture-refresh situation. Only regenerate (`RECORD_SSE=1 pytest tests/test_sse_fixtures.py`) when the change is intended, and update the UI to match.
-- **Tests:** `cd bix-ai && pytest -q` — 24 test files under `tests/`. Fully offline: all httpx clients and `ollama_chat` callables are faked, so the suite never hits Anthropic or Ollama (no token cost; ~0.5s runtime). A `.venv/` exists in `bix-ai/` (gitignored) with requirements + pytest installed — use `.venv/bin/python -m pytest -q` for local runs; the system Python has neither httpx nor fastapi. Strategy fixtures live under `tests/fixtures/` (regenerable — a ~4k-line logfile with one buried ERROR+traceback, a big source file, a huge JSON). `config.FS_ROOT`/`DATA_DIR`/`CONVERSATIONS_DIR` are read at call time specifically so tests can monkeypatch them — keep that property. `pytest` is not in `requirements.txt` (it's installed only in the Docker test stage); install it separately for local runs.
+- **Tests:** `docker build --target test /home/matt/apps/bix-ai` — 28 test files under `tests/`. Fully offline: all httpx clients and `ollama_chat` callables are faked, so the suite never hits Anthropic or Ollama (no token cost). Verify with the Docker stage, not a local `.venv`, which can drift from the pinned deps. Strategy fixtures live under `tests/fixtures/` (regenerable — a ~4k-line logfile with one buried ERROR+traceback, a big source file, a huge JSON). `config.FS_ROOT`/`DATA_DIR`/`CONVERSATIONS_DIR` are read at call time specifically so tests can monkeypatch them — keep that property. `pytest` is not in `requirements.txt` (it's installed only in the Docker test stage); install it separately for local runs.
 
 ## Model management events
 
@@ -293,7 +275,3 @@ quiet phases — keep the `with_keepalive` wrapper or Cloudflare kills the strea
 at ~100 s idle. `GET /version` reports `{git_sha, built_at, started_at}`; the
 Dockerfile stamps `GIT_SHA`/`BUILT_AT` via build args **at the end of the runtime
 stage** — moving those ARGs earlier busts the pip/test layer cache on every build.
-
-## When Claude makes a repeat mistake
-
-Add a short rule here describing the mistake and the fix. Prune periodically.
